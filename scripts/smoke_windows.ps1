@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory)][string]$Qemu,
     [Parameter(Mandatory)][string]$Code,
     [Parameter(Mandatory)][string]$Vars,
-    [string]$Psmux = 'C:\Programs\psmux\psmux.exe',
+    [string]$Psmux = '',
     [string]$Launcher = '',
     [string]$Esp = '',
     [string]$Output = '',
@@ -14,6 +14,11 @@ $PSNativeCommandArgumentPassing = 'Standard'
 $PSNativeCommandUseErrorActionPreference = $true
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $root
+if (-not $Psmux) {
+    $psmuxCommand = Get-Command psmux.exe -CommandType Application -ErrorAction SilentlyContinue
+    if (-not $psmuxCommand) { throw 'psmux.exe is not on PATH. Supply its executable path with -Psmux.' }
+    $Psmux = $psmuxCommand.Source
+}
 if (-not $Launcher) { $Launcher = Join-Path $root 'target\debug\efi-agent.exe' }
 if (-not $Esp) { $Esp = Join-Path $root 'artifacts\esp' }
 if (-not $Output) { $Output = Join-Path $root 'artifacts\windows-smoke' }
