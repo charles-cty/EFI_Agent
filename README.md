@@ -10,8 +10,9 @@ ANSI serial backend, UEFI SimpleText backend, boot-volume file commands, host
 terminal relay, host RPC service, and guest TCP4 transport are implemented.
 A real Linux KVM/OVMF test has verified TUI rendering, a host file read, and
 a Chat Completions round trip and a guest-driven read/edit/write tool loop
-against a local simulated provider. Bare-metal networking, Windows WHPX, and interactive launcher
-terminal verification are still pending.
+against a local simulated provider. The Linux launcher has also been tested in a
+real tmux PTY for initial size, resize, Unicode input, host files, and exit
+restoration. Bare-metal networking and Windows WHPX/ConPTY are still pending.
 
 The interface follows the Grok Build header, conversation area, prompt separator,
 and muted status-line design. It does not use Grok Build source code or branding.
@@ -37,6 +38,10 @@ and omit this marker. Bare metal uses firmware text input and output.
 Install QEMU and supply an OVMF image that includes VirtioSerialDxe and
 VirtioNetDxe. WHPX must be enabled on Windows; KVM must be available on Linux.
 The launcher uses the current terminal, with no graphical QEMU window.
+It waits for an application readiness marker before forwarding input, so OVMF
+cannot interpret initial terminal dimensions as firmware menu keystrokes.
+`/quit` shuts down the VM and returns to the host shell. On bare metal it returns
+to firmware. Ctrl+C immediately exits the launcher, including during guest waits.
 
 ```powershell
 ./target/debug/efi-agent.exe vm 'C:\Program Files\qemu\qemu-system-x86_64.exe' 'C:\firmware\OVMF_CODE.fd' 'C:\firmware\OVMF_VARS.fd' ./artifacts/esp ./workspace
@@ -103,6 +108,18 @@ This boots the UEFI image and checks the actual virtio serial and TCP4 paths.
 It uses a local HTTP provider with deterministic text and tool-call responses,
 checks actual edited and created files, and needs no API key.
 It does not verify the launcher's current-terminal relay.
+
+To test the Linux launcher through an actual tmux PTY:
+
+```sh
+uv run scripts/smoke_launcher.py --launcher target/debug/efi-agent \
+  --code /usr/share/OVMF/OVMF_CODE_4M.fd \
+  --vars /usr/share/OVMF/OVMF_VARS_4M.fd \
+  --esp artifacts/esp --output artifacts/launcher-smoke
+```
+
+This checks initial and changed dimensions, Unicode file input, Backspace,
+`/quit`, Ctrl+C, termios restoration, and leaving the alternate screen.
 
 ## Work remaining
 

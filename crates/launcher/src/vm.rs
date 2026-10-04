@@ -3,6 +3,7 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     terminal,
 };
+use efi_agent_core::serial;
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
@@ -122,17 +123,32 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     session.raw = true;
     print!("\x1b[?1049h\x1b[2J\x1b[H");
     std::io::stdout().flush()?;
-    let (w, h) = terminal::size()?;
-    socket.write_all(format!("\x1b[8;{h};{w}t").as_bytes())?;
+    // Firmware consumes serial input before the application boots. Do not
+    // send any terminal input until the guest identifies itself as ready.
+    let mut ready = false;
+    let mut dimensions = None;
+    let mut size_check = Instant::now();
+    let mut decoder = serial::Decoder::default();
+    let boot_deadline = Instant::now() + Duration::from_secs(60);
     let mut buffer = [0; 8192];
     loop {
         if session.child.try_wait()?.is_some() {
             break;
         }
         match socket.read(&mut buffer) {
-            Ok(0) => break,
+            Ok(0) => {
+                std::io::stdout().write_all(&decoder.finish())?;
+                break;
+            }
             Ok(count) => {
-                std::io::stdout().write_all(&buffer[..count])?;
+                let (output, notifications) = decoder.push(&buffer[..count]);
+                if notifications > 0 {
+                    ready = true;
+                    let (w, h) = terminal::size()?;
+                    socket.write_all(format!("\x1b[8;{h};{w}t").as_bytes())?;
+                    dimensions = Some((w, h));
+                }
+                std::io::stdout().write_all(&output)?;
                 std::io::stdout().flush()?;
             }
             Err(e)
@@ -142,9 +158,25 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 ) => {}
             Err(e) => return Err(e.into()),
         }
+        if !ready && Instant::now() > boot_deadline {
+            return Err("UEFI application did not become ready within 60 seconds".into());
+        }
+        // A resize can happen before the platform event source is initialized,
+        // and terminal hosts can coalesce notifications. Reconcile actual size.
+        if ready && size_check.elapsed() >= Duration::from_millis(250) {
+            let (w, h) = terminal::size()?;
+            if dimensions != Some((w, h)) {
+                socket.write_all(format!("\x1b[8;{h};{w}t").as_bytes())?;
+                dimensions = Some((w, h));
+            }
+            size_check = Instant::now();
+        }
         if event::poll(Duration::from_millis(5))? {
             match event::read()? {
-                Event::Resize(w, h) => socket.write_all(format!("\x1b[8;{h};{w}t").as_bytes())?,
+                Event::Resize(w, h) if ready => {
+                    socket.write_all(format!("\x1b[8;{h};{w}t").as_bytes())?;
+                    dimensions = Some((w, h));
+                }
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
                     let bytes = match key.code {
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -158,7 +190,9 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                         KeyCode::Down => b"\x1b[B".to_vec(),
                         _ => Vec::new(),
                     };
-                    socket.write_all(&bytes)?;
+                    if ready {
+                        socket.write_all(&bytes)?;
+                    }
                     // Ctrl+C is also an immediate escape hatch if the guest is stuck.
                     if bytes == [3] {
                         break;

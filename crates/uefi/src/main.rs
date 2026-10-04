@@ -7,6 +7,7 @@ use alloc::string::String;
 use efi_agent_core::{
     agent::{Agent, Event},
     ansi::Ansi,
+    ansi::Sink,
     input::{Decoder, Key},
     ui::App,
 };
@@ -21,8 +22,14 @@ mod terminal;
 #[entry]
 fn main() -> Status {
     uefi::helpers::init().unwrap();
+    let vm = files::read("\\EFI\\AGENT\\VM.TXT").is_ok();
     match run() {
-        Ok(()) => Status::SUCCESS,
+        Ok(()) => {
+            if vm {
+                uefi::runtime::reset(uefi::runtime::ResetType::SHUTDOWN, Status::SUCCESS, None);
+            }
+            Status::SUCCESS
+        }
         Err(error) => {
             uefi::println!("{error}");
             Status::DEVICE_ERROR
@@ -53,7 +60,7 @@ fn submit(
     render(app)?;
     let response = if text == "/help" {
         String::from(
-            "/help  Show commands\n/clear  Start a new conversation\n/quit  Exit to firmware\n/read <path>  Read a UTF-8 file from the boot volume\n/write <path> <text>  Save a file on the boot volume\n/host-list [path]  List host files\n/host-read <path>  Read a host file\n/host-write <path> <text>  Save a host file\nSend a prompt to run the coding agent (read, write, edit tools).",
+            "/help  Show commands\n/clear  Start a new conversation\n/quit  Exit (VM: shut down; hardware: return to firmware)\n/read <path>  Read a UTF-8 file from the boot volume\n/write <path> <text>  Save a file on the boot volume\n/host-list [path]  List host files\n/host-read <path>  Read a host file\n/host-write <path> <text>  Save a host file\nSend a prompt to run the coding agent (read, write, edit tools).",
         )
     } else if let Some(path) = text.strip_prefix("/read ") {
         files::read(path).unwrap_or_else(|e| e)
@@ -170,7 +177,29 @@ fn run() -> Result<(), terminal::Error> {
             let mut terminal =
                 Terminal::new(Ansi::new(terminal::SerialSink(serial), Size::new(100, 30)))?;
             terminal.hide_cursor()?;
+            terminal
+                .backend_mut()
+                .sink
+                .write(efi_agent_core::serial::READY)?;
             let mut decoder = Decoder::default();
+            // Resolve the host dimensions before drawing the first frame.
+            // A direct serial monitor can omit the reply and use the fallback.
+            let mut sized = false;
+            for _ in 0..200 {
+                let mut bytes = [0; 128];
+                let count = terminal.backend_mut().sink.read(&mut bytes)?;
+                for byte in &bytes[..count] {
+                    if let Some(Key::Resize(w, h)) = decoder.push(*byte) {
+                        terminal.backend_mut().dimensions = Size::new(w.min(300), h.min(120));
+                        terminal.autoresize()?;
+                        sized = true;
+                    }
+                }
+                if sized {
+                    break;
+                }
+                boot::stall(core::time::Duration::from_millis(10));
+            }
             while !app.quit {
                 terminal.draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
                 let mut bytes = [0; 128];

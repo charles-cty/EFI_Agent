@@ -122,3 +122,32 @@ other complex TUI controls, bare-metal native agent/network configuration,
 Windows WHPX/ConPTY, current-terminal launcher tests, and real-provider tests.
 The runtime test still uses a local simulated provider and directly launches
 QEMU. The original full goal remains open.
+
+## 2026-10-04: native Linux terminal launcher
+
+The first real tmux launcher test booted into the OVMF menu rather than the app:
+the launcher's initial resize bytes arrived before firmware boot completed.
+The guest now emits a private OSC readiness marker. The launcher removes that
+marker from terminal output, waits before forwarding input, and responds with
+the current terminal dimensions. The guest waits briefly for dimensions before
+its first frame. Marker parsing is checked at every possible socket split, with
+one-byte reads, repeated markers, false prefixes, Unicode bytes, and incomplete
+suffixes. Other terminal bytes remain unchanged.
+
+VM `/quit` now uses UEFI shutdown, allowing QEMU and the launcher to exit normally.
+Bare-metal exit still returns to firmware. A resize before event source startup
+was observed during the test; the launcher now reconciles actual size every
+250 ms as well as forwarding resize events.
+
+`uv run scripts/smoke_launcher.py` uses a unique tmux server and real PTY. It
+starts the native launcher, which starts QEMU/KVM and its own HostBridge service.
+The checks cover an 83x23 initial frame, a 107x31 resize, Unicode host-file write,
+Backspace and host-file read, `/quit`, and a second launch exited with Ctrl+C.
+The test compares exact termios state before and after both exits and verifies
+the alternate screen is no longer active. It saves captured screen text. All
+checks pass. The direct KVM model/tool smoke also passes with the handshake.
+
+Windows host tests and host/UEFI Clippy pass; UEFI release linking passes. This
+proves the Linux current-terminal route, not Windows ConPTY or physical hardware.
+Bare-metal networking, Windows WHPX, complex editing controls, in-guest request
+cancellation, command tools, and a real provider remain incomplete/unverified.
