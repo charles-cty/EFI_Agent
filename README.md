@@ -12,7 +12,9 @@ A real Linux KVM/OVMF test has verified TUI rendering, a host file read, and
 a Chat Completions round trip and a guest-driven read/edit/write tool loop
 against a local simulated provider. The Linux launcher has also been tested in a
 real tmux PTY for initial size, resize, Unicode input, host files, and exit
-restoration. Bare-metal networking and Windows WHPX/ConPTY are still pending.
+restoration. Native mode with a model relay and local FAT file tools has been
+tested through SimpleText under OVMF. Physical bare-metal networking, direct
+HTTPS provider access, and Windows WHPX/ConPTY are still pending.
 
 The interface follows the Grok Build header, conversation area, prompt separator,
 and muted status-line design. It does not use Grok Build source code or branding.
@@ -32,6 +34,30 @@ cargo.exe test
 The build creates `artifacts/esp/EFI/BOOT/BOOTX64.EFI`. The `VM.TXT` marker
 selects serial input and output. For bare metal, copy `BOOTX64.EFI` to a FAT ESP
 and omit this marker. Bare metal uses firmware text input and output.
+
+For native agent use, create `EFI/AGENT/NATIVE.JSON` on the boot volume:
+
+```json
+{
+  "relay_address": [192, 168, 1, 73],
+  "relay_port": 7420,
+  "workspace": "\\work"
+}
+```
+
+The workspace directory must exist on the boot volume. Model file tools use
+EFI_SIMPLE_FILE_SYSTEM_PROTOCOL inside that directory. Tool paths are relative;
+absolute paths and parent traversal are rejected. Model requests use EFI TCP4
+and DHCP to reach a configured model relay. On a trusted local network, run
+`efi-agent serve <workspace> 0.0.0.0:7420` on the relay machine with the API
+environment variables below. In native mode the relay only receives model
+requests; file tools execute in the firmware application.
+
+The current relay transport is unencrypted and unauthenticated. Use it only on
+a trusted network. Direct HTTPS provider requests, relay TLS, and static network
+configuration are not implemented. Physical hardware support remains unverified.
+The native protocol path has been tested under OVMF with SimpleText and a writable
+FAT boot volume, independently of VM mode and host-file routing.
 
 ## VM launch
 
@@ -136,8 +162,8 @@ restoration, and leaving the alternate screen.
 
 ## Work remaining
 
-- Bare-metal endpoint configuration and direct provider networking.
-- Host command execution and native UEFI tool routing.
+- Direct HTTPS provider networking and physical bare-metal verification.
+- Host command execution.
 - Responsive model requests, cancellation, multiline editing, and tool views.
 - FAT image packaging.
 - Windows WHPX and Linux KVM end-to-end tests.

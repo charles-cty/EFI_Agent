@@ -15,6 +15,7 @@ use ratatui::{Terminal, layout::Size};
 use uefi::prelude::*;
 use uefi::{boot, proto::console::serial::Serial};
 mod bridge;
+mod environment;
 mod files;
 mod tcp;
 mod terminal;
@@ -40,7 +41,7 @@ fn main() -> Status {
 fn submit(
     app: &mut App,
     agent: &mut Agent,
-    bridge: &mut Option<bridge::Bridge>,
+    bridge: &mut Option<environment::Runtime>,
     text: String,
     mut render: impl FnMut(&App) -> Result<(), terminal::Error>,
 ) -> Result<(), terminal::Error> {
@@ -140,10 +141,10 @@ fn submit(
             }
             return render(app);
         };
-        bridge.call(operation).unwrap_or_else(|e| e)
+        bridge.host(operation).unwrap_or_else(|e| e)
     } else {
         String::from(
-            "HostBridge is not configured. Boot in VM mode to use host files and the model.",
+            "Model environment is not configured. On hardware, provide EFI/AGENT/NATIVE.JSON with a model relay and native workspace.",
         )
     };
     app.message("assistant", response);
@@ -162,7 +163,16 @@ fn run() -> Result<(), terminal::Error> {
     let mut app = App::default();
     let mut agent = Agent::default();
     let vm = files::read("\\EFI\\AGENT\\VM.TXT").is_ok();
-    let mut bridge = if vm { Some(bridge::Bridge::vm()) } else { None };
+    let mut bridge = match environment::Runtime::load(vm) {
+        Ok(environment) => Some(environment),
+        Err(error) => {
+            app.status = alloc::format!("Configuration: {error}");
+            None
+        }
+    };
+    if let Some(environment::Runtime::Native { config, .. }) = &bridge {
+        app.workspace = config.workspace.clone();
+    }
     // VM mode is explicit. The launcher ESP has no motherboard UART enabled.
     if vm && let Ok(handles) = boot::find_handles::<Serial>() {
         for handle in handles {

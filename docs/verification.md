@@ -187,3 +187,33 @@ UEFI Clippy and release linking pass. Complex TUI work remains incomplete:
 history navigation, richer tool views, responsive cancellation, and other
 controls still need implementation; Windows ConPTY and physical hardware
 verification remain open.
+
+## 2026-10-04: native UEFI file tools and model relay
+
+Native mode loads EFI/AGENT/NATIVE.JSON with a unicast IPv4 relay address,
+nonzero port, and absolute UEFI workspace directory. Configuration rejects
+unknown fields and unsafe path syntax. File tool paths are relative to that
+workspace, reject parent traversal and absolute paths, and use the boot volume's
+EFI_SIMPLE_FILE_SYSTEM_PROTOCOL. read can list a directory. write and edit obey
+the same file size and unique-match limits as VM tools. Only model requests go
+to the configured relay through DHCP/EFI TCP4. VM host commands remain separate.
+
+`scripts/smoke_native.py` creates a writable FAT image with mtools, omits VM.TXT,
+boots the release application with OVMF/KVM, and injects virtual keyboard input
+through QMP. It has no serial TUI or host launcher. A local framed model relay
+checks six model rounds and verifies that it receives no file operations.
+The native agent reads seed.txt, edits it to `native 中 419`, creates a file with
+an exact trailing newline, rejects `../outside.txt`, and lists the workspace.
+After stopping QEMU, mtype independently checks the persisted file contents.
+All checks pass. The relay is deterministic, not a real LLM provider.
+
+Boot and final SimpleText screenshots were inspected. They show the native
+workspace, file tool results, traversal error, and NATIVE_TOOLS_VERIFIED response.
+Core configuration tests, Windows host tests, host/UEFI Clippy, and UEFI release
+linking pass. This establishes execution through native firmware protocols under
+OVMF. It does not prove physical NIC/firmware compatibility.
+
+Remaining native gaps: direct HTTPS provider access, authenticated/encrypted
+relay transport, static IP configuration, physical hardware verification, and
+responsive request cancellation. The current relay is for trusted local networks
+and uses plain framed TCP. Windows WHPX and broader TUI work remain open.

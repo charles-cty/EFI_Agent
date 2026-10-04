@@ -25,9 +25,13 @@ impl Environment for Bridge {
 
 impl Bridge {
     pub fn vm() -> Self {
+        Self::new([10, 0, 2, 100], protocol::BRIDGE_PORT)
+    }
+
+    pub fn new(address: [u8; 4], port: u16) -> Self {
         Self {
-            address: [10, 0, 2, 100],
-            port: protocol::BRIDGE_PORT,
+            address,
+            port,
             next_id: 1,
             connection: None,
         }
