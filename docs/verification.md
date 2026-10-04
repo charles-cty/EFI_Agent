@@ -77,3 +77,48 @@ Still unverified: Windows WHPX/ConPTY, interactive Linux launcher behavior,
 bare-metal hardware, cancellation under stalled firmware, and a real provider.
 Still incomplete: model tool execution, richer TUI controls, bare-metal network
 configuration, direct provider access, and FAT image creation. The goal is open.
+
+## 2026-10-04: minimal coding-agent loop
+
+The no_std core now owns Chat Completions model history and a bounded function
+call loop. UEFI executes model-selected `read`, `write`, and `edit` through
+HostBridge, correlates tool results with tool_call_id, and requests another model
+response. Tool errors return to the model. Assistant message roles, duplicate
+call IDs, argument schemas, per-response call count, conversation size, file
+size, and the tool round limit are checked. Slash commands stay out of model
+history. `/clear` resets it. Tool previews and status updates are rendered
+between network operations; output follows the bottom with wrapped-line-aware
+scrolling. Input remains blocked during the synchronous network operation.
+
+High-risk edit semantics were checked against an independent exhaustive oracle:
+all strings of length zero through five over `a`, `b`, and `中`, with patterns
+through length three. The oracle enumerates every character boundary and counts
+matches, including overlaps, before deriving the expected replacement. Other
+checks cover exact deletion, zero matches, empty patterns, size bounds, duplicate
+call IDs, correlated failure results, and stopping file operations at the round
+limit with all pending tool calls answered.
+
+The real KVM/OVMF smoke test now requests four successive tool calls: read an
+actual host file, replace its unique content with `edited 中 853`, create another
+file with a trailing newline, and attempt to replace `aa` in `aaa`. The local
+provider checks each correlated result, including the ambiguous-edit error,
+before returning the final marker. The test independently reads the files and
+checks the exact final bytes/text; the ambiguous file must stay `aaa`.
+
+All four smoke stages pass (serial rendering, explicit host read, text model
+response, and the guest-driven tool loop). Windows and Linux native tests pass;
+Windows host/UEFI Clippy with warnings denied and UEFI release linking pass.
+The service also caps HTTP response reads at 1 MiB and file reads at 512 KiB.
+
+The first run after adding progress redraws exposed a false negative in the
+smoke verifier: removing ANSI codes from an incremental draw does not reconstruct
+the terminal screen. The final marker's unchanged cells were absent from the
+byte log. The verifier now feeds serial bytes into a pyte terminal emulator,
+checks the actual screen state, applies resize dimensions, and saves screen.txt.
+The full KVM smoke test passes with this corrected verifier and final build.
+
+Not complete: command execution, responsive cancellation, multiline editor and
+other complex TUI controls, bare-metal native agent/network configuration,
+Windows WHPX/ConPTY, current-terminal launcher tests, and real-provider tests.
+The runtime test still uses a local simulated provider and directly launches
+QEMU. The original full goal remains open.

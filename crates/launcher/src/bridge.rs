@@ -1,4 +1,7 @@
-use efi_agent_core::protocol::{self, Operation, Request, Response};
+use efi_agent_core::{
+    agent::{self, MAX_FILE_BYTES},
+    protocol::{self, ChatMessage, Operation, Request, Response},
+};
 use std::{
     fs,
     io::{Read, Write},
@@ -63,14 +66,53 @@ impl Bridge {
             }
             Operation::Read { path } => {
                 let path = self.resolve(&path, false)?;
-                if fs::metadata(&path).map_err(|e| e.to_string())?.len() > 512 * 1024 {
+                if path.is_dir() {
+                    let mut entries = fs::read_dir(path)
+                        .map_err(|e| e.to_string())?
+                        .map(|entry| entry.map(|e| e.file_name().to_string_lossy().into_owned()))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| e.to_string())?;
+                    entries.sort();
+                    let listing = entries.join("\n");
+                    if listing.len() > MAX_FILE_BYTES {
+                        return Err("Directory listing exceeds 512 KiB".into());
+                    }
+                    return Ok(listing);
+                }
+                let file = fs::File::open(path).map_err(|e| e.to_string())?;
+                let mut content = String::new();
+                file.take(MAX_FILE_BYTES as u64 + 1)
+                    .read_to_string(&mut content)
+                    .map_err(|e| e.to_string())?;
+                if content.len() > MAX_FILE_BYTES {
                     return Err("File exceeds 512 KiB".into());
                 }
-                fs::read_to_string(path).map_err(|e| e.to_string())
+                Ok(content)
             }
             Operation::Write { path, content } => {
+                if content.len() > MAX_FILE_BYTES {
+                    return Err("File exceeds 512 KiB".into());
+                }
                 fs::write(self.resolve(&path, true)?, content).map_err(|e| e.to_string())?;
                 Ok("File saved".into())
+            }
+            Operation::Edit {
+                path,
+                old_text,
+                new_text,
+            } => {
+                let path = self.resolve(&path, false)?;
+                let file = fs::File::open(&path).map_err(|e| e.to_string())?;
+                let mut text = String::new();
+                file.take(MAX_FILE_BYTES as u64 + 1)
+                    .read_to_string(&mut text)
+                    .map_err(|e| e.to_string())?;
+                if text.len() > MAX_FILE_BYTES {
+                    return Err("File exceeds 512 KiB".into());
+                }
+                let edited = agent::edit_text(text, &old_text, &new_text)?;
+                fs::write(path, edited).map_err(|e| e.to_string())?;
+                Ok("File edited".into())
             }
             Operation::Complete { messages } => {
                 let base = std::env::var("EFI_AGENT_API_BASE")
@@ -78,21 +120,29 @@ impl Bridge {
                 let key =
                     std::env::var("EFI_AGENT_API_KEY").map_err(|_| "Set EFI_AGENT_API_KEY")?;
                 let model = std::env::var("EFI_AGENT_MODEL").map_err(|_| "Set EFI_AGENT_MODEL")?;
-                let result: serde_json::Value = self
+                let response = self
                     .client
                     .post(format!("{}/chat/completions", base.trim_end_matches('/')))
                     .bearer_auth(key)
-                    .json(&serde_json::json!({"model":model,"messages":messages,"stream":false}))
+                    .json(&serde_json::json!({"model":model,"messages":messages,"stream":false,"tools":agent::tool_definitions(),"tool_choice":"auto"}))
                     .send()
                     .map_err(|e| e.to_string())?
                     .error_for_status()
-                    .map_err(|e| e.to_string())?
-                    .json()
                     .map_err(|e| e.to_string())?;
-                result["choices"][0]["message"]["content"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .ok_or("Provider returned no text".into())
+                let mut body = Vec::new();
+                response
+                    .take(protocol::MAX_FRAME as u64 + 1)
+                    .read_to_end(&mut body)
+                    .map_err(|e| e.to_string())?;
+                if body.len() > protocol::MAX_FRAME {
+                    return Err("Provider response exceeds 1 MiB".into());
+                }
+                let result: serde_json::Value =
+                    serde_json::from_slice(&body).map_err(|e| e.to_string())?;
+                let message: ChatMessage =
+                    serde_json::from_value(result["choices"][0]["message"].clone())
+                        .map_err(|e| format!("Provider returned an invalid message: {e}"))?;
+                serde_json::to_string(&message).map_err(|e| e.to_string())
             }
         }
     }
@@ -185,6 +235,45 @@ mod tests {
         let response: Response = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(response.id, 731);
         assert_eq!(response.result.unwrap(), "three 中");
+        for (id, operation, expected) in [
+            (
+                732,
+                Operation::Write {
+                    path: "created.txt".into(),
+                    content: "left 中 right".into(),
+                },
+                "File saved",
+            ),
+            (
+                733,
+                Operation::Edit {
+                    path: "created.txt".into(),
+                    old_text: "中".into(),
+                    new_text: "new".into(),
+                },
+                "File edited",
+            ),
+            (
+                734,
+                Operation::Read {
+                    path: "created.txt".into(),
+                },
+                "left new right",
+            ),
+        ] {
+            let frame = protocol::encode(&Request { id, operation }).unwrap();
+            stream.write_all(&frame).unwrap();
+            stream.read_exact(&mut header).unwrap();
+            let mut bytes = vec![0; protocol::frame_length(header).unwrap()];
+            stream.read_exact(&mut bytes).unwrap();
+            let response: Response = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(response.id, id);
+            assert_eq!(response.result.unwrap(), expected);
+        }
+        assert_eq!(
+            fs::read_to_string(root.join("created.txt")).unwrap(),
+            "left new right"
+        );
         drop(stream);
         worker.join().unwrap().unwrap();
         fs::remove_dir_all(root).unwrap();

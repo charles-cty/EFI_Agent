@@ -1,12 +1,26 @@
 use crate::tcp::Tcp;
 use alloc::{string::String, vec};
 use efi_agent_core::protocol::{self, Operation, Request, Response};
+use efi_agent_core::{agent::Environment, protocol::ChatMessage};
 
 pub struct Bridge {
     address: [u8; 4],
     port: u16,
     next_id: u64,
     connection: Option<Tcp>,
+}
+
+impl Environment for Bridge {
+    fn complete(&mut self, messages: &[ChatMessage]) -> Result<ChatMessage, String> {
+        let response = self.call(Operation::Complete {
+            messages: messages.into(),
+        })?;
+        serde_json::from_str(&response)
+            .map_err(|_| String::from("HostBridge returned an invalid model message"))
+    }
+    fn execute(&mut self, operation: Operation) -> Result<String, String> {
+        self.call(operation)
+    }
 }
 
 impl Bridge {

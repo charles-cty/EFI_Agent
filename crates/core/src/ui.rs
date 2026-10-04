@@ -37,8 +37,8 @@ impl App {
             Key::Backspace => {
                 self.input.pop();
             }
-            Key::Up => self.scroll = self.scroll.saturating_sub(3),
-            Key::Down => self.scroll = self.scroll.saturating_add(3),
+            Key::Up => self.scroll = self.scroll.saturating_add(3),
+            Key::Down => self.scroll = self.scroll.saturating_sub(3),
             Key::Quit => self.quit = true,
             Key::Enter if !self.input.trim().is_empty() => {
                 self.scroll = 0;
@@ -50,6 +50,7 @@ impl App {
     }
 
     pub fn message(&mut self, role: &str, content: String) {
+        self.scroll = 0;
         self.messages.push(Message {
             role: role.into(),
             content,
@@ -92,10 +93,11 @@ impl App {
             lines.push(Line::from("  /help for commands · Ctrl+C to exit"));
         }
         for message in &self.messages {
-            let color = if message.role == "user" {
-                Color::Cyan
-            } else {
-                Color::White
+            let color = match message.role.as_str() {
+                "user" => Color::Cyan,
+                "tool" => Color::Yellow,
+                "error" => Color::LightRed,
+                _ => Color::White,
             };
             lines.push(Line::styled(
                 format!("  {}", message.role),
@@ -109,9 +111,13 @@ impl App {
             );
             lines.push(Line::from(""));
         }
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .scroll((self.scroll, 0))
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+        let bottom = paragraph
+            .line_count(rows[1].width)
+            .saturating_sub(rows[1].height.into())
+            .min(u16::MAX as usize) as u16;
+        paragraph
+            .scroll((bottom.saturating_sub(self.scroll), 0))
             .render(rows[1], buffer);
         Paragraph::new(format!("› {}", self.input))
             .block(

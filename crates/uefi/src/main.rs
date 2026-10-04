@@ -5,6 +5,7 @@ extern crate alloc;
 
 use alloc::string::String;
 use efi_agent_core::{
+    agent::{Agent, Event},
     ansi::Ansi,
     input::{Decoder, Key},
     ui::App,
@@ -29,15 +30,30 @@ fn main() -> Status {
     }
 }
 
-fn submit(app: &mut App, bridge: &mut Option<bridge::Bridge>, text: String) {
+fn submit(
+    app: &mut App,
+    agent: &mut Agent,
+    bridge: &mut Option<bridge::Bridge>,
+    text: String,
+    mut render: impl FnMut(&App) -> Result<(), terminal::Error>,
+) -> Result<(), terminal::Error> {
     if text == "/quit" {
         app.quit = true;
-        return;
+        return Ok(());
     }
     app.message("user", text.clone());
+    if text == "/clear" {
+        agent.clear();
+        app.messages.clear();
+        app.scroll = 0;
+        app.status = String::from("Conversation cleared");
+        return Ok(());
+    }
+    app.status = String::from("Working");
+    render(app)?;
     let response = if text == "/help" {
         String::from(
-            "/help  Show commands\n/quit  Exit to firmware\n/read <path>  Read a UTF-8 file from the boot volume\n/write <path> <text>  Save a file on the boot volume\n/host-list [path]  List host files\n/host-read <path>  Read a host file\n/host-write <path> <text>  Save a host file\nSend a prompt to query the model configured on the host.",
+            "/help  Show commands\n/clear  Start a new conversation\n/quit  Exit to firmware\n/read <path>  Read a UTF-8 file from the boot volume\n/write <path> <text>  Save a file on the boot volume\n/host-list [path]  List host files\n/host-read <path>  Read a host file\n/host-write <path> <text>  Save a host file\nSend a prompt to run the coding agent (read, write, edit tools).",
         )
     } else if let Some(path) = text.strip_prefix("/read ") {
         files::read(path).unwrap_or_else(|e| e)
@@ -69,13 +85,53 @@ fn submit(app: &mut App, bridge: &mut Option<bridge::Bridge>, text: String) {
                         "assistant",
                         String::from("Usage: /host-write <path> <text>"),
                     );
-                    return;
+                    app.status = String::from("Ready");
+                    return Ok(());
                 }
             }
+        } else if text.starts_with('/') {
+            app.message("assistant", String::from("Unknown command. Use /help."));
+            app.status = String::from("Ready");
+            return Ok(());
         } else {
-            Operation::Complete {
-                messages: app.messages.clone(),
+            app.status = String::from("Waiting for model");
+            render(app)?;
+            let mut render_error = None;
+            let result = agent.turn(text, bridge, |event| {
+                match event {
+                    Event::Assistant(content) => app.message("assistant", content.into()),
+                    Event::ToolStarted { name, arguments } => {
+                        app.status = alloc::format!("Running {name}");
+                        app.message("tool", alloc::format!("{name} {}", preview(arguments)))
+                    }
+                    Event::ToolFinished {
+                        name,
+                        result,
+                        failed,
+                    } => {
+                        app.status = String::from("Waiting for model");
+                        app.message(
+                            "tool",
+                            alloc::format!(
+                                "{name}: {}\n{}",
+                                if failed { "failed" } else { "done" },
+                                preview(result)
+                            ),
+                        );
+                    }
+                }
+                if render_error.is_none() {
+                    render_error = render(app).err();
+                }
+            });
+            if let Err(error) = result {
+                app.message("error", error);
             }
+            app.status = String::from("Ready");
+            if let Some(error) = render_error {
+                return Err(error);
+            }
+            return render(app);
         };
         bridge.call(operation).unwrap_or_else(|e| e)
     } else {
@@ -84,10 +140,20 @@ fn submit(app: &mut App, bridge: &mut Option<bridge::Bridge>, text: String) {
         )
     };
     app.message("assistant", response);
+    app.status = String::from("Ready");
+    render(app)
+}
+
+fn preview(text: &str) -> String {
+    match text.char_indices().nth(1500) {
+        Some((index, _)) => alloc::format!("{}\n[Preview truncated]", &text[..index]),
+        None => text.into(),
+    }
 }
 
 fn run() -> Result<(), terminal::Error> {
     let mut app = App::default();
+    let mut agent = Agent::default();
     let vm = files::read("\\EFI\\AGENT\\VM.TXT").is_ok();
     let mut bridge = if vm { Some(bridge::Bridge::vm()) } else { None };
     // VM mode is explicit. The launcher ESP has no motherboard UART enabled.
@@ -115,7 +181,11 @@ fn run() -> Result<(), terminal::Error> {
                             terminal.backend_mut().dimensions = Size::new(w.min(300), h.min(120));
                             terminal.autoresize()?;
                         } else if let Some(text) = app.key(key) {
-                            submit(&mut app, &mut bridge, text);
+                            submit(&mut app, &mut agent, &mut bridge, text, |app| {
+                                terminal
+                                    .draw(|frame| app.render(frame.area(), frame.buffer_mut()))
+                                    .map(|_| ())
+                            })?;
                         }
                     }
                 }
@@ -133,7 +203,11 @@ fn run() -> Result<(), terminal::Error> {
         if let Some(key) = terminal::console_key()
             && let Some(text) = app.key(key)
         {
-            submit(&mut app, &mut bridge, text);
+            submit(&mut app, &mut agent, &mut bridge, text, |app| {
+                terminal
+                    .draw(|frame| app.render(frame.area(), frame.buffer_mut()))
+                    .map(|_| ())
+            })?;
         }
         boot::stall(core::time::Duration::from_millis(10));
     }

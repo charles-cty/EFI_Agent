@@ -1,3 +1,6 @@
+# /// script
+# dependencies = ["pyte>=0.8.2,<0.9"]
+# ///
 """Boot a real VM and check serial rendering, guest TCP4, and provider RPC.
 
 Run with uv. The provider is a local deterministic HTTP server; no key is needed.
@@ -15,15 +18,18 @@ import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import pyte
 
 
 FILE_MARKER = "HOST_FILE_731_VERIFIED"
 MODEL_MARKER = "MODEL_RESPONSE_419_VERIFIED"
+AGENT_MARKER = "AGENT_TOOLS_853_VERIFIED"
 ANSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 class Provider(BaseHTTPRequestHandler):
     received = False
+    agent_steps = 0
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers["Content-Length"]))
@@ -32,11 +38,38 @@ class Provider(BaseHTTPRequestHandler):
             self.path == "/v1/chat/completions"
             and self.headers["Authorization"] == "Bearer smoke-key"
             and request["model"] == "smoke-model"
-            and request["messages"][-1] == {"role": "user", "content": "Say the model marker"}
             and request["stream"] is False
+            and {tool["function"]["name"] for tool in request["tools"]} == {"read", "write", "edit"}
         )
-        Provider.received = valid
-        response = json.dumps({"choices": [{"message": {"role": "assistant", "content": MODEL_MARKER}}]}).encode()
+        messages = request["messages"]
+        message = {"role": "assistant", "content": MODEL_MARKER}
+        if messages[-1] == {"role": "user", "content": "Say the model marker"}:
+            # UI slash commands must not pollute model history.
+            valid = valid and len(messages) == 2 and messages[0]["role"] == "system"
+            Provider.received = valid
+        else:
+            steps = [
+                ("read", {"path": "needle.txt"}),
+                ("edit", {"path": "needle.txt", "old_text": FILE_MARKER, "new_text": "edited 中 853"}),
+                ("write", {"path": "created.txt", "content": "created 419\n"}),
+                # Ambiguous overlapping replacement must fail without changing the file.
+                ("edit", {"path": "ambiguous.txt", "old_text": "aa", "new_text": "X"}),
+            ]
+            step = Provider.agent_steps
+            if step == 0:
+                valid = valid and messages[-1] == {"role": "user", "content": "Exercise the file tools"}
+            else:
+                expected = [FILE_MARKER, "File edited", "File saved", "Tool error: old_text has multiple matches; file was not changed"][step - 1]
+                valid = valid and messages[-1] == {"role": "tool", "content": expected, "tool_call_id": f"call-{step}"}
+                valid = valid and messages[-2]["tool_calls"][0]["id"] == f"call-{step}"
+            if step < len(steps):
+                name, arguments = steps[step]
+                message = {"role": "assistant", "content": None, "tool_calls": [{"id": f"call-{step+1}", "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}]}
+            else:
+                message = {"role": "assistant", "content": AGENT_MARKER}
+            if valid:
+                Provider.agent_steps += 1
+        response = json.dumps({"choices": [{"message": message}]}).encode()
         self.send_response(200 if valid else 400)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(response)))
@@ -88,6 +121,7 @@ def main():
         with tempfile.TemporaryDirectory(prefix="efi-agent-smoke-") as temporary:
             workspace = Path(temporary)
             (workspace / "needle.txt").write_text(FILE_MARKER, encoding="utf-8")
+            (workspace / "ambiguous.txt").write_text("aaa", encoding="utf-8")
             env = os.environ.copy()
             env.update({
                 "EFI_AGENT_API_BASE": f"http://127.0.0.1:{provider.server_port}/v1",
@@ -124,6 +158,8 @@ def main():
                 with connection:
                     connection.settimeout(0.5)
                     output = bytearray()
+                    screen = pyte.Screen(100, 30)
+                    terminal_stream = pyte.ByteStream(screen)
                     state = "boot"
                     deadline = time.monotonic() + 75
                     while time.monotonic() < deadline:
@@ -132,27 +168,42 @@ def main():
                             if not data:
                                 raise RuntimeError("Guest terminal disconnected")
                             output.extend(data)
+                            terminal_stream.feed(data)
                         except TimeoutError:
                             pass
-                        plain = ANSI.sub(b"", output)
-                        if state == "boot" and b"What would you like to build?" in plain:
+                        visible = "\n".join(screen.display)
+                        if state == "boot" and "What would you like to build?" in visible:
                             print("PASS serial TUI render", flush=True)
                             connection.sendall(b"\x1b[8;29;103t/host-read needle.txt\r")
+                            screen.resize(lines=29, columns=103)
                             state = "file"
-                        elif state == "file" and FILE_MARKER.encode() in plain:
+                        elif state == "file" and FILE_MARKER in visible:
                             print("PASS guest TCP4 host file read", flush=True)
                             connection.sendall(b"Say the model marker\r")
                             state = "model"
-                        elif state == "model" and MODEL_MARKER.encode() in plain:
+                        elif state == "model" and MODEL_MARKER in visible:
                             if not Provider.received:
                                 raise AssertionError("Provider request format was incorrect")
                             print("PASS Chat Completions request and guest response", flush=True)
+                            connection.sendall(b"/clear\rExercise the file tools\r")
+                            state = "agent"
+                        elif state == "agent" and AGENT_MARKER in visible:
+                            if Provider.agent_steps != 5:
+                                raise AssertionError("Agent did not complete all correlated tool rounds")
+                            if (workspace / "needle.txt").read_text(encoding="utf-8") != "edited 中 853":
+                                raise AssertionError("Agent edit did not change the actual file")
+                            if (workspace / "created.txt").read_text(encoding="utf-8") != "created 419\n":
+                                raise AssertionError("Agent write did not create the actual file")
+                            if (workspace / "ambiguous.txt").read_text(encoding="utf-8") != "aaa":
+                                raise AssertionError("Ambiguous edit changed the file")
+                            print("PASS guest-driven read/edit/write loop and failed edit recovery", flush=True)
                             state = "done"
                             break
                         if qemu.poll() is not None:
                             raise RuntimeError("QEMU exited during the test")
                     (args.output / "serial.bin").write_bytes(output)
                     (args.output / "transcript.txt").write_bytes(ANSI.sub(b"", output))
+                    (args.output / "screen.txt").write_text("\n".join(screen.display), encoding="utf-8")
                     if state != "done":
                         raise TimeoutError(f"VM smoke test stopped in state {state}")
     finally:

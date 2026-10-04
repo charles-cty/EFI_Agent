@@ -9,8 +9,8 @@ This is an early implementation, not a complete coding agent. The shared TUI,
 ANSI serial backend, UEFI SimpleText backend, boot-volume file commands, host
 terminal relay, host RPC service, and guest TCP4 transport are implemented.
 A real Linux KVM/OVMF test has verified TUI rendering, a host file read, and
-a Chat Completions round trip against a local simulated provider. The model
-tool loop, bare-metal networking, Windows WHPX, and interactive launcher
+a Chat Completions round trip and a guest-driven read/edit/write tool loop
+against a local simulated provider. Bare-metal networking, Windows WHPX, and interactive launcher
 terminal verification are still pending.
 
 The interface follows the Grok Build header, conversation area, prompt separator,
@@ -49,12 +49,20 @@ modify the supplied template. Read-only vvfat is attached through virtio-blk.
 
 The VM supports `/host-list`, `/host-read <path>`, and
 `/host-write <path> <text>`. A normal prompt calls the provider configured on the
-host. Requests currently block guest input until completion or timeout.
+host. The agent can read UTF-8 files or directory listings, write files, and
+replace one exact occurrence with `edit`. It returns tool results to the model
+and stops after at most twelve rounds of executed tools. Slash commands are
+separate from model history. `/clear` resets the conversation.
+
+The TUI shows model and tool status, tool arguments, bounded result previews,
+and the latest conversation output. Up/Down scroll older/newer output.
+Requests currently block guest input until completion or timeout; status redraws
+between operations do not provide cancellation during a network wait.
 
 ## HostBridge
 
 Frames contain a four-byte big-endian length and JSON, with a 1 MiB limit.
-Requests carry an ID and a tagged operation: `list`, `read`, `write`, or
+Requests carry an ID and a tagged operation: `list`, `read`, `write`, `edit`, or
 `complete`. Responses carry the same ID and a result. Files are UTF-8. Paths
 are relative to the configured workspace. Parent traversal and resolved paths
 outside that workspace are rejected. Concurrent filesystem changes are not
@@ -70,8 +78,12 @@ $env:EFI_AGENT_MODEL = 'your-model'
 ./target/debug/efi-agent.exe serve ./workspace
 ```
 
-No third-party provider call has been verified. `complete` currently returns a single
-Chat Completions text response; it does not yet execute model tool calls.
+No third-party provider call has been verified. `complete` returns a serialized
+Chat Completions assistant message with optional function calls. The host sends
+the three tool definitions, while the UEFI application owns the model loop and
+requests file operations over RPC. Invalid arguments and failed operations
+become correlated tool error messages. `edit` refuses zero or multiple matches,
+including overlapping matches. Files have a 512 KiB size limit.
 
 ## Linux VM smoke test
 
@@ -88,13 +100,14 @@ uv run scripts/smoke_vm.py \
 ```
 
 This boots the UEFI image and checks the actual virtio serial and TCP4 paths.
-It uses a local HTTP provider with a fixed response and needs no API key.
+It uses a local HTTP provider with deterministic text and tool-call responses,
+checks actual edited and created files, and needs no API key.
 It does not verify the launcher's current-terminal relay.
 
 ## Work remaining
 
 - Bare-metal endpoint configuration and direct provider networking.
-- Minimal agent loop with read, write, edit, and command tools.
+- Host command execution and native UEFI tool routing.
 - Responsive model requests, cancellation, multiline editing, and tool views.
 - FAT image packaging.
 - Windows WHPX and Linux KVM end-to-end tests.

@@ -10,7 +10,7 @@ rust-version = "1.93"
 
 [workspace.dependencies]
 efi-agent-core = { path = "crates/core" }
-ratatui = { version = "0.30.2", default-features = false }
+ratatui = { version = "0.30.2", default-features = false, features = ["unstable-rendered-line-info"] }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
 
