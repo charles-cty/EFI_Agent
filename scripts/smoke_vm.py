@@ -183,7 +183,7 @@ def main():
             listener.settimeout(15)
             console_port = listener.getsockname()[1]
             command = [
-                args.qemu, "-machine", f"q35,accel={args.accel}", "-m", "256",
+                args.qemu, "-machine", f"q35,accel={args.accel}", "-m", "128",
                 "-display", "none", "-serial", "none", "-monitor", "none", "-no-reboot",
                 "-drive", f"if=pflash,format=raw,readonly=on,file={args.code.resolve()}",
                 "-drive", f"if=pflash,format=raw,snapshot=on,file={args.vars.resolve()}",

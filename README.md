@@ -76,6 +76,11 @@ to firmware. Ctrl+C immediately exits the launcher, including during guest waits
 ./target/debug/efi-agent.exe vm 'C:\Program Files\qemu\qemu-system-x86_64.exe' 'C:\firmware\OVMF_CODE.fd' 'C:\firmware\OVMF_VARS.fd' ./artifacts/esp ./workspace
 ```
 
+VM memory defaults to 128 MiB. Append `--memory-mib 256` to the launch command
+to allocate 256 MiB, or supply another positive integer in MiB. This setting
+applies to both Windows WHPX and Linux KVM. Smaller values depend on the OVMF
+image and workload and must be verified before use.
+
 The launcher accepts an ESP directory (read-only QEMU vvfat) or a raw boot disk
 image (read-only virtio-blk). HostBridge supplies writable host files separately.
 Supply matching OVMF code and variable-store images. QEMU uses a temporary snapshot of the variable store, so booting does not

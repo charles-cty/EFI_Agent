@@ -31,7 +31,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             println!(
-                "EFI Agent\n  vm <qemu> <OVMF_CODE.fd> <OVMF_VARS.fd> <ESP-directory-or-image> <workspace>\n  serve <workspace> [address]\n  pack <ESP-directory> <new-disk.img>"
+                "EFI Agent\n  vm <qemu> <OVMF_CODE.fd> <OVMF_VARS.fd> <ESP-directory-or-image> <workspace> [--memory-mib <MiB>]\n  serve <workspace> [address]\n  pack <ESP-directory> <new-disk.img>"
             );
             Ok(())
         }

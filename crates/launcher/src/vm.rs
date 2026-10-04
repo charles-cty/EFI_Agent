@@ -35,12 +35,27 @@ impl Drop for Session {
 }
 
 pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
-    if args.len() != 5 {
+    if args.len() != 5 && args.len() != 7 {
         return Err(
-            "Usage: efi-agent vm <qemu> <OVMF_CODE.fd> <OVMF_VARS.fd> <ESP-directory-or-image> <workspace>"
+            "Usage: efi-agent vm <qemu> <OVMF_CODE.fd> <OVMF_VARS.fd> <ESP-directory-or-image> <workspace> [--memory-mib <MiB>]"
                 .into(),
         );
     }
+    let memory_mib = if args.len() == 7 {
+        if args[5] != "--memory-mib" {
+            return Err("Unknown VM option; use --memory-mib <MiB>".into());
+        }
+        let value = args[6]
+            .parse::<u32>()
+            .map_err(|_| "VM memory must be a positive integer in MiB")?;
+        if value == 0 {
+            return Err("VM memory must be greater than zero MiB".into());
+        }
+        value
+    } else {
+        128
+    };
+    let memory = memory_mib.to_string();
     let interrupted = Arc::new(AtomicBool::new(false));
     let signal = Arc::clone(&interrupted);
     ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed))?;
@@ -72,7 +87,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             "-machine",
             &format!("q35,accel={accelerator}"),
             "-m",
-            "256",
+            &memory,
             "-display",
             "none",
             "-monitor",

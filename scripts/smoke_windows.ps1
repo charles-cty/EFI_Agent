@@ -5,7 +5,8 @@ param(
     [string]$Psmux = 'C:\Programs\psmux\psmux.exe',
     [string]$Launcher = '',
     [string]$Esp = '',
-    [string]$Output = ''
+    [string]$Output = '',
+    [ValidateRange(1, 2147483647)][int]$MemoryMiB = 128
 )
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
@@ -72,6 +73,9 @@ try {
     $null = Wait-Screen 'EFI_SHELL_READY'
     $command = '& ' + (Quote-PS $Launcher) + ' vm ' +
         ((@($Qemu, $Code, $Vars, $Esp, $workspace) | ForEach-Object { Quote-PS $_ }) -join ' ')
+    if ($PSBoundParameters.ContainsKey('MemoryMiB')) {
+        $command += " --memory-mib $MemoryMiB"
+    }
     Send-Text ($command + "; Write-Output ('EFI_EXIT_' + `$LASTEXITCODE)")
     $screen = Wait-Screen 'What would you like to build?' 60
     Set-Content -LiteralPath (Join-Path $Output 'initial.txt') -Value $screen -Encoding utf8NoBOM

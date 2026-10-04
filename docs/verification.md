@@ -382,3 +382,21 @@ that streamed text is not duplicated and failed replies do not enter history.
 The provider tests are deterministic local simulations. Real service-provider
 reasoning, credentials, and streaming behavior remain unverified. Provider
 reasoning formats other than reasoning_content are not implemented.
+
+## 2026-10-04: Configurable VM memory
+
+The launcher defaults to 128 MiB for WHPX and KVM. A trailing
+`--memory-mib <MiB>` option selects a positive u32 value. Zero, negative,
+non-numeric, and overflowing values fail before QEMU starts. CLI help and the
+README document the option. The standalone VM smoke test also uses 128 MiB.
+
+Windows WHPX passed default-memory boot, ConPTY input, host files, editor,
+multiline input, quit, and Ctrl+C restoration. At 128 MiB the SSE provider smoke
+test passed cancellation, resize, live text, truncated-tool refusal, and the
+complete file tool loop. A custom 192 MiB launch booted and its live QEMU command
+line contained `-m 192`. Linux and Windows builds and host Clippy passed.
+Two custom-memory ConPTY runs passed file-content checks but stopped at screen
+assertions: captures omitted spaces in rendered answer text. The second run
+passed the Unicode file screen check before failing the multiline screen check.
+The full custom-memory ConPTY run remains unverified; no launcher memory error
+was observed. No claim about peak memory use or smaller allocations is made.
