@@ -64,6 +64,18 @@ and the latest conversation output. Up/Down scroll older/newer output.
 Requests currently block guest input until completion or timeout; status redraws
 between operations do not provide cancellation during a network wait.
 
+The prompt editor supports Left/Right, Home/End (current line), Backspace, and
+Delete at Unicode grapheme boundaries. Ctrl+J inserts a newline; Enter submits
+the whole prompt. Alt/Shift+Enter also inserts a newline when the host terminal
+reports that modifier. The prompt expands to six visible lines and follows the
+editing cursor. Prompts are limited to 64 KiB.
+
+The launcher enables bracketed paste. Pasted line breaks remain inside a single
+prompt and require an explicit Enter to submit. Terminal control characters
+are removed from paste; tabs and line breaks are preserved, and CRLF is
+normalized to LF. Bare-metal keyboards use the same editor with firmware key
+codes; the exact modified-key support depends on firmware.
+
 ## HostBridge
 
 Frames contain a four-byte big-endian length and JSON, with a 1 MiB limit.
@@ -119,7 +131,8 @@ uv run scripts/smoke_launcher.py --launcher target/debug/efi-agent \
 ```
 
 This checks initial and changed dimensions, Unicode file input, Backspace,
-`/quit`, Ctrl+C, termios restoration, and leaving the alternate screen.
+cursor editing, multiline input, bracketed paste, `/quit`, Ctrl+C, termios
+restoration, and leaving the alternate screen.
 
 ## Work remaining
 

@@ -96,6 +96,47 @@ def main():
             screen = wait_for("left 中 right")
             (output / "file.txt").write_text(screen, encoding="utf-8")
             print("PASS Unicode input, Backspace, and host file RPC", flush=True)
+            tmux("send-keys", "-t", pane, "-l", "/host-write editor.txt left 中X right")
+            tmux("send-keys", "-t", pane, "Left", "Left", "Left", "Left", "Left", "Left", "BSpace")
+            tmux("send-keys", "-t", pane, "Home", "End", "Enter")
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                path = workspace / "editor.txt"
+                if path.exists() and path.read_text(encoding="utf-8") == "left 中 right":
+                    break
+                time.sleep(0.1)
+            else:
+                raise AssertionError("Cursor editing did not preserve Unicode file content")
+            print("PASS Unicode cursor editing and Home/End", flush=True)
+            tmux("send-keys", "-t", pane, "-l", "/host-write multiline.txt first")
+            tmux("send-keys", "-t", pane, "C-j")
+            tmux("send-keys", "-t", pane, "-l", "second 中")
+            wait_for("second 中")
+            if (workspace / "multiline.txt").exists():
+                raise AssertionError("Newline submitted a partial prompt")
+            tmux("send-keys", "-t", pane, "Enter")
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                path = workspace / "multiline.txt"
+                if path.exists() and path.read_text(encoding="utf-8") == "first\nsecond 中":
+                    break
+                time.sleep(0.1)
+            else:
+                raise AssertionError("Multiline prompt was not saved exactly")
+            tmux("send-keys", "-t", pane, "-l", "\x1b[200~/host-write pasted.txt alpha\n/quit\nβ\x1b[201~")
+            wait_for("β")
+            if (workspace / "pasted.txt").exists():
+                raise AssertionError("Paste submitted before explicit Enter")
+            tmux("send-keys", "-t", pane, "Enter")
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                path = workspace / "pasted.txt"
+                if path.exists() and path.read_text(encoding="utf-8") == "alpha\n/quit\nβ":
+                    break
+                time.sleep(0.1)
+            else:
+                raise AssertionError("Bracketed paste did not preserve exact content")
+            print("PASS multiline input and bracketed paste without accidental submit", flush=True)
             send("/quit")
             restored()
             print("PASS /quit and terminal restoration", flush=True)

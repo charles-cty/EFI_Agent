@@ -273,6 +273,7 @@ dependencies = [
  "ratatui",
  "serde",
  "serde_json",
+ "unicode-segmentation",
 ]
 
 [[package]]

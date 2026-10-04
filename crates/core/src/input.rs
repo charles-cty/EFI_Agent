@@ -8,6 +8,12 @@ pub enum Key {
     Escape,
     Up,
     Down,
+    Left,
+    Right,
+    Home,
+    End,
+    Delete,
+    Newline,
     Quit,
     Resize(u16, u16),
 }
@@ -16,6 +22,7 @@ pub enum Key {
 #[derive(Default)]
 pub struct Decoder {
     pending: Vec<u8>,
+    paste: bool,
 }
 
 impl Decoder {
@@ -27,6 +34,9 @@ impl Decoder {
             }
             if self.pending[1] != b'[' {
                 self.pending.clear();
+                if byte == 13 || byte == 10 {
+                    return Some(Key::Newline);
+                }
                 return Some(Key::Escape);
             }
             if self.pending.len() < 3 {
@@ -41,6 +51,24 @@ impl Decoder {
             let result = match byte {
                 b'A' => Some(Key::Up),
                 b'B' => Some(Key::Down),
+                b'C' => Some(Key::Right),
+                b'D' => Some(Key::Left),
+                b'H' => Some(Key::Home),
+                b'F' => Some(Key::End),
+                b'~' => match &self.pending[2..self.pending.len() - 1] {
+                    b"3" => Some(Key::Delete),
+                    b"1" | b"7" => Some(Key::Home),
+                    b"4" | b"8" => Some(Key::End),
+                    b"200" => {
+                        self.paste = true;
+                        None
+                    }
+                    b"201" => {
+                        self.paste = false;
+                        None
+                    }
+                    _ => None,
+                },
                 b't' => {
                     let Ok(text) = core::str::from_utf8(&self.pending[2..self.pending.len() - 1])
                     else {
@@ -65,7 +93,10 @@ impl Decoder {
         }
         let result = match self.pending[0] {
             3 => Some(Key::Quit),
-            10 | 13 => Some(Key::Enter),
+            10 => Some(Key::Newline),
+            13 if self.paste => Some(Key::Newline),
+            13 => Some(Key::Enter),
+            9 if self.paste => Some(Key::Character('\t')),
             8 | 127 => Some(Key::Backspace),
             _ => match core::str::from_utf8(&self.pending) {
                 Ok(text) => text
@@ -78,7 +109,11 @@ impl Decoder {
             },
         };
         self.pending.clear();
-        result
+        if self.paste && matches!(result, Some(Key::Quit | Key::Backspace)) {
+            None
+        } else {
+            result
+        }
     }
 }
 
@@ -102,5 +137,25 @@ mod tests {
         let input = b"\x1b[8;\xff;10tz\x1b[8;0;90t\x1b[8;14;81t";
         let keys: Vec<_> = input.iter().filter_map(|b| decoder.push(*b)).collect();
         assert_eq!(keys, [Key::Character('z'), Key::Resize(81, 14)]);
+    }
+    #[test]
+    fn multiline_paste_does_not_submit_or_quit() {
+        let mut decoder = Decoder::default();
+        let keys: Vec<_> = b"\x1b[200~a\rb\n\x03\x1b[201~\r\x1b[D\x1b[3~"
+            .iter()
+            .filter_map(|b| decoder.push(*b))
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                Key::Character('a'),
+                Key::Newline,
+                Key::Character('b'),
+                Key::Newline,
+                Key::Enter,
+                Key::Left,
+                Key::Delete
+            ]
+        );
     }
 }

@@ -151,3 +151,39 @@ Windows host tests and host/UEFI Clippy pass; UEFI release linking passes. This
 proves the Linux current-terminal route, not Windows ConPTY or physical hardware.
 Bare-metal networking, Windows WHPX, complex editing controls, in-guest request
 cancellation, command tools, and a real provider remain incomplete/unverified.
+
+## 2026-10-04: multiline Unicode prompt editor
+
+The prompt now uses a no_std extended-grapheme editor. Left/Right, Home/End,
+Delete, Backspace, and newline insertion maintain a valid UTF-8 and grapheme
+cursor boundary. Insertion and deletion can join adjacent combining or ZWJ
+sequences, so the cursor is normalized after mutations. The UI marks the cursor,
+grows to six prompt lines, and scrolls its viewport to the current position.
+Ctrl+J inserts a newline; Enter submits. Firmware scan codes route to the same
+editor. Bare-metal execution of these keys remains unverified.
+
+The native launcher now enables bracketed paste and normalizes CRLF/CR to LF.
+It removes pasted terminal controls while retaining tabs/newlines. The guest
+decoder treats line breaks inside bracketed paste as input, never submit.
+The launcher's terminal cleanup disables bracketed paste before restoring the
+alternate screen. Modified Enter inserts a newline where terminal input exposes
+the modifier. There is a 64 KiB prompt limit.
+
+Structured randomized testing exercises 12,000 edits using ASCII, Chinese,
+combining marks, ZWJ emoji parts, regional indicators, and newlines. After every
+operation it independently checks the cursor against full-string grapheme
+boundaries. Fixed checks cover Unicode deletion, combining insertion, empty
+boundaries, and fragmented multiline paste. All tests pass.
+
+The expanded real tmux/KVM launcher test verifies an actual edited host file,
+Ctrl+J input saved with exact newline content, and bracketed pasted content
+containing `/quit` and Greek text. Neither newline nor paste creates a file
+before explicit Enter; the final file contents are checked independently.
+The existing resize, host RPC, quit, and terminal-restoration checks pass.
+
+A resize test exposed `Interrupted` from socket Read on SIGWINCH. The launcher
+now continues on interrupted socket/event reads rather than exiting. Host and
+UEFI Clippy and release linking pass. Complex TUI work remains incomplete:
+history navigation, richer tool views, responsive cancellation, and other
+controls still need implementation; Windows ConPTY and physical hardware
+verification remain open.

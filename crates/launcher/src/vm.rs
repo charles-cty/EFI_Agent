@@ -24,7 +24,7 @@ impl Drop for Session {
             let _ = terminal::disable_raw_mode();
         }
         if self.raw {
-            print!("\x1b[0m\x1b[?25h\x1b[?1049l");
+            print!("\x1b[?2004l\x1b[0m\x1b[?25h\x1b[?1049l");
             let _ = std::io::stdout().flush();
         }
     }
@@ -121,7 +121,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     socket.set_write_timeout(Some(Duration::from_secs(2)))?;
     terminal::enable_raw_mode()?;
     session.raw = true;
-    print!("\x1b[?1049h\x1b[2J\x1b[H");
+    print!("\x1b[?1049h\x1b[?2004h\x1b[2J\x1b[H");
     std::io::stdout().flush()?;
     // Firmware consumes serial input before the application boots. Do not
     // send any terminal input until the guest identifies itself as ready.
@@ -154,7 +154,9 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             Err(e)
                 if matches!(
                     e.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    std::io::ErrorKind::WouldBlock
+                        | std::io::ErrorKind::TimedOut
+                        | std::io::ErrorKind::Interrupted
                 ) => {}
             Err(e) => return Err(e.into()),
         }
@@ -171,8 +173,18 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             }
             size_check = Instant::now();
         }
-        if event::poll(Duration::from_millis(5))? {
-            match event::read()? {
+        let available = match event::poll(Duration::from_millis(5)) {
+            Ok(available) => available,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if available {
+            let input = match event::read() {
+                Ok(input) => input,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error.into()),
+            };
+            match input {
                 Event::Resize(w, h) if ready => {
                     socket.write_all(format!("\x1b[8;{h};{w}t").as_bytes())?;
                     dimensions = Some((w, h));
@@ -182,12 +194,27 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             vec![3]
                         }
+                        KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            vec![10]
+                        }
                         KeyCode::Char(c) => c.to_string().into_bytes(),
+                        KeyCode::Enter
+                            if key
+                                .modifiers
+                                .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT) =>
+                        {
+                            vec![10]
+                        }
                         KeyCode::Enter => vec![13],
                         KeyCode::Backspace => vec![127],
                         KeyCode::Esc => vec![27],
                         KeyCode::Up => b"\x1b[A".to_vec(),
                         KeyCode::Down => b"\x1b[B".to_vec(),
+                        KeyCode::Left => b"\x1b[D".to_vec(),
+                        KeyCode::Right => b"\x1b[C".to_vec(),
+                        KeyCode::Home => b"\x1b[H".to_vec(),
+                        KeyCode::End => b"\x1b[F".to_vec(),
+                        KeyCode::Delete => b"\x1b[3~".to_vec(),
                         _ => Vec::new(),
                     };
                     if ready {
@@ -197,6 +224,19 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                     if bytes == [3] {
                         break;
                     }
+                }
+                Event::Paste(text) if ready => {
+                    // Filter terminal controls. Preserve only printable text,
+                    // line breaks and tabs; pasted escapes must never become
+                    // resize, quit, or editor control sequences in the guest.
+                    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+                    let text: String = text
+                        .chars()
+                        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
+                        .collect();
+                    socket.write_all(b"\x1b[200~")?;
+                    socket.write_all(text.as_bytes())?;
+                    socket.write_all(b"\x1b[201~")?;
                 }
                 _ => {}
             }
