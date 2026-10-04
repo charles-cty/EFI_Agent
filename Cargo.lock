@@ -281,7 +281,10 @@ version = "0.1.0"
 dependencies = [
  "efi-agent-core",
  "ratatui",
+ "serde",
+ "serde_json",
  "uefi",
+ "uefi-raw",
 ]
 
 [[package]]

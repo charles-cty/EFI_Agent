@@ -7,8 +7,11 @@ A Rust UEFI coding agent with a Ratatui interface. The firmware application uses
 
 This is an early implementation, not a complete coding agent. The shared TUI,
 ANSI serial backend, UEFI SimpleText backend, boot-volume file commands, host
-terminal relay, and host RPC service are implemented. The guest TCP4 transport,
-model tool loop, and firmware runtime verification are still pending.
+terminal relay, host RPC service, and guest TCP4 transport are implemented.
+A real Linux KVM/OVMF test has verified TUI rendering, a host file read, and
+a Chat Completions round trip against a local simulated provider. The model
+tool loop, bare-metal networking, Windows WHPX, and interactive launcher
+terminal verification are still pending.
 
 The interface follows the Grok Build header, conversation area, prompt separator,
 and muted status-line design. It does not use Grok Build source code or branding.
@@ -36,13 +39,17 @@ VirtioNetDxe. WHPX must be enabled on Windows; KVM must be available on Linux.
 The launcher uses the current terminal, with no graphical QEMU window.
 
 ```powershell
-./target/debug/efi-agent.exe vm 'C:\Program Files\qemu\qemu-system-x86_64.exe' 'C:\firmware\OVMF_CODE.fd' ./artifacts/esp ./workspace
+./target/debug/efi-agent.exe vm 'C:\Program Files\qemu\qemu-system-x86_64.exe' 'C:\firmware\OVMF_CODE.fd' 'C:\firmware\OVMF_VARS.fd' ./artifacts/esp ./workspace
 ```
 
 The VM currently uses read-only QEMU vvfat for the boot files. HostBridge supplies
-writable host files separately. The launcher has not yet been tested against a
-live VM. It requires an OVMF code image that can boot without a separate writable
-variable-store image; broader firmware packaging remains pending.
+writable host files separately. Supply matching OVMF code and variable-store
+images. QEMU uses a temporary snapshot of the variable store, so booting does not
+modify the supplied template. Read-only vvfat is attached through virtio-blk.
+
+The VM supports `/host-list`, `/host-read <path>`, and
+`/host-write <path> <text>`. A normal prompt calls the provider configured on the
+host. Requests currently block guest input until completion or timeout.
 
 ## HostBridge
 
@@ -63,15 +70,33 @@ $env:EFI_AGENT_MODEL = 'your-model'
 ./target/debug/efi-agent.exe serve ./workspace
 ```
 
-No live model call has been verified. `complete` currently returns a single
+No third-party provider call has been verified. `complete` currently returns a single
 Chat Completions text response; it does not yet execute model tool calls.
+
+## Linux VM smoke test
+
+Build in a Linux-local checkout with `scripts/build.sh`. With QEMU, KVM access,
+and matching OVMF images available, run:
+
+```sh
+uv run scripts/smoke_vm.py \
+  --qemu qemu-system-x86_64 --accel kvm \
+  --code /usr/share/OVMF/OVMF_CODE_4M.fd \
+  --vars /usr/share/OVMF/OVMF_VARS_4M.fd \
+  --esp artifacts/esp --launcher target/debug/efi-agent \
+  --output artifacts/smoke
+```
+
+This boots the UEFI image and checks the actual virtio serial and TCP4 paths.
+It uses a local HTTP provider with a fixed response and needs no API key.
+It does not verify the launcher's current-terminal relay.
 
 ## Work remaining
 
-- Guest TCP4 transport, configuration, and timeouts.
+- Bare-metal endpoint configuration and direct provider networking.
 - Minimal agent loop with read, write, edit, and command tools.
 - Responsive model requests, cancellation, multiline editing, and tool views.
-- FAT image packaging and OVMF code/variable-store support.
+- FAT image packaging.
 - Windows WHPX and Linux KVM end-to-end tests.
 - Bare-metal file and network configuration and hardware verification.
 

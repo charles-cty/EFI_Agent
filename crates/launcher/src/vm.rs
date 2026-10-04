@@ -30,16 +30,21 @@ impl Drop for Session {
 }
 
 pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
-    if args.len() != 4 {
-        return Err("Usage: efi-agent vm <qemu> <OVMF_CODE.fd> <ESP-directory> <workspace>".into());
+    if args.len() != 5 {
+        return Err(
+            "Usage: efi-agent vm <qemu> <OVMF_CODE.fd> <OVMF_VARS.fd> <ESP-directory> <workspace>"
+                .into(),
+        );
     }
     let firmware = PathBuf::from(&args[1]).canonicalize()?;
-    let esp = PathBuf::from(&args[2]).canonicalize()?;
-    let root = PathBuf::from(&args[3]).canonicalize()?;
+    let variables = PathBuf::from(&args[2]).canonicalize()?;
+    let esp = PathBuf::from(&args[3]).canonicalize()?;
+    let root = PathBuf::from(&args[4]).canonicalize()?;
     // QEMU parses drive arguments itself. Extended Win32 prefixes and commas
     // must not pass through this comma-delimited option syntax unchanged.
     let firmware = qemu_path(&firmware)?;
     let esp = qemu_path(&esp)?;
+    let variables = qemu_path(&variables)?;
     let console = TcpListener::bind("127.0.0.1:0")?;
     let console_port = console.local_addr()?.port();
     console.set_nonblocking(true)?;
@@ -66,7 +71,15 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             "-drive",
             &format!("if=pflash,format=raw,readonly=on,file={}", firmware),
         ])
-        .args(["-drive", &format!("format=raw,file=fat:ro:{esp}")])
+        .args([
+            "-drive",
+            &format!("if=pflash,format=raw,snapshot=on,file={variables}"),
+        ])
+        .args([
+            "-drive",
+            &format!("if=none,id=esp,format=raw,readonly=on,file=fat:ro:{esp}"),
+        ])
+        .args(["-device", "virtio-blk-pci,drive=esp"])
         .args([
             "-device",
             "virtio-serial-pci",

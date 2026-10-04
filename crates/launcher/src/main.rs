@@ -28,7 +28,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             println!(
-                "EFI Agent\n  vm <qemu> <OVMF_CODE.fd> <ESP-directory> <workspace>\n  serve <workspace> [address]"
+                "EFI Agent\n  vm <qemu> <OVMF_CODE.fd> <OVMF_VARS.fd> <ESP-directory> <workspace>\n  serve <workspace> [address]"
             );
             Ok(())
         }

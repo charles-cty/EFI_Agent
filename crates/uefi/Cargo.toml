@@ -8,4 +8,7 @@ rust-version.workspace = true
 [dependencies]
 efi-agent-core.workspace = true
 ratatui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uefi-raw = "0.17"
 uefi = { version = "0.41", features = ["alloc", "global_allocator", "panic_handler"] }

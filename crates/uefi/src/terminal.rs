@@ -25,10 +25,57 @@ impl fmt::Display for Error {
 impl core::error::Error for Error {}
 
 pub struct SerialSink(pub ScopedProtocol<Serial>);
+impl SerialSink {
+    fn raw(&mut self) -> *mut uefi_raw::protocol::console::serial::SerialIoProtocol {
+        // Serial is repr(transparent) over SerialIoProtocol in uefi-rs.
+        (&mut *self.0 as *mut Serial).cast()
+    }
+
+    pub fn read(&mut self, bytes: &mut [u8]) -> Result<usize, Error> {
+        let protocol = self.raw();
+        let mut count = bytes.len();
+        // SAFETY: protocol is exclusively open and bytes is a writable buffer.
+        let status = unsafe { ((*protocol).read)(protocol, &mut count, bytes.as_mut_ptr()) };
+        if count > bytes.len() {
+            return Err(Error(uefi::Status::BAD_BUFFER_SIZE));
+        }
+        match status {
+            uefi::Status::SUCCESS | uefi::Status::TIMEOUT => Ok(count),
+            other => Err(Error(other)),
+        }
+    }
+}
 impl Sink for SerialSink {
     type Error = Error;
     fn write(&mut self, bytes: &[u8]) -> Result<(), Error> {
-        self.0.write_exact(bytes).map_err(|e| Error(e.status()))
+        // OVMF VirtioSerialDxe returns successful short writes (128-byte TX
+        // queue), unlike the all-or-timeout assumption in uefi-rs write_exact.
+        // Honor the firmware's returned count and keep every byte in order.
+        let mut remaining = bytes;
+        let mut no_progress = 0;
+        while !remaining.is_empty() {
+            let protocol = self.raw();
+            let mut count = remaining.len();
+            // SAFETY: the firmware only reads this live slice for this call.
+            let status = unsafe { ((*protocol).write)(protocol, &mut count, remaining.as_ptr()) };
+            if count > remaining.len() {
+                return Err(Error(uefi::Status::BAD_BUFFER_SIZE));
+            }
+            if status != uefi::Status::SUCCESS && status != uefi::Status::TIMEOUT {
+                return Err(Error(status));
+            }
+            remaining = &remaining[count..];
+            if count == 0 {
+                no_progress += 1;
+                if no_progress >= 1000 {
+                    return Err(Error(uefi::Status::TIMEOUT));
+                }
+                uefi::boot::stall(core::time::Duration::from_millis(1));
+            } else {
+                no_progress = 0;
+            }
+        }
+        Ok(())
     }
 }
 

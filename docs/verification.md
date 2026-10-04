@@ -32,3 +32,48 @@ prove it is absent from all other locations. No VM test has been claimed.
 
 The full objective remains open. See the README work list. Compilation and host
 tests do not establish firmware or hypervisor support.
+
+## 2026-10-04: TCP4 and KVM runtime
+
+Implemented guest TCP4 service binding and child ownership, DHCP initialization,
+connect/transmit/receive completion events, deadlines, cancellation, and framed
+RPC. Flexible-array packet offsets are checked at compile time. Completion
+contexts stay allocated until CloseEvent; a queued token must complete or be
+cancelled before its storage is released. Network operations currently block
+guest input; interactive cancellation remains pending.
+
+The VM now calls HostBridge for host file commands and normal model prompts.
+The launcher accepts paired OVMF CODE and VARS images and uses a snapshot for
+VARS. A real boot found two faults in the initial launcher: a missing variable
+store and an unsuitable default disk attachment for read-only vvfat. The boot
+disk now uses virtio-blk with explicit read-only access.
+
+The first KVM TUI render panicked in uefi-rs Serial::write: VirtioSerialDxe
+reported SUCCESS for a short 128-byte write out of 4100 bytes. The screen dump
+showed the exact assertion. The serial backend now uses the protocol's returned
+byte count and retries the remaining output. It also honors actual read counts.
+These calls retain uefi-rs protocol ownership and use the raw ABI only for I/O.
+
+Runtime environment: QEMU 8.2.2, Linux KVM, distro OVMF_CODE_4M.fd and
+OVMF_VARS_4M.fd, Windows-built release BOOTX64.EFI copied to a Linux-local ESP,
+and a Linux-native HostBridge executable built with Rust 1.97.1.
+
+`uv run scripts/smoke_vm.py` passed all three runtime checks:
+
+1. OVMF starts BOOTX64.EFI and the custom serial backend renders the TUI.
+2. A resize and `/host-read needle.txt` reach the guest; EFI TCP4 over virtio-net
+   and QEMU guestfwd returns the actual host file marker.
+3. A normal prompt reaches a local HTTP Chat Completions provider. The provider
+   checks the URL, Authorization header, model, final message, and stream flag.
+   Its response reaches the guest and appears in the serial TUI transcript.
+
+The test saves serial bytes, a transcript, and process logs. It uses a simulated
+provider; it does not establish third-party provider compatibility. It launches
+QEMU directly to test the guest transport and does not exercise the native
+launcher's interactive terminal relay. Linux host tests also pass. Windows
+native host tests, host Clippy, UEFI Clippy, and release linking pass.
+
+Still unverified: Windows WHPX/ConPTY, interactive Linux launcher behavior,
+bare-metal hardware, cancellation under stalled firmware, and a real provider.
+Still incomplete: model tool execution, richer TUI controls, bare-metal network
+configuration, direct provider access, and FAT image creation. The goal is open.
