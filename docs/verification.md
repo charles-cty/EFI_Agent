@@ -473,3 +473,34 @@ Linux also passed resize and bracketed paste with an embedded /exit line.
 Terminal checks use test configuration and unknown slash commands to exercise
 the editor without issuing API requests. File behavior is verified through the
 agent tool-loop tests. Builds, Clippy, and the existing 23 tests passed.
+
+## 2026-10-04: Idle connection keepalive and recovery
+
+HostBridge no longer applies its 180-second read timeout to an idle connection.
+It waits for the first byte without a timeout, then bounds the rest of the frame.
+The guest sends a ping after 30 seconds without an RPC request, once its first
+connection has been established. Ping replies and model configuration checks
+have five-second receive deadlines. Connection and transmit deadlines remain
+separate. Idle polling retains editor input, cancellation, and resize handling.
+Only ping is automatically retried; files and model calls are never replayed.
+Failed heartbeats discard the transport and partial framing, reconnect, and retry
+once; further recovery runs on subsequent intervals. A successful heartbeat
+restores the connection error status to Ready.
+
+QEMU guestfwd uses an explicit socket chardev with reconnect-ms=1000. Its prior
+implicit TCP chardev did not reconnect when the host service restarted, even
+when the firmware created a new TCP connection. TCP child retirement also sends
+an abortive Close token before local reset and destruction, with the same token
+lifetime and event-dispatch rules as other asynchronous operations.
+
+Windows QEMU 11.1.0/WHPX passed an idle interval of 190 seconds followed by a new
+streamed model reply. Restarting HostBridge while the guest was idle also passed
+heartbeat recovery and a subsequent reply without rebooting QEMU. ConPTY checks
+passed Unicode/multiline editing, /exit, and Ctrl+C restoration. Native OVMF
+passed cancellation and local file tools. Linux and Windows passed 23 tests,
+including socket ping and fragmented frame checks, builds, and Clippy.
+
+The installed Linux QEMU 7.2 rejects reconnect-ms. It passed the firmware
+heartbeat and file/tool regression before the chardev change, but the final
+launcher requires a current QEMU with that option. No deprecated reconnect
+option or compatibility fallback was added. The README states this requirement.

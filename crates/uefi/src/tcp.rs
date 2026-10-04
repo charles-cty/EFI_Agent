@@ -103,7 +103,7 @@ impl Deadline {
         .map_err(|e| format!("TCP4 timer: {e}"))?;
         Ok(timer)
     }
-    fn expired(&self) -> bool {
+    pub(crate) fn expired(&self) -> bool {
         // Timer errors terminate the wait, which will cancel the queued token.
         boot::check_event(self.0.as_ref().expect("Live timer")).unwrap_or(true)
     }
@@ -473,6 +473,26 @@ impl Drop for Tcp {
     fn drop(&mut self) {
         if self.protocol.is_some() {
             let protocol = self.raw();
+            // Configure(NULL) only resets the local state machine. Send an
+            // abortive close first so peers and QEMU retire the old connection.
+            if let (Ok(completion), Ok(deadline)) =
+                (Completion::new(), Deadline::new(Duration::from_secs(2)))
+            {
+                let mut token = Tcp4CloseToken {
+                    completion_token: completion.token(),
+                    abort_on_close: true.into(),
+                };
+                // SAFETY: Drop runs at APPLICATION with no other queued tokens;
+                // close token stays live through completion or confirmed reset.
+                if unsafe { ((*protocol).close)(protocol, &mut token) } == Status::SUCCESS {
+                    let _ = self.wait(
+                        &mut token.completion_token,
+                        &completion,
+                        &deadline,
+                        &mut || false,
+                    );
+                }
+            }
             // SAFETY: all methods have retired their tokens before returning.
             let _ = unsafe { ((*protocol).configure)(protocol, ptr::null()) };
             // CloseProtocol must precede DestroyChild.

@@ -51,6 +51,8 @@ class Provider(BaseHTTPRequestHandler):
             Provider.waiting.set()
             Provider.release.wait(timeout=10)
             message = {"role": "assistant", "content": "STALE_RESPONSE_MUST_NOT_APPEAR"}
+        elif messages[-1]["content"] in ("After idle", "After reconnect"):
+            message = {"role": "assistant", "content": "RECONNECTED_VERIFIED" if messages[-1]["content"] == "After reconnect" else "IDLE_CONNECTION_VERIFIED"}
         elif messages[-1] == {"role": "user", "content": "Exercise truncated tools"}:
             message = {"role": "assistant", "content": None, "tool_calls": [{"id": "truncated", "type": "function", "function": {"name": "write", "arguments": json.dumps({"path": "must-not-exist.txt", "content": "BAD"})}}]}
         elif messages[-1] == {"role": "user", "content": "Say the model marker"}:
@@ -152,6 +154,7 @@ def main():
     parser.add_argument("--launcher", type=Path, required=True)
     parser.add_argument("--accel", choices=["kvm", "whpx"], required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--idle-seconds", type=int, default=0)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
 
@@ -191,7 +194,8 @@ def main():
                 "-device", "virtio-blk-pci,drive=esp", "-device", "virtio-serial-pci",
                 "-chardev", f"socket,id=terminal,host=127.0.0.1,port={console_port}",
                 "-device", "virtconsole,chardev=terminal",
-                "-netdev", f"user,id=network,guestfwd=tcp:10.0.2.100:7420-tcp:127.0.0.1:{rpc_port}",
+                "-chardev", f"socket,id=bridge,host=127.0.0.1,port={rpc_port},reconnect-ms=1000",
+                "-netdev", "user,id=network,guestfwd=tcp:10.0.2.100:7420-chardev:bridge",
                 "-device", "virtio-net-pci,netdev=network",
             ]
             qemu = subprocess.Popen(command, cwd=workspace, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -271,6 +275,34 @@ def main():
                         if (workspace / "ambiguous.txt").read_text(encoding="utf-8") != "aaa":
                             raise AssertionError("Ambiguous edit changed the file")
                         print("PASS guest-driven read/edit/write loop and failed edit recovery", flush=True)
+                        if args.idle_seconds:
+                            idle_until = time.monotonic() + args.idle_seconds
+                            deadline = idle_until + 30
+                            state = "idle"
+                        else:
+                            state = "done"
+                            break
+                    elif state == "idle" and time.monotonic() >= idle_until:
+                        connection.sendall(b"After idle\r")
+                        state = "after-idle"
+                    elif state == "after-idle" and "IDLE_CONNECTION_VERIFIED" in visible:
+                        print(f"PASS model response after {args.idle_seconds}s idle", flush=True)
+                        bridge.terminate()
+                        bridge.communicate(timeout=10)
+                        bridge = subprocess.Popen(
+                            [str(args.launcher.resolve()), "serve", str(workspace), f"127.0.0.1:{rpc_port}"],
+                            cwd=workspace, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                        )
+                        children.append(("bridge-restarted", bridge))
+                        wait_for_service(bridge, rpc_port)
+                        idle_until = time.monotonic() + 40
+                        deadline = idle_until + 45
+                        state = "reconnecting"
+                    elif state == "reconnecting" and time.monotonic() >= idle_until:
+                        connection.sendall(b"/clear\rAfter reconnect\r")
+                        state = "after-reconnect"
+                    elif state == "after-reconnect" and "RECONNECTED_VERIFIED" in visible:
+                        print("PASS heartbeat recovery after HostBridge restart", flush=True)
                         state = "done"
                         break
                     if qemu.poll() is not None:

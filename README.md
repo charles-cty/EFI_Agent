@@ -71,6 +71,9 @@ FAT boot volume, independently of VM mode and host-file routing.
 
 Install QEMU and supply an OVMF image that includes VirtioSerialDxe and
 VirtioNetDxe. WHPX must be enabled on Windows; KVM must be available on Linux.
+Use a QEMU release whose socket chardev supports `reconnect-ms`. The tested
+Windows release is QEMU 11.1.0. The bridge socket reconnects every second after
+a host disconnect.
 The launcher uses the current terminal, with no graphical QEMU window.
 It waits for an application readiness marker before forwarding input, so OVMF
 cannot interpret initial terminal dimensions as firmware menu keystrokes.
@@ -112,6 +115,17 @@ The host provider call may continue until its response or 120-second timeout.
 The relay allows four model requests in flight so a new request can proceed
 while a cancelled call finishes. Responses retain their request IDs; cancelled
 responses are discarded without losing partially received frame boundaries.
+
+HostBridge connections stay open while the application is idle. After the first
+connection, the guest sends a heartbeat after 30 seconds without RPC activity.
+A failed heartbeat clears the transport and reconnects automatically; if the
+relay remains unavailable, the idle loop retries on the next heartbeat interval.
+Heartbeat responses have a five-second deadline. User input remains buffered and
+Esc/Ctrl+C can cancel the wait. Only heartbeats are retried automatically; file
+operations and model requests are never replayed. The host applies its read
+timeout only after a frame starts, so normal inactivity does not close a session.
+Connection setup and frame transmission retain their own bounded timeouts; the
+five-second deadline applies to the heartbeat reply after transmission.
 
 The prompt editor supports Left/Right, Home/End (current line), Backspace, and
 Delete at Unicode grapheme boundaries. Ctrl+J inserts a newline; Enter submits
@@ -180,7 +194,7 @@ checks the relay configuration; it does not enter model-wait status when that
 check fails.
 
 Frames contain a four-byte big-endian length and JSON, with a 1 MiB limit.
-Requests carry an ID and a tagged operation: `model_config`, `read`, `write`, `edit`, or
+Requests carry an ID and a tagged operation: `ping`, `model_config`, `read`, `write`, `edit`, or
 `complete`. Responses carry the same ID and a result. A model request can send
 text progress frames with a `delta` field before its final response. The guest
 uses request IDs to discard both progress and final frames from cancelled calls.

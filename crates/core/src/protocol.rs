@@ -14,6 +14,7 @@ pub struct Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Operation {
+    Ping,
     ModelConfig,
     Read {
         path: String,

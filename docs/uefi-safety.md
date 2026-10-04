@@ -36,6 +36,10 @@ The single application thread cooperatively pumps asynchronous TCP4 tokens,
 input, resize, cancellation, and rendering. Timer waits yield to firmware between
 polls. Main input loops, DHCP waits, and TCP4 waits use the same dispatcher.
 These operations use stack-based cooperative waits, not OS threads or SMP.
+Idle heartbeats use this same application-level pump. They do not create a
+firmware thread or run network logic in a timer callback. Retiring a TCP child
+first requests an abortive close, so the peer can discard its old connection,
+then resets and destroys the child after its token is retired.
 Firmware file and console protocol calls are synchronous; cancellation cannot
 preempt a firmware call. Keep their work bounded and do not call them from EFI
 callbacks. Serial short-write backoff uses `Stall()` at application TPL and does

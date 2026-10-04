@@ -321,6 +321,46 @@ fn run() -> Result<(), terminal::Error> {
                         })?;
                     }
                 }
+                if !app.quit
+                    && let Some(runtime) = bridge.as_mut()
+                {
+                    let mut cancelled = false;
+                    let result = runtime.keep_alive(&mut || {
+                        let mut bytes = [0; 128];
+                        match terminal.backend_mut().sink.read(&mut bytes) {
+                            Ok(count) => {
+                                if count == 0
+                                    && let Some(key) = decoder.idle()
+                                {
+                                    cancelled |= request_key(&mut app, &mut deferred, key);
+                                }
+                                for byte in &bytes[..count] {
+                                    if let Some(key) = decoder.push(*byte) {
+                                        if let Key::Resize(w, h) = key {
+                                            terminal.backend_mut().dimensions =
+                                                Size::new(w.min(300), h.min(120));
+                                            if terminal.autoresize().is_err() {
+                                                cancelled = true;
+                                            }
+                                        } else {
+                                            cancelled |= request_key(&mut app, &mut deferred, key);
+                                        }
+                                    }
+                                }
+                            }
+                            Err(_) => cancelled = true,
+                        }
+                        cancelled
+                    });
+                    if matches!(result, Ok(true)) && app.status.starts_with("Connection:") {
+                        app.status = String::from("Ready");
+                    }
+                    if let Err(error) = result
+                        && error != "Request cancelled"
+                    {
+                        app.status = alloc::format!("Connection: {error}; retrying automatically");
+                    }
+                }
                 event_loop::idle(core::time::Duration::from_millis(10))
                     .map_err(|_| terminal::Error(Status::DEVICE_ERROR))?;
             }
@@ -353,6 +393,25 @@ fn run() -> Result<(), terminal::Error> {
                     }
                     Ok(stop)
                 })?;
+            }
+        }
+        if !app.quit
+            && let Some(runtime) = bridge.as_mut()
+        {
+            let mut cancelled = false;
+            let result = runtime.keep_alive(&mut || {
+                if let Some(key) = terminal::console_key() {
+                    cancelled |= request_key(&mut app, &mut deferred, key);
+                }
+                cancelled
+            });
+            if matches!(result, Ok(true)) && app.status.starts_with("Connection:") {
+                app.status = String::from("Ready");
+            }
+            if let Err(error) = result
+                && error != "Request cancelled"
+            {
+                app.status = alloc::format!("Connection: {error}; retrying automatically");
             }
         }
         event_loop::idle(core::time::Duration::from_millis(10))

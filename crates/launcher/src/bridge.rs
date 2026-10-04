@@ -62,6 +62,7 @@ impl Bridge {
 
     pub fn execute(&self, operation: Operation) -> Result<String, String> {
         match operation {
+            Operation::Ping => Ok("pong".into()),
             Operation::ModelConfig => {
                 crate::model::validate_configuration()?;
                 Ok("Model configured".into())
@@ -168,11 +169,16 @@ impl Bridge {
         let writer = Arc::new(Mutex::new(stream.try_clone()?));
         loop {
             let mut header = [0; 4];
-            match stream.read_exact(&mut header) {
+            // Idle connections have no deadline. Once a frame begins, retain
+            // the finite timeout for its remaining header and body.
+            stream.set_read_timeout(None)?;
+            match stream.read_exact(&mut header[..1]) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
                 Err(e) => return Err(e.into()),
             }
+            stream.set_read_timeout(Some(Duration::from_secs(180)))?;
+            stream.read_exact(&mut header[1..])?;
             let mut body = vec![0; protocol::frame_length(header)?];
             stream.read_exact(&mut body)?;
             let request: Request = serde_json::from_slice(&body)?;
@@ -323,6 +329,7 @@ mod tests {
         assert_eq!(response.id, 731);
         assert_eq!(response.result.unwrap(), "three 中");
         for (id, operation, expected) in [
+            (730, Operation::Ping, "pong"),
             (
                 732,
                 Operation::Write {

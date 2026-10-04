@@ -11,6 +11,8 @@ pub struct Bridge {
     connection: Option<Tcp>,
     incoming: Vec<u8>,
     body_length: Option<usize>,
+    heartbeat: Option<Deadline>,
+    connected_before: bool,
 }
 
 impl Bridge {
@@ -26,6 +28,39 @@ impl Bridge {
             connection: None,
             incoming: Vec::new(),
             body_length: None,
+            heartbeat: None,
+            connected_before: false,
+        }
+    }
+
+    /// Only the harmless ping is retried. File and model operations never are.
+    pub fn keep_alive(&mut self, poll: &mut dyn FnMut() -> bool) -> Result<bool, String> {
+        if self
+            .heartbeat
+            .as_ref()
+            .is_some_and(|timer| !timer.expired())
+        {
+            return Ok(false);
+        }
+        self.heartbeat = Some(Deadline::new(Duration::from_secs(30))?);
+        if !self.connected_before {
+            return Ok(false);
+        }
+        match self.call(Operation::Ping, poll) {
+            Ok(reply) if reply == "pong" => Ok(true),
+            Err(error) if error == "Request cancelled" => Err(error),
+            _ => {
+                self.connection = None;
+                self.incoming.clear();
+                self.body_length = None;
+                self.call(Operation::Ping, poll).and_then(|reply| {
+                    if reply == "pong" {
+                        Ok(true)
+                    } else {
+                        Err("HostBridge invalid heartbeat".into())
+                    }
+                })
+            }
         }
     }
 
@@ -68,11 +103,18 @@ impl Bridge {
             .next_id
             .checked_add(1)
             .ok_or("RPC request ID exhausted")?;
+        let timeout = if matches!(operation, Operation::Ping | Operation::ModelConfig) {
+            5
+        } else {
+            150
+        };
         let frame = protocol::encode(&Request { id, operation }).map_err(String::from)?;
+        self.heartbeat = Some(Deadline::new(Duration::from_secs(30))?);
         if self.connection.is_none() {
             self.connection = Some(Tcp::connect(self.address, self.port, poll)?);
+            self.connected_before = true;
         }
-        let result = self.exchange(id, &frame, poll, progress);
+        let result = self.exchange(id, &frame, poll, progress, timeout);
         if result
             .as_ref()
             .is_err_and(|error| error != "Request cancelled")
@@ -92,6 +134,7 @@ impl Bridge {
         frame: &[u8],
         poll: &mut dyn FnMut() -> bool,
         progress: &mut dyn FnMut(&str),
+        timeout: u64,
     ) -> Result<Result<String, String>, String> {
         let connection = self.connection.as_mut().ok_or("HostBridge disconnected")?;
         // Once transmission starts, finish the frame. The host may execute it
@@ -101,7 +144,7 @@ impl Bridge {
             false
         })?;
         // A single deadline covers fragmented and obsolete response frames.
-        let deadline = Deadline::new(Duration::from_secs(150))?;
+        let deadline = Deadline::new(Duration::from_secs(timeout))?;
         loop {
             if poll() {
                 return Err("Request cancelled".into());

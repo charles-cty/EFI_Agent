@@ -119,8 +119,10 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             "virtconsole,chardev=terminal",
         ])
         .args([
+            "-chardev",
+            &format!("socket,id=bridge,host=127.0.0.1,port={rpc_port},reconnect-ms=1000"),
             "-netdev",
-            &format!("user,id=network,guestfwd=tcp:10.0.2.100:7420-tcp:127.0.0.1:{rpc_port}"),
+            "user,id=network,guestfwd=tcp:10.0.2.100:7420-chardev:bridge",
             "-device",
             "virtio-net-pci,netdev=network",
         ])
