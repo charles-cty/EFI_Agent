@@ -27,7 +27,7 @@ Not verified:
 - Linux native builds or runtime.
 
 Windows firmware virtualization is enabled. QEMU was not found in PATH or the
-usual `C:\Program Files\qemu` and `C:\Programs\qemu` directories. This does not
+installation directories inspected on that machine. This does not
 prove it is absent from all other locations. No VM test has been claimed.
 
 The full objective remains open. See the README work list. Compilation and host

@@ -69,11 +69,80 @@ FAT boot volume, independently of VM mode and host-file routing.
 
 ## VM launch
 
+Run the commands below from your project checkout. External tool locations are
+discovered through PATH or supplied as arguments. Firmware files use the
+project-relative `artifacts/firmware` directory; no particular drive, user
+directory, project location, or WSL distribution name is required.
+
 Install QEMU and supply an OVMF image that includes VirtioSerialDxe and
 VirtioNetDxe. WHPX must be enabled on Windows; KVM must be available on Linux.
-Use a QEMU release whose socket chardev supports `reconnect-ms`. The tested
-Windows release is QEMU 11.1.0. The bridge socket reconnects every second after
-a host disconnect.
+Use a current QEMU release whose socket chardev supports `reconnect-ms`.
+The bridge socket reconnects every second after a host disconnect.
+
+### Prepare OVMF manually on Windows
+
+Use PowerShell 7 and a current 7-Zip release. This procedure does not require
+WSL or an EDK II build.
+
+1. Open the [Ubuntu package search for ovmf](https://packages.ubuntu.com/search?keywords=ovmf).
+   Select a currently supported Ubuntu release, open its `ovmf` package page,
+   and follow the download link for the current `ovmf_*_all.deb` package.
+   The package contains VM firmware that also works with Windows QEMU.
+2. Obtain the SHA256 value for that selected package from its official download
+   page. Run `Get-FileHash -Algorithm SHA256 -LiteralPath '<downloaded-package.deb>'`
+   in PowerShell and compare the result. Use the value for the package you
+   downloaded; this guide does not pin a version or checksum.
+3. Open the package in 7-Zip. Open its `data.tar.*` member and the inner tar
+   archive, then browse to `usr/share/OVMF`.
+4. Create `artifacts\firmware` in the project directory. Extract
+   `OVMF_CODE_4M.fd` and `OVMF_VARS_4M.fd` into that directory. Take both files
+   from the same package. Use the ordinary variants for this unsigned UEFI
+   application; do not select `.ms` or `.secboot` variants. Do not mix package
+   versions or 2 MiB and 4 MiB flash layouts.
+5. Use the pair in the launch command below. After boot, confirm that the agent
+   interface appears, run `/capabilities` to inspect firmware capabilities, and
+   send a prompt to check the network and model request. A download and checksum
+   check alone do not establish firmware compatibility. Repeat these runtime
+   checks when you replace the firmware pair.
+
+`OVMF_CODE_4M.fd` contains the firmware code. `OVMF_VARS_4M.fd` is the matching
+UEFI variable-store template. Keep the extracted template: the launcher uses a
+temporary snapshot and does not modify it.
+
+### Copy OVMF from WSL instead
+
+If your WSL distribution already provides OVMF, you can copy its firmware pair
+instead of downloading and unpacking a package on Windows. On Ubuntu or Debian
+under WSL, install or update the package if needed:
+
+```bash
+sudo apt update
+sudo apt install ovmf
+ovmf_dir=$(dpkg-query -L ovmf | awk '/\/OVMF_CODE_4M[.]fd$/ { sub(/\/[^/]*$/, ""); print }')
+test -n "$ovmf_dir" && ls -l "$ovmf_dir/OVMF_CODE_4M.fd" "$ovmf_dir/OVMF_VARS_4M.fd"
+wslpath -w "$ovmf_dir"
+```
+
+The last command prints the Windows UNC path for your distribution's OVMF
+directory. If the package does not contain this firmware pair, select a package
+that does before continuing. In Windows PowerShell 7, open your terminal in the
+Windows project checkout, replace
+the source placeholder with that printed path, and copy both files:
+
+```powershell
+$source = '<Windows path printed by wslpath>'
+New-Item -ItemType Directory -Force -Path .\artifacts\firmware | Out-Null
+Copy-Item -LiteralPath (Join-Path $source 'OVMF_CODE_4M.fd') -Destination .\artifacts\firmware\OVMF_CODE_4M.fd
+Copy-Item -LiteralPath (Join-Path $source 'OVMF_VARS_4M.fd') -Destination .\artifacts\firmware\OVMF_VARS_4M.fd
+```
+
+Use the UNC path only as the copy source. Launch Windows QEMU with the copied
+files in `artifacts\firmware`, not with files on the WSL UNC path. Copy the pair
+together after a package update, and perform the same runtime checks described
+above. Once copied, Windows VM launches do not require WSL.
+
+### Start the VM
+
 The launcher uses the current terminal, with no graphical QEMU window.
 It waits for an application readiness marker before forwarding input, so OVMF
 cannot interpret initial terminal dimensions as firmware menu keystrokes.
@@ -81,8 +150,11 @@ cannot interpret initial terminal dimensions as firmware menu keystrokes.
 to firmware. Ctrl+C immediately exits the launcher, including during guest waits.
 
 ```powershell
-./target/debug/efi-agent.exe vm 'C:\Program Files\qemu\qemu-system-x86_64.exe' 'C:\firmware\OVMF_CODE.fd' 'C:\firmware\OVMF_VARS.fd' ./artifacts/esp ./workspace
+$qemu = (Get-Command qemu-system-x86_64.exe -CommandType Application -ErrorAction Stop).Source
+./target/debug/efi-agent.exe vm $qemu ./artifacts/firmware/OVMF_CODE_4M.fd ./artifacts/firmware/OVMF_VARS_4M.fd ./artifacts/esp ./workspace
 ```
+
+If QEMU is not on PATH, set `$qemu` to your executable's actual path instead.
 
 VM memory defaults to 128 MiB. Append `--memory-mib 256` to the launch command
 to allocate 256 MiB, or supply another positive integer in MiB. This setting
@@ -181,20 +253,20 @@ the pack command:
 ```sh
 uv run scripts/smoke_native.py --launcher target/debug/efi-agent \
   --efi artifacts/esp/EFI/BOOT/BOOTX64.EFI \
-  --code /usr/share/OVMF/OVMF_CODE_4M.fd \
-  --vars /usr/share/OVMF/OVMF_VARS_4M.fd --output artifacts/native-smoke
+  --code artifacts/firmware/OVMF_CODE_4M.fd \
+  --vars artifacts/firmware/OVMF_VARS_4M.fd --output artifacts/native-smoke
 ```
 
 ## HostBridge
 
 The launcher and relay validate API configuration before starting. Missing or
 blank base URL, key, or model produces an immediate error. The base must be an
-HTTP or HTTPS URL. Before adding a prompt to model history, the guest also
-checks the relay configuration; it does not enter model-wait status when that
-check fails.
+HTTP or HTTPS URL. Each prompt goes directly to the model request. There is no separate API
+availability probe. Connection failures and provider HTTP errors, including
+authentication, quota, and billing errors, are reported from the actual request.
 
 Frames contain a four-byte big-endian length and JSON, with a 1 MiB limit.
-Requests carry an ID and a tagged operation: `ping`, `model_config`, `read`, `write`, `edit`, or
+Requests carry an ID and a tagged operation: `ping`, `read`, `write`, `edit`, or
 `complete`. Responses carry the same ID and a result. A model request can send
 text progress frames with a `delta` field before its final response. The guest
 uses request IDs to discard both progress and final frames from cancelled calls.
@@ -248,13 +320,13 @@ including overlapping matches. Files have a 512 KiB size limit.
 ## Linux VM smoke test
 
 Build in a Linux-local checkout with `scripts/build.sh`. With QEMU, KVM access,
-and matching OVMF images available, run:
+and matching OVMF images copied to `artifacts/firmware` in that checkout, run:
 
 ```sh
 uv run scripts/smoke_vm.py \
   --qemu qemu-system-x86_64 --accel kvm \
-  --code /usr/share/OVMF/OVMF_CODE_4M.fd \
-  --vars /usr/share/OVMF/OVMF_VARS_4M.fd \
+  --code artifacts/firmware/OVMF_CODE_4M.fd \
+  --vars artifacts/firmware/OVMF_VARS_4M.fd \
   --esp artifacts/esp --launcher target/debug/efi-agent \
   --output artifacts/smoke
 ```
@@ -270,8 +342,8 @@ To test the Linux launcher through an actual tmux PTY:
 
 ```sh
 uv run scripts/smoke_launcher.py --launcher target/debug/efi-agent \
-  --code /usr/share/OVMF/OVMF_CODE_4M.fd \
-  --vars /usr/share/OVMF/OVMF_VARS_4M.fd \
+  --code artifacts/firmware/OVMF_CODE_4M.fd \
+  --vars artifacts/firmware/OVMF_VARS_4M.fd \
   --esp artifacts/esp --output artifacts/launcher-smoke
 ```
 
@@ -288,8 +360,13 @@ TCP4 file operations, and a deterministic Chat Completions tool loop.
 To check the native launcher through a Windows ConPTY session, use psmux:
 
 ```powershell
-./scripts/smoke_windows.ps1 -Qemu 'C:\qemu\qemu-system-x86_64.exe' -Code 'C:\firmware\OVMF_CODE_4M.fd' -Vars 'C:\firmware\OVMF_VARS_4M.fd'
+$qemu = (Get-Command qemu-system-x86_64.exe -CommandType Application -ErrorAction Stop).Source
+./scripts/smoke_windows.ps1 -Qemu $qemu -Code ./artifacts/firmware/OVMF_CODE_4M.fd -Vars ./artifacts/firmware/OVMF_VARS_4M.fd
 ```
+
+The script discovers `psmux.exe` through PATH. If it is installed elsewhere,
+pass its executable path with `-Psmux`. Supply your QEMU executable path with
+`-Qemu` if it is not on PATH.
 
 The test checks Unicode prompt input, Backspace, cursor editing, multiline input,
 `/exit`, Ctrl+C, and shell recovery. It saves captures under
