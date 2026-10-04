@@ -97,7 +97,7 @@ impl Environment for Interactive<'_> {
                     files::write(&path, &edited)?;
                     Ok("File edited".into())
                 }
-                Operation::Complete { .. } | Operation::ModelConfig | Operation::Ping => {
+                Operation::Complete { .. } | Operation::Ping => {
                     Err(String::from("Model requests are not file tools"))
                 }
             },

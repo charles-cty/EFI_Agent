@@ -63,10 +63,6 @@ impl Bridge {
     pub fn execute(&self, operation: Operation) -> Result<String, String> {
         match operation {
             Operation::Ping => Ok("pong".into()),
-            Operation::ModelConfig => {
-                crate::model::validate_configuration()?;
-                Ok("Model configured".into())
-            }
             Operation::Read { path } => {
                 let path = self.resolve(&path, false)?;
                 if path.is_dir() {

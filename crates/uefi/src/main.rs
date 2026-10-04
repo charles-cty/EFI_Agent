@@ -78,7 +78,7 @@ fn submit(
     } else if text.starts_with('/') {
         String::from("Unknown command. Use /help.")
     } else if let Some(bridge) = bridge.as_mut() {
-        app.status = String::from("Checking model configuration");
+        app.status = String::from("Requesting model");
         refresh(app, false)?;
         let render_error = RefCell::new(None);
         let cancelled = Cell::new(false);
@@ -105,60 +105,48 @@ fn submit(
                 cancelled: false,
             };
             let mut streaming_row = None;
-            let preflight = match environment.runtime {
-                environment::Runtime::Vm(bridge) => bridge.call(
-                    efi_agent_core::protocol::Operation::ModelConfig,
-                    environment.poll,
-                ),
-                environment::Runtime::Native { relay, .. } => relay.call(
-                    efi_agent_core::protocol::Operation::ModelConfig,
-                    environment.poll,
-                ),
-            };
-            preflight.and_then(|_| {
-                agent.turn(text, &mut environment, |event| {
-                    let mut ui = ui.borrow_mut();
-                    let (app, refresh) = &mut *ui;
-                    match event {
-                        Event::ModelStarted => {
-                            streaming_row = None;
-                            app.status = String::from("Waiting for model");
-                        }
-                        Event::AssistantDelta(content) => {
-                            let index = *streaming_row.get_or_insert_with(|| {
-                                app.message("assistant", String::new());
-                                app.messages.len() - 1
-                            });
-                            app.messages[index].content.push_str(content);
-                            app.status = String::from("Receiving model response");
-                        }
-                        Event::Assistant(content) => app.message("assistant", content.into()),
-                        Event::ToolStarted { name, arguments } => {
-                            app.status = alloc::format!("Running {name}");
-                            app.message("tool", alloc::format!("{name} {}", preview(arguments)))
-                        }
-                        Event::ToolFinished {
-                            name,
-                            result,
-                            failed,
-                        } => {
-                            app.status = String::from("Waiting for model");
-                            app.message(
-                                "tool",
-                                alloc::format!(
-                                    "{name}: {}\n{}",
-                                    if failed { "failed" } else { "done" },
-                                    preview(result)
-                                ),
-                            );
-                        }
+            agent.turn(text, &mut environment, |event| {
+                let mut ui = ui.borrow_mut();
+                let (app, refresh) = &mut *ui;
+                match event {
+                    Event::ModelStarted => {
+                        streaming_row = None;
+                        app.status = String::from("Waiting for model");
                     }
-                    let healthy = render_error.borrow().is_none();
-                    if healthy && let Err(error) = refresh(app, false) {
-                        *render_error.borrow_mut() = Some(error);
-                        cancelled.set(true);
+                    Event::AssistantDelta(content) => {
+                        let index = *streaming_row.get_or_insert_with(|| {
+                            app.message("assistant", String::new());
+                            app.messages.len() - 1
+                        });
+                        app.messages[index].content.push_str(content);
+                        app.status = String::from("Receiving model response");
                     }
-                })
+                    Event::Assistant(content) => app.message("assistant", content.into()),
+                    Event::ToolStarted { name, arguments } => {
+                        app.status = alloc::format!("Running {name}");
+                        app.message("tool", alloc::format!("{name} {}", preview(arguments)))
+                    }
+                    Event::ToolFinished {
+                        name,
+                        result,
+                        failed,
+                    } => {
+                        app.status = String::from("Waiting for model");
+                        app.message(
+                            "tool",
+                            alloc::format!(
+                                "{name}: {}\n{}",
+                                if failed { "failed" } else { "done" },
+                                preview(result)
+                            ),
+                        );
+                    }
+                }
+                let healthy = render_error.borrow().is_none();
+                if healthy && let Err(error) = refresh(app, false) {
+                    *render_error.borrow_mut() = Some(error);
+                    cancelled.set(true);
+                }
             })
         };
         if let Err(error) = result {

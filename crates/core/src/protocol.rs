@@ -15,7 +15,6 @@ pub struct Request {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Operation {
     Ping,
-    ModelConfig,
     Read {
         path: String,
     },

@@ -46,8 +46,8 @@ class Relay:
 
     def request(self, connection, length):
         request = json.loads(self.exact(connection, length))
-        while request["operation"]["type"] in ("model_config", "ping"):
-            reply = json.dumps({"id": request["id"], "result": {"Ok": "pong" if request["operation"]["type"] == "ping" else "Model configured"}}).encode()
+        while request["operation"]["type"] == "ping":
+            reply = json.dumps({"id": request["id"], "result": {"Ok": "pong"}}).encode()
             connection.sendall(len(reply).to_bytes(4, "big") + reply)
             length = int.from_bytes(self.exact(connection, 4), "big")
             request = json.loads(self.exact(connection, length))

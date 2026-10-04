@@ -103,7 +103,7 @@ impl Bridge {
             .next_id
             .checked_add(1)
             .ok_or("RPC request ID exhausted")?;
-        let timeout = if matches!(operation, Operation::Ping | Operation::ModelConfig) {
+        let timeout = if matches!(operation, Operation::Ping) {
             5
         } else {
             150
