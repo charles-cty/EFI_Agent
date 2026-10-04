@@ -15,7 +15,10 @@ use uefi::{
 };
 use uefi_raw::{
     Ipv4Address,
-    protocol::{driver::ServiceBindingProtocol, network::tcp4::*},
+    protocol::{
+        driver::ServiceBindingProtocol,
+        network::{ip4_config2::Ip4Config2Policy, tcp4::*},
+    },
 };
 
 #[derive(Debug)]
@@ -86,9 +89,9 @@ impl Drop for Completion {
     }
 }
 
-struct Deadline(Option<Event>);
+pub(crate) struct Deadline(Option<Event>);
 impl Deadline {
-    fn new(duration: Duration) -> Result<Self, String> {
+    pub(crate) fn new(duration: Duration) -> Result<Self, String> {
         // SAFETY: timer has no callback or context and is closed by Drop.
         let event = unsafe { boot::create_event(EventType::TIMER, Tpl::APPLICATION, None, None) }
             .map_err(|e| format!("TCP4 timer: {e}"))?;
@@ -120,23 +123,65 @@ pub struct Tcp {
 }
 
 impl Tcp {
-    pub fn connect(address: [u8; 4], port: u16) -> Result<Self, String> {
+    pub fn connect(
+        address: [u8; 4],
+        port: u16,
+        poll: &mut dyn FnMut() -> bool,
+    ) -> Result<Self, String> {
         let handles =
             boot::find_handles::<TcpBinding>().map_err(|e| format!("TCP4 service binding: {e}"))?;
         let mut last = String::from("No TCP4-capable network interface");
         for handle in handles {
-            match Self::on_interface(handle, address, port) {
+            match Self::on_interface(handle, address, port, poll) {
                 Ok(connection) => return Ok(connection),
+                Err(error) if error == "Request cancelled" => return Err(error),
                 Err(error) => last = error,
             }
         }
         Err(last)
     }
 
-    fn on_interface(handle: Handle, address: [u8; 4], port: u16) -> Result<Self, String> {
+    fn on_interface(
+        handle: Handle,
+        address: [u8; 4],
+        port: u16,
+        poll: &mut dyn FnMut() -> bool,
+    ) -> Result<Self, String> {
+        if poll() {
+            return Err("Request cancelled".into());
+        }
         let mut ip = Ip4Config2::new(handle).map_err(|e| format!("IPv4 configuration: {e}"))?;
-        ip.ifup().map_err(|e| format!("IPv4 DHCP: {e}"))?;
+        if ip
+            .get_interface_info()
+            .map_err(|e| format!("IPv4 configuration: {e}"))?
+            .station_addr
+            == Ipv4Address::from([0; 4])
+        {
+            ip.set_policy(Ip4Config2Policy::DHCP)
+                .map_err(|e| format!("IPv4 DHCP: {e}"))?;
+            let deadline = Deadline::new(Duration::from_secs(30))?;
+            loop {
+                if poll() {
+                    return Err("Request cancelled".into());
+                }
+                if ip
+                    .get_interface_info()
+                    .map_err(|e| format!("IPv4 configuration: {e}"))?
+                    .station_addr
+                    != Ipv4Address::from([0; 4])
+                {
+                    break;
+                }
+                if deadline.expired() {
+                    return Err("IPv4 DHCP timed out".into());
+                }
+                boot::stall(Duration::from_millis(10));
+            }
+        }
         drop(ip);
+        if poll() {
+            return Err("Request cancelled".into());
+        }
         let mut binding = boot::open_protocol_exclusive::<TcpBinding>(handle)
             .map_err(|e| format!("TCP4 binding: {e}"))?;
         let mut raw_child = ptr::null_mut();
@@ -192,7 +237,7 @@ impl Tcp {
             unsafe { ((*protocol).connect)(protocol, &mut token) },
             "connect queue",
         )?;
-        connection.wait(&mut token.completion_token, &completion, &deadline)?;
+        connection.wait(&mut token.completion_token, &completion, &deadline, poll)?;
         Ok(connection)
     }
 
@@ -205,6 +250,7 @@ impl Tcp {
         token: &mut Tcp4CompletionToken,
         completion: &Completion,
         deadline: &Deadline,
+        poll: &mut dyn FnMut() -> bool,
     ) -> Result<(), String> {
         let protocol = self.raw();
         loop {
@@ -212,7 +258,8 @@ impl Tcp {
                 // SAFETY: event signals after firmware writes the token status.
                 return status(unsafe { ptr::read_volatile(&token.status) }, "completion");
             }
-            if deadline.expired() {
+            let interrupted = poll();
+            if interrupted || deadline.expired() {
                 // SAFETY: token is still queued or already complete. Cancel
                 // synchronously signals queued tokens as specified by TCP4.
                 let cancelled = unsafe { ((*protocol).cancel)(protocol, token) };
@@ -227,7 +274,16 @@ impl Tcp {
                 // Lowering TPL in Stall permits the completion callback to run.
                 for _ in 0..1000 {
                     if completion.done.load(Ordering::Acquire) {
-                        return Err(String::from("TCP4 operation timed out"));
+                        // Cancellation can race a successful receive. Preserve
+                        // completed bytes so the framed stream stays aligned.
+                        if interrupted && token.status == Status::SUCCESS {
+                            return Ok(());
+                        }
+                        return Err(String::from(if interrupted {
+                            "Request cancelled"
+                        } else {
+                            "TCP4 operation timed out"
+                        }));
                     }
                     unsafe {
                         let _ = ((*protocol).poll)(protocol);
@@ -245,7 +301,7 @@ impl Tcp {
         }
     }
 
-    pub fn send(&mut self, bytes: &[u8]) -> Result<(), String> {
+    pub fn send(&mut self, bytes: &[u8], poll: &mut dyn FnMut() -> bool) -> Result<(), String> {
         if bytes.is_empty() {
             return Ok(());
         }
@@ -278,13 +334,20 @@ impl Tcp {
             unsafe { ((*protocol).transmit)(protocol, &mut token) },
             "transmit queue",
         )?;
-        self.wait(&mut token.completion_token, &completion, &deadline)
+        self.wait(&mut token.completion_token, &completion, &deadline, poll)
     }
 
-    pub fn read_exact(&mut self, mut bytes: &mut [u8]) -> Result<(), String> {
-        // One deadline for the entire read, including fragmented input.
-        let deadline = Deadline::new(Duration::from_secs(150))?;
-        while !bytes.is_empty() {
+    pub fn read_some(
+        &mut self,
+        bytes: &mut [u8],
+        deadline: &Deadline,
+        poll: &mut dyn FnMut() -> bool,
+    ) -> Result<usize, String> {
+        // The bridge retains successfully received fragments across cancellation.
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        {
             let completion = Completion::new()?;
             let capacity = bytes.len().min(64 * 1024);
             let mut packet = RxPacket {
@@ -312,14 +375,13 @@ impl Tcp {
                 unsafe { ((*protocol).receive)(protocol, &mut token) },
                 "receive queue",
             )?;
-            self.wait(&mut token.completion_token, &completion, &deadline)?;
+            self.wait(&mut token.completion_token, &completion, deadline, poll)?;
             let count = packet.header.data_length as usize;
             if count == 0 || count > capacity {
                 return Err(String::from("TCP4 invalid receive length"));
             }
-            bytes = &mut bytes[count..];
+            Ok(count)
         }
-        Ok(())
     }
 }
 

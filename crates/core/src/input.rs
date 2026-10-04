@@ -23,10 +23,12 @@ pub enum Key {
 pub struct Decoder {
     pending: Vec<u8>,
     paste: bool,
+    empty_reads: u8,
 }
 
 impl Decoder {
     pub fn push(&mut self, byte: u8) -> Option<Key> {
+        self.empty_reads = 0;
         self.pending.push(byte);
         if self.pending[0] == 27 {
             if self.pending.len() == 1 {
@@ -115,6 +117,20 @@ impl Decoder {
             result
         }
     }
+
+    /// Disambiguate a standalone Escape from an incomplete serial sequence.
+    /// Called only after a timed serial read returns no bytes.
+    pub fn idle(&mut self) -> Option<Key> {
+        if self.pending.as_slice() == [27] && !self.paste {
+            self.empty_reads = self.empty_reads.saturating_add(1);
+            if self.empty_reads >= 20 {
+                self.pending.clear();
+                self.empty_reads = 0;
+                return Some(Key::Escape);
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]
@@ -157,5 +173,22 @@ mod tests {
                 Key::Delete
             ]
         );
+    }
+
+    #[test]
+    fn standalone_escape_waits_for_serial_sequence() {
+        let mut decoder = Decoder::default();
+        assert_eq!(decoder.push(27), None);
+        for _ in 0..19 {
+            assert_eq!(decoder.idle(), None);
+        }
+        assert_eq!(decoder.push(b'['), None);
+        assert_eq!(decoder.push(b'D'), Some(Key::Left));
+        assert_eq!(decoder.push(27), None);
+        for _ in 0..19 {
+            assert_eq!(decoder.idle(), None);
+        }
+        assert_eq!(decoder.idle(), Some(Key::Escape));
+        assert_eq!(decoder.push(b'x'), Some(Key::Character('x')));
     }
 }

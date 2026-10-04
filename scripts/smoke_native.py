@@ -25,6 +25,9 @@ class Relay:
         self.listener.listen()
         self.port = self.listener.getsockname()[1]
         self.done = threading.Event()
+        self.waiting = threading.Event()
+        self.cancelled = threading.Event()
+        self.waiting_body = threading.Event()
         self.stop = threading.Event()
         self.error = None
         self.step = 0
@@ -52,6 +55,32 @@ class Relay:
                     continue
             else:
                 return
+            # Deliver only part of the first reply's header, then wait for
+            # cancellation. The next prompt must preserve the frame boundary.
+            connection.settimeout(10)
+            length = int.from_bytes(self.exact(connection, 4), "big")
+            delayed = json.loads(self.exact(connection, length))
+            assert delayed["operation"]["messages"][-1]["content"] == "delay native"
+            stale = json.dumps({"id": delayed["id"], "result": {"Ok": json.dumps({
+                "role": "assistant", "content": "STALE_NATIVE_RESPONSE"
+            })}}).encode()
+            stale_frame = len(stale).to_bytes(4, "big") + stale
+            connection.sendall(stale_frame[:2])
+            self.waiting.set()
+            length = int.from_bytes(self.exact(connection, 4), "big")
+            resumed = json.loads(self.exact(connection, length))
+            self.cancelled.set()
+            connection.sendall(stale_frame[2:])
+            assert resumed["operation"]["messages"][-1]["content"] == "delay body"
+            stale = json.dumps({"id": resumed["id"], "result": {"Ok": json.dumps({
+                "role": "assistant", "content": "STALE_NATIVE_BODY_RESPONSE"
+            })}}).encode()
+            stale_frame = len(stale).to_bytes(4, "big") + stale
+            connection.sendall(stale_frame[:17])
+            self.waiting_body.set()
+            length = int.from_bytes(self.exact(connection, 4), "big")
+            resumed = json.loads(self.exact(connection, length))
+            connection.sendall(stale_frame[17:])
             with connection:
                 connection.settimeout(10)
                 calls = [
@@ -62,15 +91,17 @@ class Relay:
                     ("read", {"path": "."}),
                 ]
                 for step in range(6):
-                    length = int.from_bytes(self.exact(connection, 4), "big")
+                    length = int.from_bytes(self.exact(connection, 4), "big") if step else 1
                     if not 0 < length <= 1024 * 1024:
                         raise AssertionError("Invalid RPC frame length")
-                    request = json.loads(self.exact(connection, length))
+                    request = json.loads(self.exact(connection, length)) if step else resumed
                     if request["operation"]["type"] != "complete":
                         raise AssertionError("Native files were sent to the model relay")
                     messages = request["operation"]["messages"]
                     if step == 0:
                         assert messages[-1]["content"] == "exercise native tools"
+                        assert len(messages) == 4 and messages[1]["content"] == "delay native"
+                        assert messages[2]["content"] == "delay body"
                     else:
                         last = messages[-1]
                         assert last["role"] == "tool" and last["tool_call_id"] == f"native-{step}"
@@ -191,6 +222,27 @@ def main():
                 if stable >= 5:
                     break
                 time.sleep(0.3)
+            for character in "delay native":
+                qmp.key("spc" if character == " " else character)
+            qmp.key("ret")
+            if not relay.waiting.wait(40):
+                raise TimeoutError("Native delayed request did not reach the relay")
+            cancelled_at = time.monotonic()
+            qmp.key("esc")
+            time.sleep(0.2)
+            qmp.command("screendump", {"filename": str(output / "cancelled.ppm")})
+            for character in "delay body":
+                qmp.key("spc" if character == " " else character)
+            qmp.key("ret")
+            if not relay.cancelled.wait(3):
+                raise TimeoutError("Native Escape did not permit a fresh model request")
+            if time.monotonic() - cancelled_at > 3:
+                raise AssertionError("Native cancellation was not responsive")
+            print(f"PASS native SimpleText Esc cancellation and new request in {time.monotonic()-cancelled_at:.2f}s", flush=True)
+            if not relay.waiting_body.wait(3):
+                raise TimeoutError("Native partial-body response did not begin")
+            qmp.key("esc")
+            time.sleep(0.2)
             for character in "exercise native tools":
                 qmp.key("spc" if character == " " else character)
             qmp.key("ret")

@@ -3,7 +3,8 @@
 
 extern crate alloc;
 
-use alloc::string::String;
+use alloc::{collections::VecDeque, string::String};
+use core::cell::{Cell, RefCell};
 use efi_agent_core::{
     agent::{Agent, Event},
     ansi::Ansi,
@@ -43,7 +44,7 @@ fn submit(
     agent: &mut Agent,
     bridge: &mut Option<environment::Runtime>,
     text: String,
-    mut render: impl FnMut(&App) -> Result<(), terminal::Error>,
+    mut refresh: impl FnMut(&mut App, bool) -> Result<bool, terminal::Error>,
 ) -> Result<(), terminal::Error> {
     if text == "/quit" {
         app.quit = true;
@@ -58,7 +59,7 @@ fn submit(
         return Ok(());
     }
     app.status = String::from("Working");
-    render(app)?;
+    refresh(app, false)?;
     let response = if text == "/help" {
         String::from(
             "/help  Show commands\n/clear  Start a new conversation\n/quit  Exit (VM: shut down; hardware: return to firmware)\n/read <path>  Read a UTF-8 file from the boot volume\n/write <path> <text>  Save a file on the boot volume\n/host-list [path]  List host files\n/host-read <path>  Read a host file\n/host-write <path> <text>  Save a host file\nSend a prompt to run the coding agent (read, write, edit tools).",
@@ -103,45 +104,87 @@ fn submit(
             return Ok(());
         } else {
             app.status = String::from("Waiting for model");
-            render(app)?;
-            let mut render_error = None;
-            let result = agent.turn(text, bridge, |event| {
-                match event {
-                    Event::Assistant(content) => app.message("assistant", content.into()),
-                    Event::ToolStarted { name, arguments } => {
-                        app.status = alloc::format!("Running {name}");
-                        app.message("tool", alloc::format!("{name} {}", preview(arguments)))
+            refresh(app, false)?;
+            let render_error = RefCell::new(None);
+            let cancelled = Cell::new(false);
+            let result = {
+                let ui = RefCell::new((&mut *app, &mut refresh));
+                let mut control = || {
+                    if cancelled.get() {
+                        return true;
                     }
-                    Event::ToolFinished {
-                        name,
-                        result,
-                        failed,
-                    } => {
-                        app.status = String::from("Waiting for model");
-                        app.message(
-                            "tool",
-                            alloc::format!(
-                                "{name}: {}\n{}",
-                                if failed { "failed" } else { "done" },
-                                preview(result)
-                            ),
-                        );
+                    let mut ui = ui.borrow_mut();
+                    let (app, refresh) = &mut *ui;
+                    match refresh(app, true) {
+                        Ok(stop) => cancelled.set(stop),
+                        Err(error) => {
+                            *render_error.borrow_mut() = Some(error);
+                            cancelled.set(true);
+                        }
                     }
-                }
-                if render_error.is_none() {
-                    render_error = render(app).err();
-                }
-            });
+                    cancelled.get()
+                };
+                let mut environment = environment::Interactive {
+                    runtime: bridge,
+                    poll: &mut control,
+                    cancelled: false,
+                };
+                agent.turn(text, &mut environment, |event| {
+                    let mut ui = ui.borrow_mut();
+                    let (app, refresh) = &mut *ui;
+                    match event {
+                        Event::Assistant(content) => app.message("assistant", content.into()),
+                        Event::ToolStarted { name, arguments } => {
+                            app.status = alloc::format!("Running {name}");
+                            app.message("tool", alloc::format!("{name} {}", preview(arguments)))
+                        }
+                        Event::ToolFinished {
+                            name,
+                            result,
+                            failed,
+                        } => {
+                            app.status = String::from("Waiting for model");
+                            app.message(
+                                "tool",
+                                alloc::format!(
+                                    "{name}: {}\n{}",
+                                    if failed { "failed" } else { "done" },
+                                    preview(result)
+                                ),
+                            );
+                        }
+                    }
+                    let healthy = render_error.borrow().is_none();
+                    if healthy && let Err(error) = refresh(app, false) {
+                        *render_error.borrow_mut() = Some(error);
+                        cancelled.set(true);
+                    }
+                })
+            };
             if let Err(error) = result {
                 app.message("error", error);
             }
             app.status = String::from("Ready");
+            if let Some(error) = render_error.into_inner() {
+                return Err(error);
+            }
+            refresh(app, false)?;
+            return Ok(());
+        };
+        {
+            let mut render_error = None;
+            let result = bridge.host(operation, &mut || match refresh(app, true) {
+                Ok(stop) => stop,
+                Err(error) => {
+                    render_error = Some(error);
+                    true
+                }
+            });
             if let Some(error) = render_error {
                 return Err(error);
             }
-            return render(app);
-        };
-        bridge.host(operation).unwrap_or_else(|e| e)
+            result.unwrap_or_else(|e| e)
+        }
     } else {
         String::from(
             "Model environment is not configured. On hardware, provide EFI/AGENT/NATIVE.JSON with a model relay and native workspace.",
@@ -149,7 +192,30 @@ fn submit(
     };
     app.message("assistant", response);
     app.status = String::from("Ready");
-    render(app)
+    refresh(app, false)?;
+    Ok(())
+}
+
+/// Apply request controls now; retain other input for the normal editor loop.
+fn request_key(app: &mut App, deferred: &mut VecDeque<Key>, key: Key) -> bool {
+    match key {
+        Key::Escape => true,
+        Key::Quit => {
+            app.quit = true;
+            true
+        }
+        Key::Up | Key::Down => {
+            app.key(key);
+            false
+        }
+        _ => {
+            // Bound buffered input to the same order of size as a prompt.
+            if deferred.len() < 65536 {
+                deferred.push_back(key);
+            }
+            false
+        }
+    }
 }
 
 fn preview(text: &str) -> String {
@@ -192,12 +258,16 @@ fn run() -> Result<(), terminal::Error> {
                 .sink
                 .write(efi_agent_core::serial::READY)?;
             let mut decoder = Decoder::default();
+            let mut deferred = VecDeque::new();
             // Resolve the host dimensions before drawing the first frame.
             // A direct serial monitor can omit the reply and use the fallback.
             let mut sized = false;
             for _ in 0..200 {
                 let mut bytes = [0; 128];
                 let count = terminal.backend_mut().sink.read(&mut bytes)?;
+                if count == 0 {
+                    decoder.idle();
+                }
                 for byte in &bytes[..count] {
                     if let Some(Key::Resize(w, h)) = decoder.push(*byte) {
                         terminal.backend_mut().dimensions = Size::new(w.min(300), h.min(120));
@@ -214,18 +284,54 @@ fn run() -> Result<(), terminal::Error> {
                 terminal.draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
                 let mut bytes = [0; 128];
                 let count = terminal.backend_mut().sink.read(&mut bytes)?;
+                if count == 0
+                    && let Some(key) = decoder.idle()
+                {
+                    deferred.push_back(key);
+                }
                 for byte in &bytes[..count] {
                     if let Some(key) = decoder.push(*byte) {
-                        if let Key::Resize(w, h) = key {
-                            terminal.backend_mut().dimensions = Size::new(w.min(300), h.min(120));
-                            terminal.autoresize()?;
-                        } else if let Some(text) = app.key(key) {
-                            submit(&mut app, &mut agent, &mut bridge, text, |app| {
+                        deferred.push_back(key);
+                    }
+                }
+                while !app.quit
+                    && let Some(key) = deferred.pop_front()
+                {
+                    if let Key::Resize(w, h) = key {
+                        terminal.backend_mut().dimensions = Size::new(w.min(300), h.min(120));
+                        terminal.autoresize()?;
+                    } else if let Some(text) = app.key(key) {
+                        submit(&mut app, &mut agent, &mut bridge, text, |app, poll| {
+                            let mut stop = false;
+                            let mut changed = !poll;
+                            if poll {
+                                let mut bytes = [0; 128];
+                                let count = terminal.backend_mut().sink.read(&mut bytes)?;
+                                if count == 0
+                                    && let Some(key) = decoder.idle()
+                                {
+                                    stop |= request_key(app, &mut deferred, key);
+                                    changed = true;
+                                }
+                                for byte in &bytes[..count] {
+                                    if let Some(key) = decoder.push(*byte) {
+                                        if let Key::Resize(w, h) = key {
+                                            terminal.backend_mut().dimensions =
+                                                Size::new(w.min(300), h.min(120));
+                                            terminal.autoresize()?;
+                                        } else {
+                                            stop |= request_key(app, &mut deferred, key);
+                                        }
+                                        changed = true;
+                                    }
+                                }
+                            }
+                            if changed {
                                 terminal
-                                    .draw(|frame| app.render(frame.area(), frame.buffer_mut()))
-                                    .map(|_| ())
-                            })?;
-                        }
+                                    .draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
+                            }
+                            Ok(stop)
+                        })?;
                     }
                 }
                 boot::stall(core::time::Duration::from_millis(10));
@@ -235,18 +341,31 @@ fn run() -> Result<(), terminal::Error> {
         }
     }
     let mut terminal = Terminal::new(terminal::SimpleText)?;
+    let mut deferred = VecDeque::new();
     terminal.clear()?;
     terminal.hide_cursor()?;
     while !app.quit {
         terminal.draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
-        if let Some(key) = terminal::console_key()
-            && let Some(text) = app.key(key)
+        if let Some(key) = terminal::console_key() {
+            deferred.push_back(key);
+        }
+        while !app.quit
+            && let Some(key) = deferred.pop_front()
         {
-            submit(&mut app, &mut agent, &mut bridge, text, |app| {
-                terminal
-                    .draw(|frame| app.render(frame.area(), frame.buffer_mut()))
-                    .map(|_| ())
-            })?;
+            if let Some(text) = app.key(key) {
+                submit(&mut app, &mut agent, &mut bridge, text, |app, poll| {
+                    let mut stop = false;
+                    let mut changed = !poll;
+                    if poll && let Some(key) = terminal::console_key() {
+                        stop = request_key(app, &mut deferred, key);
+                        changed = true;
+                    }
+                    if changed {
+                        terminal.draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
+                    }
+                    Ok(stop)
+                })?;
+            }
         }
         boot::stall(core::time::Duration::from_millis(10));
     }

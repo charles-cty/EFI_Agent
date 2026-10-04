@@ -173,7 +173,7 @@ pub fn console_key() -> Option<Key> {
             ScanCode::HOME => Some(Key::Home),
             ScanCode::END => Some(Key::End),
             ScanCode::DELETE => Some(Key::Delete),
-            ScanCode::ESCAPE => Some(Key::Quit),
+            ScanCode::ESCAPE => Some(Key::Escape),
             _ => None,
         },
     }

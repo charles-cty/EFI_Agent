@@ -87,9 +87,17 @@ and stops after at most twelve rounds of executed tools. Slash commands are
 separate from model history. `/clear` resets the conversation.
 
 The TUI shows model and tool status, tool arguments, bounded result previews,
-and the latest conversation output. Up/Down scroll older/newer output.
-Requests currently block guest input until completion or timeout; status redraws
-between operations do not provide cancellation during a network wait.
+and the latest conversation output. Up/Down scroll older/newer output, including
+during model waits. Esc cancels the active request and returns to Ready.
+Ctrl+C exits. VM dimensions update during network waits. Other input is buffered
+until the current operation ends, with a limit of 65,536 input events.
+
+Cancellation stops the guest wait and further tools. It cannot undo a file
+operation already sent to the host or stop a synchronous firmware file call.
+The host provider call may continue until its response or 120-second timeout.
+The relay allows four model requests in flight so a new request can proceed
+while a cancelled call finishes. Responses retain their request IDs; cancelled
+responses are discarded without losing partially received frame boundaries.
 
 The prompt editor supports Left/Right, Home/End (current line), Backspace, and
 Delete at Unicode grapheme boundaries. Ctrl+J inserts a newline; Enter submits
@@ -182,7 +190,7 @@ Windows clipboard paste, or live window resize.
 
 - Direct HTTPS provider networking and physical bare-metal verification.
 - Host command execution.
-- Responsive model requests, cancellation, and richer tool views.
+- Richer tool views and conversation navigation.
 - FAT image packaging.
 - Windows live resize, clipboard paste, and physical terminal input checks.
 - Bare-metal file and network configuration and hardware verification.

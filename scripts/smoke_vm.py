@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pyte
 
 
@@ -30,6 +30,8 @@ ANSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
 class Provider(BaseHTTPRequestHandler):
     received = False
     agent_steps = 0
+    waiting = threading.Event()
+    release = threading.Event()
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers["Content-Length"]))
@@ -43,9 +45,14 @@ class Provider(BaseHTTPRequestHandler):
         )
         messages = request["messages"]
         message = {"role": "assistant", "content": MODEL_MARKER}
-        if messages[-1] == {"role": "user", "content": "Say the model marker"}:
+        if messages[-1] == {"role": "user", "content": "Delay until cancelled"}:
+            Provider.waiting.set()
+            Provider.release.wait(timeout=10)
+            message = {"role": "assistant", "content": "STALE_RESPONSE_MUST_NOT_APPEAR"}
+        elif messages[-1] == {"role": "user", "content": "Say the model marker"}:
             # UI slash commands must not pollute model history.
-            valid = valid and len(messages) == 2 and messages[0]["role"] == "system"
+            valid = valid and len(messages) == 3 and messages[0]["role"] == "system"
+            valid = valid and messages[1] == {"role": "user", "content": "Delay until cancelled"}
             Provider.received = valid
         else:
             steps = [
@@ -74,7 +81,11 @@ class Provider(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(response)))
         self.end_headers()
-        self.wfile.write(response)
+        try:
+            self.wfile.write(response)
+        except (BrokenPipeError, ConnectionResetError):
+            if messages[-1]["content"] != "Delay until cancelled":
+                raise
 
     def log_message(self, *_args):
         pass
@@ -113,7 +124,7 @@ def main():
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
 
-    provider = HTTPServer(("127.0.0.1", 0), Provider)
+    provider = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
     thread = threading.Thread(target=provider.serve_forever, daemon=True)
     thread.start()
     children = []
@@ -179,11 +190,30 @@ def main():
                         state = "file"
                     elif state == "file" and FILE_MARKER in visible:
                         print("PASS guest TCP4 host file read", flush=True)
-                        connection.sendall(b"Say the model marker\r")
-                        state = "model"
+                        connection.sendall(b"Delay until cancelled\r")
+                        state = "waiting"
+                    elif state == "waiting" and Provider.waiting.is_set():
+                        connection.sendall(b"\x1b[8;27;97t\x1b")
+                        screen.resize(lines=27, columns=97)
+                        cancelled_at = time.monotonic()
+                        state = "cancelling"
+                    elif state == "cancelling":
+                        if "Request cancelled" in visible and "Ready" in screen.display[-1]:
+                            if time.monotonic() - cancelled_at > 3:
+                                raise AssertionError("Guest cancellation was not responsive")
+                            print("PASS Esc cancellation and resize during model wait", flush=True)
+                            connection.sendall(b"Say the model marker\r")
+                            state = "model"
+                        elif time.monotonic() - cancelled_at > 3:
+                            raise AssertionError("Guest did not cancel the delayed model request")
+                    elif state == "model" and "STALE_RESPONSE_MUST_NOT_APPEAR" in visible:
+                        raise AssertionError("Cancelled response leaked into the new request")
                     elif state == "model" and MODEL_MARKER in visible:
                         if not Provider.received:
                             raise AssertionError("Provider request format was incorrect")
+                        if time.monotonic() - cancelled_at > 3:
+                            raise AssertionError("New request waited for the cancelled provider response")
+                        Provider.release.set()
                         print("PASS Chat Completions request and guest response", flush=True)
                         connection.sendall(b"/clear\rExercise the file tools\r")
                         state = "agent"
@@ -207,6 +237,7 @@ def main():
                 if state != "done":
                     raise TimeoutError(f"VM smoke test stopped in state {state}")
     finally:
+        Provider.release.set()
         for name, child in reversed(children):
             if child.poll() is None:
                 child.terminate()

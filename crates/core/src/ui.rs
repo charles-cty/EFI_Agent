@@ -161,7 +161,7 @@ impl App {
             )
             .render(rows[2], buffer);
         Paragraph::new(format!(
-            " {}  •  Enter send  •  Ctrl+J newline  •  ↑↓ scroll",
+            " {}  •  Enter send  •  Esc cancel  •  Ctrl+J newline  •  ↑↓ scroll",
             self.status
         ))
         .style(Style::default().fg(Color::DarkGray))

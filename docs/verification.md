@@ -255,3 +255,54 @@ Windows host tests and Clippy pass. Windows live resize, clipboard paste,
 physical Windows Terminal keystrokes, and exact console-mode equality remain
 unverified. Physical UEFI hardware, real-provider use, responsive guest
 cancellation, direct native HTTPS, command tools, and richer TUI work remain open.
+
+## 2026-10-04: request cancellation and responsive network waits
+
+The guest now polls terminal input during DHCP, TCP connect, and receive waits.
+Esc cancels the active request; Up/Down scroll and VM dimensions update during
+the wait. Other keys enter a bounded queue and run through the normal editor
+after the operation ends. A terminal regression caught dropped keys when the
+host had written a file but its RPC confirmation had not reached the guest.
+Input buffering fixes that timing case. Ctrl+C retains its exit behavior.
+Firmware Escape now maps to cancellation rather than application exit.
+
+TCP4 cancellation retires the queued token before releasing packet storage.
+A cancellation/completion race preserves successfully received bytes. The bridge
+keeps partial response headers and bodies across cancellation, discards responses
+with older request IDs, and uses one deadline for the full response exchange.
+Transport faults reset the connection; a completed RPC error leaves its framed
+stream intact. Linux testing exposed why closing and reopening guest TCP alone
+is insufficient: QEMU guestfwd can keep its host channel and deliver an old
+response after the next request starts.
+
+The host runs up to four model calls independently and serializes complete
+response frames through one writer lock. File operations retain arrival order.
+A new prompt can complete before a cancelled provider call returns. Cancelling
+cannot roll back a dispatched file operation or interrupt a synchronous firmware
+file call. Once frame transmission starts, the guest finishes it to preserve
+stream alignment; its 30-second send deadline still applies. Host provider calls
+may continue until completion or the 120-second provider timeout.
+
+Both KVM and WHPX `smoke_vm.py` passed a deliberately delayed model request,
+Esc cancellation and resize within three seconds, and a fresh completion before
+the delayed provider was released. They then passed the read/edit/write loop
+and ambiguous-edit refusal. Late cancelled responses did not enter the UI.
+
+The native SimpleText/QMP test passed two cancellation boundaries: two bytes of
+a response header, then a header plus thirteen body bytes. The relay resumed
+those obsolete frames only after the next request arrived. The guest discarded
+them, retained the two cancelled user prompts without stale assistant replies,
+and completed six local FAT tool rounds. The first fresh request arrived about
+0.70 seconds after Escape, including automated typing. Cancellation and final
+SimpleText screenshots were inspected; they show Ready and the expected tool
+results. This is OVMF protocol execution, not physical-hardware verification.
+
+A core check cancels a three-tool batch after its first operation, verifies that
+the remaining IDs get unexecuted results, and checks the next prompt's history.
+Another check distinguishes standalone Escape from fragmented cursor sequences.
+Windows and Linux tests, host and UEFI Clippy, and release UEFI linking pass.
+Linux tmux and Windows ConPTY launcher regressions pass, including editing,
+multiline input, and terminal restoration. Linux also checks live resize and
+bracketed paste. Physical hardware, real-provider use, direct native HTTPS,
+command tools, richer TUI work, and the previously noted Windows input checks
+remain open.

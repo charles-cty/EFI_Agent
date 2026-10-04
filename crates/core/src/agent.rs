@@ -15,6 +15,10 @@ const MAX_HISTORY_BYTES: usize = 640 * 1024;
 pub trait Environment {
     fn complete(&mut self, messages: &[ChatMessage]) -> Result<ChatMessage, String>;
     fn execute(&mut self, operation: Operation) -> Result<String, String>;
+    /// Sticky for one turn. A cancelled environment must not execute more tools.
+    fn cancelled(&self) -> bool {
+        false
+    }
 }
 
 pub enum Event<'a> {
@@ -70,6 +74,9 @@ impl Agent {
                 ));
             }
             let reply = environment.complete(&self.messages)?;
+            if environment.cancelled() {
+                return Err(String::from("Request cancelled"));
+            }
             validate_reply(&reply)?;
             if let Some(content) = reply.content.as_deref().filter(|s| !s.is_empty()) {
                 observe(Event::Assistant(content));
@@ -85,7 +92,11 @@ impl Agent {
                     name: &call.function.name,
                     arguments: &call.function.arguments,
                 });
-                let result = if round == MAX_TOOL_ROUNDS {
+                let result = if environment.cancelled() {
+                    Err(String::from(
+                        "Request cancelled; operation was not executed",
+                    ))
+                } else if round == MAX_TOOL_ROUNDS {
                     Err(String::from(
                         "Tool round limit reached; operation was not executed",
                     ))
@@ -105,6 +116,9 @@ impl Agent {
                 let mut message = ChatMessage::text("tool", content);
                 message.tool_call_id = Some(call.id.clone());
                 self.messages.push(message);
+            }
+            if environment.cancelled() {
+                return Err(String::from("Request cancelled"));
             }
         }
         Err(String::from(
@@ -354,5 +368,86 @@ mod tests {
         let mut reply:ChatMessage=serde_json::from_str(r#"{"role":"assistant","content":null,"tool_calls":[{"id":"duplicate","type":"function","function":{"name":"read","arguments":"{}"}}]}"#).unwrap();
         reply.tool_calls.push(reply.tool_calls[0].clone());
         assert!(validate_reply(&reply).is_err());
+    }
+
+    #[test]
+    fn cancelled_tool_batch_retires_ids_and_allows_next_prompt() {
+        struct CancelAfterRead {
+            cancelled: bool,
+            executed: usize,
+            completions: usize,
+        }
+        impl Environment for CancelAfterRead {
+            fn cancelled(&self) -> bool {
+                self.cancelled
+            }
+            fn complete(&mut self, messages: &[ChatMessage]) -> Result<ChatMessage, String> {
+                self.completions += 1;
+                if self.completions == 1 {
+                    let mut reply = ChatMessage::text("assistant", "Inspect first".into());
+                    for id in ["first", "second", "third"] {
+                        reply.tool_calls.push(
+                            serde_json::from_value(serde_json::json!({
+                                "id": id, "type": "function", "function": {
+                                    "name": "read", "arguments": "{\"path\":\"file.txt\"}"
+                                }
+                            }))
+                            .unwrap(),
+                        );
+                    }
+                    Ok(reply)
+                } else {
+                    assert_eq!(
+                        messages[messages.len() - 1].content.as_deref(),
+                        Some("try again")
+                    );
+                    let results = &messages[messages.len() - 4..messages.len() - 1];
+                    for (result, id) in results.iter().zip(["first", "second", "third"]) {
+                        assert_eq!(result.role, "tool");
+                        assert_eq!(result.tool_call_id.as_deref(), Some(id));
+                    }
+                    assert_eq!(results[0].content.as_deref(), Some("read completed"));
+                    assert!(
+                        results[1]
+                            .content
+                            .as_deref()
+                            .unwrap()
+                            .contains("not executed")
+                    );
+                    assert!(
+                        results[2]
+                            .content
+                            .as_deref()
+                            .unwrap()
+                            .contains("not executed")
+                    );
+                    Ok(ChatMessage::text("assistant", "recovered".into()))
+                }
+            }
+            fn execute(&mut self, _: Operation) -> Result<String, String> {
+                self.executed += 1;
+                self.cancelled = true;
+                Ok("read completed".into())
+            }
+        }
+        let mut agent = Agent::default();
+        let mut environment = CancelAfterRead {
+            cancelled: false,
+            executed: 0,
+            completions: 0,
+        };
+        assert_eq!(
+            agent
+                .turn("inspect".into(), &mut environment, |_| {})
+                .unwrap_err(),
+            "Request cancelled"
+        );
+        assert_eq!(environment.executed, 1);
+        assert_eq!(environment.completions, 1);
+        environment.cancelled = false;
+        agent
+            .turn("try again".into(), &mut environment, |_| {})
+            .unwrap();
+        assert_eq!(environment.executed, 1);
     }
 }

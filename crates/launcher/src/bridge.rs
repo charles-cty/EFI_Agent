@@ -7,18 +7,25 @@ use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     path::{Component, Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
+#[derive(Clone)]
 pub struct Bridge {
     root: PathBuf,
     client: reqwest::blocking::Client,
+    models: Arc<AtomicUsize>,
 }
 
 impl Bridge {
     pub fn new(root: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             root: root.canonicalize()?,
+            models: Arc::new(AtomicUsize::new(0)),
             client: reqwest::blocking::Client::builder()
                 .timeout(Duration::from_secs(120))
                 .build()?,
@@ -150,6 +157,7 @@ impl Bridge {
     pub fn connection(&self, mut stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
         stream.set_read_timeout(Some(Duration::from_secs(180)))?;
         stream.set_write_timeout(Some(Duration::from_secs(30)))?;
+        let writer = Arc::new(Mutex::new(stream.try_clone()?));
         loop {
             let mut header = [0; 4];
             match stream.read_exact(&mut header) {
@@ -160,20 +168,69 @@ impl Bridge {
             let mut body = vec![0; protocol::frame_length(header)?];
             stream.read_exact(&mut body)?;
             let request: Request = serde_json::from_slice(&body)?;
-            let response = Response {
-                id: request.id,
-                result: self.execute(request.operation),
-            };
-            let frame = protocol::encode(&response).unwrap_or_else(|_| {
-                protocol::encode(&Response {
-                    id: response.id,
-                    result: Err("Response exceeds frame limit".into()),
-                })
-                .expect("Small error frame")
-            });
-            stream.write_all(&frame)?;
+            if matches!(request.operation, Operation::Complete { .. }) {
+                if self
+                    .models
+                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                        (count < 4).then_some(count + 1)
+                    })
+                    .is_err()
+                {
+                    write_response(
+                        &writer,
+                        Response {
+                            id: request.id,
+                            result: Err("Four model requests are already in flight".into()),
+                        },
+                    )?;
+                    continue;
+                }
+                let bridge = self.clone();
+                let writer = Arc::clone(&writer);
+                std::thread::spawn(move || {
+                    let result = bridge.execute(request.operation);
+                    bridge.models.fetch_sub(1, Ordering::AcqRel);
+                    if let Err(error) = write_response(
+                        &writer,
+                        Response {
+                            id: request.id,
+                            result,
+                        },
+                    ) {
+                        eprintln!("HostBridge model reply: {error}");
+                    }
+                });
+            } else {
+                // Keep file operations in arrival order. Only model requests
+                // run independently so a cancelled wait cannot block the next.
+                write_response(
+                    &writer,
+                    Response {
+                        id: request.id,
+                        result: self.execute(request.operation),
+                    },
+                )?;
+            }
         }
     }
+}
+
+fn write_response(
+    writer: &Mutex<TcpStream>,
+    response: Response,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let frame = protocol::encode(&response).unwrap_or_else(|_| {
+        protocol::encode(&Response {
+            id: response.id,
+            result: Err("Response exceeds frame limit".into()),
+        })
+        .expect("Small error frame")
+    });
+    writer
+        .lock()
+        .map_err(|_| "Response writer lock failed")?
+        .write_all(&frame)?;
+    Ok(())
 }
 
 pub fn serve(listener: TcpListener, root: PathBuf) -> std::thread::JoinHandle<()> {

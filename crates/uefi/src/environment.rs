@@ -24,9 +24,13 @@ impl Runtime {
         Ok(Self::Native { config, relay })
     }
 
-    pub fn host(&mut self, operation: Operation) -> Result<String, String> {
+    pub fn host(
+        &mut self,
+        operation: Operation,
+        poll: &mut dyn FnMut() -> bool,
+    ) -> Result<String, String> {
         match self {
-            Self::Vm(bridge) => bridge.call(operation),
+            Self::Vm(bridge) => bridge.call(operation, poll),
             Self::Native { .. } => Err(String::from(
                 "Host commands are only available in VM mode; native agent tools use the UEFI workspace",
             )),
@@ -34,17 +38,52 @@ impl Runtime {
     }
 }
 
-impl Environment for Runtime {
+pub struct Interactive<'a> {
+    pub runtime: &'a mut Runtime,
+    pub poll: &'a mut dyn FnMut() -> bool,
+    pub cancelled: bool,
+}
+
+impl Interactive<'_> {
+    fn check(&mut self) -> bool {
+        self.cancelled |= (self.poll)();
+        self.cancelled
+    }
+}
+
+impl Environment for Interactive<'_> {
+    fn cancelled(&self) -> bool {
+        self.cancelled
+    }
+
     fn complete(&mut self, messages: &[ChatMessage]) -> Result<ChatMessage, String> {
-        match self {
-            Self::Vm(bridge) => bridge.complete(messages),
-            Self::Native { relay, .. } => relay.complete(messages),
+        if self.check() {
+            return Err("Request cancelled".into());
+        }
+        let cancelled = &mut self.cancelled;
+        let poll = &mut self.poll;
+        let mut control = || {
+            *cancelled |= poll();
+            *cancelled
+        };
+        match self.runtime {
+            Runtime::Vm(bridge) => bridge.complete(messages, &mut control),
+            Runtime::Native { relay, .. } => relay.complete(messages, &mut control),
         }
     }
     fn execute(&mut self, operation: Operation) -> Result<String, String> {
-        match self {
-            Self::Vm(bridge) => bridge.execute(operation),
-            Self::Native { config, .. } => match operation {
+        if self.check() {
+            return Err("Request cancelled; operation was not executed".into());
+        }
+        let cancelled = &mut self.cancelled;
+        let poll = &mut self.poll;
+        let mut control = || {
+            *cancelled |= poll();
+            *cancelled
+        };
+        match self.runtime {
+            Runtime::Vm(bridge) => bridge.call(operation, &mut control),
+            Runtime::Native { config, .. } => match operation {
                 Operation::Read { path } | Operation::List { path } => {
                     files::read_or_list(&config.resolve(&path)?)
                 }
