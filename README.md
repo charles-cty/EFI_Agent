@@ -163,7 +163,10 @@ uv run scripts/smoke_native.py --launcher target/debug/efi-agent \
 
 Frames contain a four-byte big-endian length and JSON, with a 1 MiB limit.
 Requests carry an ID and a tagged operation: `list`, `read`, `write`, `edit`, or
-`complete`. Responses carry the same ID and a result. Files are UTF-8. Paths
+`complete`. Responses carry the same ID and a result. A model request can send
+text progress frames with a `delta` field before its final response. The guest
+uses request IDs to discard both progress and final frames from cancelled calls.
+Files are UTF-8. Paths
 are relative to the configured workspace. Parent traversal and resolved paths
 outside that workspace are rejected. Concurrent filesystem changes are not
 isolated; this service is intended for a local, trusted workspace.
@@ -175,8 +178,33 @@ QEMU user networking. API credentials stay on the host:
 $env:EFI_AGENT_API_BASE = 'https://provider.example/v1'
 $env:EFI_AGENT_API_KEY = 'your-key'
 $env:EFI_AGENT_MODEL = 'your-model'
+$env:EFI_AGENT_REASONING_EFFORT = 'medium'
 ./target/debug/efi-agent.exe serve ./workspace
 ```
+
+Set the base URL to the API root, for example `https://provider.example/v1`.
+The host appends `/chat/completions`. Set the key and model on the launcher or
+relay host; credentials do not enter the UEFI application.
+
+Reasoning is enabled by default with `reasoning_effort: "medium"`.
+`EFI_AGENT_REASONING_EFFORT` accepts `none`, `minimal`, `low`, `medium`, `high`,
+or `xhigh`. Omit it to use `medium`; use `none` to request no reasoning.
+The selected provider and model must support the requested value and the
+Chat Completions `reasoning_effort` field. Unsupported settings return an API
+error. The host does not retry with reduced reasoning. For Linux, use
+`export EFI_AGENT_REASONING_EFFORT=high` before starting the launcher or relay.
+
+Model replies use SSE streaming. Assistant text appears as it arrives in VM
+and native mode. The host assembles tool IDs, names, and JSON arguments across
+chunks. Tools run only after a complete, successful model reply. Truncated
+streams and `length` or `content_filter` finish reasons report an error and do
+not execute partial tool calls. Partial text remains visible after an error
+or cancellation but does not enter model history. Returned `reasoning_content`
+is retained in assistant history for subsequent tool rounds; it is not shown
+as answer text. Other provider-specific reasoning formats and signatures are
+not supported. The host limits stream wire data to 8 MiB and each assembled
+message to less than 1 MiB. The existing 120-second API timeout applies to the
+whole stream.
 
 No third-party provider call has been verified. `complete` returns a serialized
 Chat Completions assistant message with optional function calls. The host sends
@@ -200,8 +228,10 @@ uv run scripts/smoke_vm.py \
 ```
 
 This boots the UEFI image and checks the actual virtio serial and TCP4 paths.
-It uses a local HTTP provider with deterministic text and tool-call responses,
-checks actual edited and created files, and needs no API key.
+It uses a local SSE provider with deterministic text and fragmented tool calls.
+It checks text before stream completion, default reasoning effort, retained
+reasoning content across tool rounds, actual edited and created files, and
+refusal to execute truncated tool replies. It needs no API key.
 It does not verify the launcher's current-terminal relay.
 
 To test the Linux launcher through an actual tmux PTY:

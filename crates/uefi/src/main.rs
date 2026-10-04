@@ -129,10 +129,23 @@ fn submit(
                     poll: &mut control,
                     cancelled: false,
                 };
+                let mut streaming_row = None;
                 agent.turn(text, &mut environment, |event| {
                     let mut ui = ui.borrow_mut();
                     let (app, refresh) = &mut *ui;
                     match event {
+                        Event::ModelStarted => {
+                            streaming_row = None;
+                            app.status = String::from("Waiting for model");
+                        }
+                        Event::AssistantDelta(content) => {
+                            let index = *streaming_row.get_or_insert_with(|| {
+                                app.message("assistant", String::new());
+                                app.messages.len() - 1
+                            });
+                            app.messages[index].content.push_str(content);
+                            app.status = String::from("Receiving model response");
+                        }
                         Event::Assistant(content) => app.message("assistant", content.into()),
                         Event::ToolStarted { name, arguments } => {
                             app.status = alloc::format!("Running {name}");

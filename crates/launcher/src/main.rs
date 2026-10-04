@@ -1,4 +1,5 @@
 mod bridge;
+mod model;
 mod pack;
 mod vm;
 

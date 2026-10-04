@@ -32,13 +32,15 @@ impl Bridge {
     pub fn complete(
         &mut self,
         messages: &[ChatMessage],
+        progress: &mut dyn FnMut(&str),
         poll: &mut dyn FnMut() -> bool,
     ) -> Result<ChatMessage, String> {
-        let response = self.call(
+        let response = self.call_stream(
             Operation::Complete {
                 messages: messages.into(),
             },
             poll,
+            progress,
         )?;
         serde_json::from_str(&response)
             .map_err(|_| String::from("HostBridge returned an invalid model message"))
@@ -48,6 +50,15 @@ impl Bridge {
         &mut self,
         operation: Operation,
         poll: &mut dyn FnMut() -> bool,
+    ) -> Result<String, String> {
+        self.call_stream(operation, poll, &mut |_| {})
+    }
+
+    fn call_stream(
+        &mut self,
+        operation: Operation,
+        poll: &mut dyn FnMut() -> bool,
+        progress: &mut dyn FnMut(&str),
     ) -> Result<String, String> {
         if poll() {
             return Err("Request cancelled".into());
@@ -61,7 +72,7 @@ impl Bridge {
         if self.connection.is_none() {
             self.connection = Some(Tcp::connect(self.address, self.port, poll)?);
         }
-        let result = self.exchange(id, &frame, poll);
+        let result = self.exchange(id, &frame, poll, progress);
         if result
             .as_ref()
             .is_err_and(|error| error != "Request cancelled")
@@ -80,6 +91,7 @@ impl Bridge {
         id: u64,
         frame: &[u8],
         poll: &mut dyn FnMut() -> bool,
+        progress: &mut dyn FnMut(&str),
     ) -> Result<Result<String, String>, String> {
         let connection = self.connection.as_mut().ok_or("HostBridge disconnected")?;
         // Once transmission starts, finish the frame. The host may execute it
@@ -120,6 +132,10 @@ impl Bridge {
             }
             if response.id != id {
                 return Err("HostBridge response ID mismatch".into());
+            }
+            if let Some(delta) = response.delta {
+                progress(&delta);
+                continue;
             }
             return Ok(response.result);
         }

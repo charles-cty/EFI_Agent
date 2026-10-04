@@ -56,7 +56,11 @@ impl Environment for Interactive<'_> {
         self.cancelled
     }
 
-    fn complete(&mut self, messages: &[ChatMessage]) -> Result<ChatMessage, String> {
+    fn complete(
+        &mut self,
+        messages: &[ChatMessage],
+        progress: &mut dyn FnMut(&str),
+    ) -> Result<ChatMessage, String> {
         if self.check() {
             return Err("Request cancelled".into());
         }
@@ -67,8 +71,8 @@ impl Environment for Interactive<'_> {
             *cancelled
         };
         match self.runtime {
-            Runtime::Vm(bridge) => bridge.complete(messages, &mut control),
-            Runtime::Native { relay, .. } => relay.complete(messages, &mut control),
+            Runtime::Vm(bridge) => bridge.complete(messages, progress, &mut control),
+            Runtime::Native { relay, .. } => relay.complete(messages, progress, &mut control),
         }
     }
     fn execute(&mut self, operation: Operation) -> Result<String, String> {

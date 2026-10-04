@@ -32,6 +32,7 @@ class Provider(BaseHTTPRequestHandler):
     agent_steps = 0
     waiting = threading.Event()
     release = threading.Event()
+    finish_stream = threading.Event()
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers["Content-Length"]))
@@ -40,7 +41,8 @@ class Provider(BaseHTTPRequestHandler):
             self.path == "/v1/chat/completions"
             and self.headers["Authorization"] == "Bearer smoke-key"
             and request["model"] == "smoke-model"
-            and request["stream"] is False
+            and request["stream"] is True
+            and request["reasoning_effort"] == "medium"
             and {tool["function"]["name"] for tool in request["tools"]} == {"read", "write", "edit"}
         )
         messages = request["messages"]
@@ -49,6 +51,8 @@ class Provider(BaseHTTPRequestHandler):
             Provider.waiting.set()
             Provider.release.wait(timeout=10)
             message = {"role": "assistant", "content": "STALE_RESPONSE_MUST_NOT_APPEAR"}
+        elif messages[-1] == {"role": "user", "content": "Exercise truncated tools"}:
+            message = {"role": "assistant", "content": None, "tool_calls": [{"id": "truncated", "type": "function", "function": {"name": "write", "arguments": json.dumps({"path": "must-not-exist.txt", "content": "BAD"})}}]}
         elif messages[-1] == {"role": "user", "content": "Say the model marker"}:
             # UI slash commands must not pollute model history.
             valid = valid and len(messages) == 3 and messages[0]["role"] == "system"
@@ -69,6 +73,7 @@ class Provider(BaseHTTPRequestHandler):
                 expected = [FILE_MARKER, "File edited", "File saved", "Tool error: old_text has multiple matches; file was not changed"][step - 1]
                 valid = valid and messages[-1] == {"role": "tool", "content": expected, "tool_call_id": f"call-{step}"}
                 valid = valid and messages[-2]["tool_calls"][0]["id"] == f"call-{step}"
+                valid = valid and messages[-2]["reasoning_content"] == "reason 中 retained"
             if step < len(steps):
                 name, arguments = steps[step]
                 message = {"role": "assistant", "content": None, "tool_calls": [{"id": f"call-{step+1}", "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}]}
@@ -76,13 +81,39 @@ class Provider(BaseHTTPRequestHandler):
                 message = {"role": "assistant", "content": AGENT_MARKER}
             if valid:
                 Provider.agent_steps += 1
-        response = json.dumps({"choices": [{"message": message}]}).encode()
         self.send_response(200 if valid else 400)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(response)))
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.end_headers()
+        def event(delta, finish=None):
+            data = json.dumps({"choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}, ensure_ascii=False)
+            wire = ("data: " + data + "\r\n\r\n").encode()
+            # Split UTF-8 and event delimiters across writes.
+            for offset in range(0, len(wire), 7):
+                self.wfile.write(wire[offset:offset + 7])
+            self.wfile.flush()
         try:
-            self.wfile.write(response)
+            event({"role": "assistant", "reasoning_content": "reason 中 "})
+            event({"reasoning_content": "retained"})
+            if message.get("tool_calls"):
+                call = message["tool_calls"][0]
+                event({"tool_calls": [{"index": 0, "id": call["id"], "type": "function", "function": {"name": call["function"]["name"], "arguments": ""}}]})
+                arguments = call["function"]["arguments"]
+                for offset in range(0, len(arguments), 3):
+                    event({"tool_calls": [{"index": 0, "function": {"arguments": arguments[offset:offset + 3]}}]})
+                if messages[-1]["content"] == "Exercise truncated tools":
+                    return
+                event({}, "tool_calls")
+            else:
+                if message["content"] == MODEL_MARKER:
+                    event({"content": "STREAM_PREFIX_中_VISIBLE "})
+                    if not Provider.finish_stream.wait(timeout=10):
+                        raise AssertionError("Guest did not display text before stream completion")
+                content = message["content"]
+                for offset in range(0, len(content), 5):
+                    event({"content": content[offset:offset + 5]})
+                event({}, "stop")
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             if messages[-1]["content"] != "Delay until cancelled":
                 raise
@@ -208,6 +239,9 @@ def main():
                             raise AssertionError("Guest did not cancel the delayed model request")
                     elif state == "model" and "STALE_RESPONSE_MUST_NOT_APPEAR" in visible:
                         raise AssertionError("Cancelled response leaked into the new request")
+                    elif state == "model" and "STREAM_PREFIX_中_VISIBLE" in visible and not Provider.finish_stream.is_set():
+                        Provider.finish_stream.set()
+                        print("PASS Unicode stream text displayed before completion", flush=True)
                     elif state == "model" and MODEL_MARKER in visible:
                         if not Provider.received:
                             raise AssertionError("Provider request format was incorrect")
@@ -215,8 +249,16 @@ def main():
                             raise AssertionError("New request waited for the cancelled provider response")
                         Provider.release.set()
                         print("PASS Chat Completions request and guest response", flush=True)
+                        connection.sendall(b"/clear\rExercise truncated tools\r")
+                        state = "truncated"
+                    elif state == "truncated" and "Provider stream ended before [DONE]" in visible:
+                        if (workspace / "must-not-exist.txt").exists():
+                            raise AssertionError("Truncated tool call was executed")
+                        print("PASS truncated streamed tool call did not write a file", flush=True)
                         connection.sendall(b"/clear\rExercise the file tools\r")
                         state = "agent"
+                    elif state == "agent" and "STALE_RESPONSE_MUST_NOT_APPEAR" in visible:
+                        raise AssertionError("Cancelled stream leaked into the tool turn")
                     elif state == "agent" and AGENT_MARKER in visible:
                         if Provider.agent_steps != 5:
                             raise AssertionError("Agent did not complete all correlated tool rounds")
@@ -238,6 +280,7 @@ def main():
                     raise TimeoutError(f"VM smoke test stopped in state {state}")
     finally:
         Provider.release.set()
+        Provider.finish_stream.set()
         for name, child in reversed(children):
             if child.poll() is None:
                 child.terminate()

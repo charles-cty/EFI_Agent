@@ -44,6 +44,8 @@ pub struct Message {
 pub struct ChatMessage {
     pub role: String,
     pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCall>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -55,6 +57,7 @@ impl ChatMessage {
         Self {
             role: role.into(),
             content: Some(content),
+            reasoning_content: None,
             tool_calls: Vec::new(),
             tool_call_id: None,
         }
@@ -79,6 +82,9 @@ pub struct FunctionCall {
 pub struct Response {
     pub id: u64,
     pub result: Result<String, String>,
+    /// Text progress frames precede the final result for a model request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta: Option<String>,
 }
 
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, &'static str> {

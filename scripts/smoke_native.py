@@ -116,6 +116,12 @@ class Relay:
                         message = {"role": "assistant", "content": None, "tool_calls": [{"id": f"native-{step+1}", "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}]}
                     else:
                         message = {"role": "assistant", "content": "NATIVE_TOOLS_VERIFIED"}
+                    if step == len(calls):
+                        for text in ["NATIVE_", "TOOLS_", "VERIFIED"]:
+                            progress = json.dumps({"id": request["id"], "result": {"Ok": ""}, "delta": text}).encode()
+                            frame = len(progress).to_bytes(4, "big") + progress
+                            for offset in range(0, len(frame), 7):
+                                connection.sendall(frame[offset:offset + 7])
                     response = json.dumps({"id": request["id"], "result": {"Ok": json.dumps(message)}}).encode()
                     connection.sendall(len(response).to_bytes(4, "big") + response)
                     self.step = step + 1

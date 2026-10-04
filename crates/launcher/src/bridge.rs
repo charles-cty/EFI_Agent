@@ -121,37 +121,49 @@ impl Bridge {
                 fs::write(path, edited).map_err(|e| e.to_string())?;
                 Ok("File edited".into())
             }
-            Operation::Complete { messages } => {
-                let base = std::env::var("EFI_AGENT_API_BASE")
-                    .map_err(|_| "Set EFI_AGENT_API_BASE to the provider base URL")?;
-                let key =
-                    std::env::var("EFI_AGENT_API_KEY").map_err(|_| "Set EFI_AGENT_API_KEY")?;
-                let model = std::env::var("EFI_AGENT_MODEL").map_err(|_| "Set EFI_AGENT_MODEL")?;
-                let response = self
-                    .client
-                    .post(format!("{}/chat/completions", base.trim_end_matches('/')))
-                    .bearer_auth(key)
-                    .json(&serde_json::json!({"model":model,"messages":messages,"stream":false,"tools":agent::tool_definitions(),"tool_choice":"auto"}))
-                    .send()
-                    .map_err(|e| e.to_string())?
-                    .error_for_status()
-                    .map_err(|e| e.to_string())?;
-                let mut body = Vec::new();
-                response
-                    .take(protocol::MAX_FRAME as u64 + 1)
-                    .read_to_end(&mut body)
-                    .map_err(|e| e.to_string())?;
-                if body.len() > protocol::MAX_FRAME {
-                    return Err("Provider response exceeds 1 MiB".into());
-                }
-                let result: serde_json::Value =
-                    serde_json::from_slice(&body).map_err(|e| e.to_string())?;
-                let message: ChatMessage =
-                    serde_json::from_value(result["choices"][0]["message"].clone())
-                        .map_err(|e| format!("Provider returned an invalid message: {e}"))?;
-                serde_json::to_string(&message).map_err(|e| e.to_string())
-            }
+            Operation::Complete { messages } => self.complete(messages, &mut |_| Ok(())),
         }
+    }
+
+    fn complete(
+        &self,
+        messages: Vec<ChatMessage>,
+        progress: &mut dyn FnMut(&str) -> Result<(), String>,
+    ) -> Result<String, String> {
+        let base = std::env::var("EFI_AGENT_API_BASE")
+            .map_err(|_| "Set EFI_AGENT_API_BASE to the provider base URL")?;
+        let key = std::env::var("EFI_AGENT_API_KEY").map_err(|_| "Set EFI_AGENT_API_KEY")?;
+        let model = std::env::var("EFI_AGENT_MODEL").map_err(|_| "Set EFI_AGENT_MODEL")?;
+        let configured = std::env::var("EFI_AGENT_REASONING_EFFORT").ok();
+        let effort = crate::model::reasoning_effort(configured.as_deref())?;
+        let response = self
+            .client
+            .post(format!("{}/chat/completions", base.trim_end_matches('/')))
+            .bearer_auth(key)
+            .header(reqwest::header::ACCEPT, "text/event-stream")
+            .json(
+                &serde_json::json!({"model":model,"messages":messages,"stream":true,
+                "reasoning_effort":effort,"tools":agent::tool_definitions(),"tool_choice":"auto"}),
+            )
+            .send()
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?;
+        if !response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                value
+                    .split(';')
+                    .next()
+                    .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("text/event-stream"))
+            })
+        {
+            return Err("Provider must return text/event-stream".into());
+        }
+        let message = crate::model::read_stream(response, progress)?;
+        serde_json::to_string(&message).map_err(|e| e.to_string())
     }
 
     pub fn connection(&self, mut stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
@@ -181,6 +193,7 @@ impl Bridge {
                         Response {
                             id: request.id,
                             result: Err("Four model requests are already in flight".into()),
+                            delta: None,
                         },
                     )?;
                     continue;
@@ -188,13 +201,32 @@ impl Bridge {
                 let bridge = self.clone();
                 let writer = Arc::clone(&writer);
                 std::thread::spawn(move || {
-                    let result = bridge.execute(request.operation);
+                    let result = match request.operation {
+                        Operation::Complete { messages } => {
+                            bridge.complete(messages, &mut |text| {
+                                if !text.is_empty() {
+                                    write_response(
+                                        &writer,
+                                        Response {
+                                            id: request.id,
+                                            result: Ok(String::new()),
+                                            delta: Some(text.into()),
+                                        },
+                                    )
+                                    .map_err(|e| e.to_string())?;
+                                }
+                                Ok(())
+                            })
+                        }
+                        operation => bridge.execute(operation),
+                    };
                     bridge.models.fetch_sub(1, Ordering::AcqRel);
                     if let Err(error) = write_response(
                         &writer,
                         Response {
                             id: request.id,
                             result,
+                            delta: None,
                         },
                     ) {
                         eprintln!("HostBridge model reply: {error}");
@@ -208,6 +240,7 @@ impl Bridge {
                     Response {
                         id: request.id,
                         result: self.execute(request.operation),
+                        delta: None,
                     },
                 )?;
             }
@@ -223,6 +256,7 @@ fn write_response(
         protocol::encode(&Response {
             id: response.id,
             result: Err("Response exceeds frame limit".into()),
+            delta: None,
         })
         .expect("Small error frame")
     });

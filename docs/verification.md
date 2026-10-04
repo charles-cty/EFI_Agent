@@ -347,3 +347,38 @@ the application and GPT image entirely with Linux tools in a Linux-local tree.
 The pack command does not write physical media. USB-device boot, physical
 firmware compatibility, Secure Boot signing, and physical NIC behavior remain
 unverified. The previous real-provider, native HTTPS, and TUI gaps remain open.
+
+## 2026-10-04: Reasoning configuration and streamed model replies
+
+Chat Completions requests now send `stream: true` and `reasoning_effort`.
+The default effort is `medium`. `EFI_AGENT_REASONING_EFFORT` selects none,
+minimal, low, medium, high, or xhigh. Invalid values fail before the API call.
+The provider must support the selected value; the host does not downgrade it.
+The README documents the host environment, API root, and protocol limits.
+
+The host reads bounded SSE events without a new dependency. It assembles text,
+reasoning_content, and indexed tool calls, including fragmented arguments and
+interleaved calls. Text progress frames reach both VM and native UEFI interfaces.
+Successful assistant messages retain reasoning_content for later tool rounds.
+Tools execute only after a valid finish reason and [DONE]. Partial text is
+visible but does not enter history after an error or cancellation.
+
+Linux KVM and Windows WHPX smoke tests passed with a local SSE provider. The
+provider withheld completion until the guest displayed a Unicode text prefix.
+Both tests checked the default medium value, seven-byte wire writes, fragmented
+tool arguments, reasoning_content echoed on later rounds, correlated file
+results, and actual file contents. A complete write argument followed by a
+truncated stream did not create the target file. Esc cancellation, resize,
+new requests before a cancelled provider completed, and stale stream refusal
+also passed. Native SimpleText/OVMF testing passed fragmented progress frames,
+partial-frame cancellation, local FAT tools, and persisted-file checks.
+
+Linux and Windows each passed 22 tests (4 host and 18 core), host Clippy,
+UEFI-target Clippy, and release UEFI builds. Parser tests cover one-byte reads,
+interleaved calls, UTF-8, CRLF, usage-only events, truncated or failed replies,
+limits, invalid tool indices, and failed progress writes. Agent tests confirm
+that streamed text is not duplicated and failed replies do not enter history.
+
+The provider tests are deterministic local simulations. Real service-provider
+reasoning, credentials, and streaming behavior remain unverified. Provider
+reasoning formats other than reasoning_content are not implemented.

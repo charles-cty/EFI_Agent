@@ -13,7 +13,11 @@ pub const MAX_FILE_BYTES: usize = 512 * 1024;
 const MAX_HISTORY_BYTES: usize = 640 * 1024;
 
 pub trait Environment {
-    fn complete(&mut self, messages: &[ChatMessage]) -> Result<ChatMessage, String>;
+    fn complete(
+        &mut self,
+        messages: &[ChatMessage],
+        progress: &mut dyn FnMut(&str),
+    ) -> Result<ChatMessage, String>;
     fn execute(&mut self, operation: Operation) -> Result<String, String>;
     /// Sticky for one turn. A cancelled environment must not execute more tools.
     fn cancelled(&self) -> bool {
@@ -22,6 +26,8 @@ pub trait Environment {
 }
 
 pub enum Event<'a> {
+    ModelStarted,
+    AssistantDelta(&'a str),
     Assistant(&'a str),
     ToolStarted {
         name: &'a str,
@@ -73,12 +79,19 @@ impl Agent {
                     "Conversation exceeds the context limit. Use /clear to start a new conversation.",
                 ));
             }
-            let reply = environment.complete(&self.messages)?;
+            observe(Event::ModelStarted);
+            let mut streamed = false;
+            let reply = environment.complete(&self.messages, &mut |delta| {
+                if !delta.is_empty() {
+                    streamed = true;
+                    observe(Event::AssistantDelta(delta));
+                }
+            })?;
             if environment.cancelled() {
                 return Err(String::from("Request cancelled"));
             }
             validate_reply(&reply)?;
-            if let Some(content) = reply.content.as_deref().filter(|s| !s.is_empty()) {
+            if !streamed && let Some(content) = reply.content.as_deref().filter(|s| !s.is_empty()) {
                 observe(Event::Assistant(content));
             }
             if reply.tool_calls.is_empty() {
@@ -295,7 +308,11 @@ mod tests {
         calls: usize,
     }
     impl Environment for ErrorThenAnswer {
-        fn complete(&mut self, messages: &[ChatMessage]) -> Result<ChatMessage, String> {
+        fn complete(
+            &mut self,
+            messages: &[ChatMessage],
+            _progress: &mut dyn FnMut(&str),
+        ) -> Result<ChatMessage, String> {
             self.calls += 1;
             if self.calls == 1 {
                 serde_json::from_str(r#"{"role":"assistant","content":null,"tool_calls":[{"id":"read-731","type":"function","function":{"name":"read","arguments":"{\"path\":\"missing.txt\"}"}}]}"#).map_err(|e|e.to_string())
@@ -329,7 +346,11 @@ mod tests {
         completions: usize,
     }
     impl Environment for Repeating {
-        fn complete(&mut self, messages: &[ChatMessage]) -> Result<ChatMessage, String> {
+        fn complete(
+            &mut self,
+            messages: &[ChatMessage],
+            _progress: &mut dyn FnMut(&str),
+        ) -> Result<ChatMessage, String> {
             if self.completions > 0 {
                 let last = messages.last().unwrap();
                 assert_eq!(last.role, "tool");
@@ -371,6 +392,52 @@ mod tests {
     }
 
     #[test]
+    fn streamed_text_is_observed_once_and_only_success_enters_history() {
+        struct Streaming {
+            fail: bool,
+        }
+        impl Environment for Streaming {
+            fn complete(
+                &mut self,
+                _messages: &[ChatMessage],
+                progress: &mut dyn FnMut(&str),
+            ) -> Result<ChatMessage, String> {
+                progress("left 中");
+                progress(" right");
+                if self.fail {
+                    Err("truncated stream".into())
+                } else {
+                    Ok(ChatMessage::text("assistant", "left 中 right".into()))
+                }
+            }
+            fn execute(&mut self, _operation: Operation) -> Result<String, String> {
+                panic!("A text stream must not execute tools")
+            }
+        }
+        for fail in [false, true] {
+            let mut agent = Agent::default();
+            let mut text = String::new();
+            let mut full_replies = 0;
+            let result = agent.turn(
+                "prompt".into(),
+                &mut Streaming { fail },
+                |event| match event {
+                    Event::AssistantDelta(delta) => text.push_str(delta),
+                    Event::Assistant(_) => full_replies += 1,
+                    _ => {}
+                },
+            );
+            assert_eq!(result.is_err(), fail);
+            assert_eq!(text, "left 中 right");
+            assert_eq!(full_replies, 0);
+            assert_eq!(agent.messages.len(), if fail { 2 } else { 3 });
+            if !fail {
+                assert_eq!(agent.messages[2].content.as_deref(), Some(text.as_str()));
+            }
+        }
+    }
+
+    #[test]
     fn cancelled_tool_batch_retires_ids_and_allows_next_prompt() {
         struct CancelAfterRead {
             cancelled: bool,
@@ -381,7 +448,11 @@ mod tests {
             fn cancelled(&self) -> bool {
                 self.cancelled
             }
-            fn complete(&mut self, messages: &[ChatMessage]) -> Result<ChatMessage, String> {
+            fn complete(
+                &mut self,
+                messages: &[ChatMessage],
+                _progress: &mut dyn FnMut(&str),
+            ) -> Result<ChatMessage, String> {
                 self.completions += 1;
                 if self.completions == 1 {
                     let mut reply = ChatMessage::text("assistant", "Inspect first".into());
