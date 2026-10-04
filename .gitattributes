@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.efi binary
+*.fd binary
+*.img binary

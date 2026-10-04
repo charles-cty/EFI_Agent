@@ -10,6 +10,7 @@ Verified:
 - `cargo check` for the native launcher and shared core.
 - `cargo check -p efi-agent-uefi --target x86_64-unknown-uefi`.
 - Release linking of the UEFI application and ESP directory creation.
+- Native and UEFI Clippy checks with warnings treated as errors.
 - RPC length boundaries (0, 1, 256, 1 MiB, and 1 MiB + 1).
 - Fragmented Unicode input and asymmetric terminal resize dimensions.
 - Recovery after malformed resize input and rejection of zero dimensions.
