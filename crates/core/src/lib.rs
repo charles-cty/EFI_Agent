@@ -4,6 +4,7 @@ extern crate alloc;
 
 pub mod agent;
 pub mod ansi;
+pub mod completion;
 pub mod config;
 pub mod editor;
 pub mod input;

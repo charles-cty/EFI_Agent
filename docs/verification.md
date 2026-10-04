@@ -400,3 +400,47 @@ assertions: captures omitted spaces in rendered answer text. The second run
 passed the Unicode file screen check before failing the multiline screen check.
 The full custom-memory ConPTY run remains unverified; no launcher memory error
 was observed. No claim about peak memory use or smaller allocations is made.
+
+## 2026-10-04: UEFI event, watchdog, and capability safety
+
+The entry point disables the boot watchdog before configuration or UI work.
+Unsupported watchdog service is accepted; other errors stop startup. EFI TCP4
+callbacks now only mark completion and enqueue a preallocated intrusive node.
+The single application-processor dispatcher drains notifications at application
+TPL. It rejects reentry, waits only on plain timer events, and owns the sole
+WaitForEvent call site. Input loops, DHCP waits, and token waits yield through
+that dispatcher. Completion events are closed and queued nodes are drained
+before their storage is freed. Pending tokens remain live through cancellation.
+The application does not start additional processors or firmware threads.
+
+IPv4 Config2 is optional for firmware with an existing TCP4 address. When
+available, address setup precedes TCP child creation. OVMF retained an unresolved
+mapping when TCP children were configured before DHCP; preparing the interface
+first corrected that behavior. Address mapping has a deadline and child Poll
+calls. Missing protocols produce explicit diagnostic reports rather than
+preventing local UI use.
+
+Startup and /capabilities probe TCP4, IPv4 configuration, and EFI RNG protocols.
+NOT_FOUND is reported as an absent capability. RNG probing uses bounded
+algorithm enumeration and explicit SP800-90 DRBG requests. Raw entropy and
+unknown defaults do not qualify as an application cryptographic DRBG. The
+probe never prints sample bytes or substitutes a weak generator. These are
+capability checks, not entropy certification or an SSH implementation.
+docs/uefi-safety.md defines the execution, callback, lifetime, watchdog,
+protocol, and future SSH randomness rules.
+
+Linux KVM and Windows WHPX passed actual TCP4 host reads, streamed model replies,
+resize, cancellation, obsolete response refusal, truncated-tool refusal, and
+the complete file tool loop at 128 MiB. Native SimpleText/OVMF passed partial
+header/body cancellation, local FAT read/edit/write/list, traversal rejection,
+and persisted-file checks. Linux no-NIC boot reported zero network interfaces
+and no EFI RNG protocol. After 310 seconds the guest still responded to /help
+and exited through /quit. Windows with a virtio RNG device booted without a NIC
+and reported no usable recognized DRBG from that OVMF image. A device's presence
+alone therefore did not qualify cryptographic capability.
+
+Linux and Windows passed 23 tests, host Clippy, UEFI Clippy, and release builds.
+Structured randomized completion-queue tests cover batches of 1, 2, 31, 64, and
+257 nodes, duplicate callback notifications, delayed dispatch, and repeated
+draining against an independent readiness oracle. Physical firmware/NIC behavior
+and an RNG image with a successful recognized DRBG request remain unverified.

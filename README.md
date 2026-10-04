@@ -22,6 +22,11 @@ and muted status-line design. It does not use Grok Build source code or branding
 Reference repository: https://github.com/xai-org/grok-build (reviewed at
 `2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`).
 
+See [UEFI safety](docs/uefi-safety.md) for the application-level event dispatcher,
+callback rules, watchdog handling, cooperative single-processor execution, and
+firmware network and cryptographic RNG capability checks. `/capabilities`
+shows the detected firmware protocols and RNG result.
+
 ## Windows build
 
 Use PowerShell 7.4 or later with Rust 1.93 or later:

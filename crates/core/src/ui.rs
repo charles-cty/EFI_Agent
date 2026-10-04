@@ -13,6 +13,7 @@ pub struct App {
     pub messages: Vec<Message>,
     pub status: String,
     pub workspace: String,
+    pub capabilities: String,
     pub scroll: u16,
     pub quit: bool,
 }
@@ -24,6 +25,7 @@ impl Default for App {
             messages: Vec::new(),
             status: String::from("Ready"),
             workspace: String::from("UEFI workspace"),
+            capabilities: String::new(),
             scroll: 0,
             quit: false,
         }

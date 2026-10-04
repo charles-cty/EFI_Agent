@@ -16,7 +16,9 @@ use ratatui::{Terminal, layout::Size};
 use uefi::prelude::*;
 use uefi::{boot, proto::console::serial::Serial};
 mod bridge;
+mod capabilities;
 mod environment;
+mod event_loop;
 mod files;
 mod tcp;
 mod terminal;
@@ -24,6 +26,12 @@ mod terminal;
 #[entry]
 fn main() -> Status {
     uefi::helpers::init().unwrap();
+    if let Err(error) = boot::set_watchdog_timer(0, 0x10000, None)
+        && error.status() != Status::UNSUPPORTED
+    {
+        uefi::println!("Cannot disable UEFI watchdog: {error}");
+        return error.status();
+    }
     let vm = files::read("\\EFI\\AGENT\\VM.TXT").is_ok();
     match run() {
         Ok(()) => {
@@ -60,9 +68,12 @@ fn submit(
     }
     app.status = String::from("Working");
     refresh(app, false)?;
-    let response = if text == "/help" {
+    let response = if text == "/capabilities" {
+        app.capabilities = capabilities::detect();
+        app.capabilities.clone()
+    } else if text == "/help" {
         String::from(
-            "/help  Show commands\n/clear  Start a new conversation\n/quit  Exit (VM: shut down; hardware: return to firmware)\n/read <path>  Read a UTF-8 file from the boot volume\n/write <path> <text>  Save a file on the boot volume\n/host-list [path]  List host files\n/host-read <path>  Read a host file\n/host-write <path> <text>  Save a host file\nSend a prompt to run the coding agent (read, write, edit tools).",
+            "/help  Show commands\n/capabilities  Probe firmware network and cryptographic RNG capabilities\n/clear  Start a new conversation\n/quit  Exit (VM: shut down; hardware: return to firmware)\n/read <path>  Read a UTF-8 file from the boot volume\n/write <path> <text>  Save a file on the boot volume\n/host-list [path]  List host files\n/host-read <path>  Read a host file\n/host-write <path> <text>  Save a host file\nSend a prompt to run the coding agent (read, write, edit tools).",
         )
     } else if let Some(path) = text.strip_prefix("/read ") {
         files::read(path).unwrap_or_else(|e| e)
@@ -241,6 +252,7 @@ fn preview(text: &str) -> String {
 fn run() -> Result<(), terminal::Error> {
     let mut app = App::default();
     let mut agent = Agent::default();
+    app.capabilities = capabilities::detect();
     let vm = files::read("\\EFI\\AGENT\\VM.TXT").is_ok();
     let mut bridge = match environment::Runtime::load(vm) {
         Ok(environment) => Some(environment),
@@ -291,7 +303,8 @@ fn run() -> Result<(), terminal::Error> {
                 if sized {
                     break;
                 }
-                boot::stall(core::time::Duration::from_millis(10));
+                event_loop::idle(core::time::Duration::from_millis(10))
+                    .map_err(|_| terminal::Error(Status::DEVICE_ERROR))?;
             }
             while !app.quit {
                 terminal.draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
@@ -347,7 +360,8 @@ fn run() -> Result<(), terminal::Error> {
                         })?;
                     }
                 }
-                boot::stall(core::time::Duration::from_millis(10));
+                event_loop::idle(core::time::Duration::from_millis(10))
+                    .map_err(|_| terminal::Error(Status::DEVICE_ERROR))?;
             }
             terminal.show_cursor()?;
             return Ok(());
@@ -380,7 +394,8 @@ fn run() -> Result<(), terminal::Error> {
                 })?;
             }
         }
-        boot::stall(core::time::Duration::from_millis(10));
+        event_loop::idle(core::time::Duration::from_millis(10))
+            .map_err(|_| terminal::Error(Status::DEVICE_ERROR))?;
     }
     terminal.show_cursor()?;
     Ok(())

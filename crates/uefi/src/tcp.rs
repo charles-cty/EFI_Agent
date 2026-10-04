@@ -1,11 +1,11 @@
-//! Synchronous TCP4 operations over firmware asynchronous tokens.
+//! Cooperative TCP4 operations over firmware asynchronous tokens.
 //!
 //! No queued token, event context, or packet buffer can outlive its Rust storage.
+use crate::event_loop::{self, Notification};
 use alloc::{boxed::Box, format, string::String};
 use core::{
     ffi::c_void,
     ptr::{self, NonNull},
-    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 use uefi::{
@@ -42,21 +42,20 @@ fn status(result: Status, action: &str) -> Result<(), String> {
 /// The notification context stays heap allocated until its event is closed.
 struct Completion {
     event: Option<Event>,
-    done: Box<AtomicBool>,
+    done: Box<Notification>,
 }
 
 unsafe extern "efiapi" fn completed(_: Event, context: Option<NonNull<c_void>>) {
     if let Some(context) = context {
-        // SAFETY: Completion owns the boxed atomic until after CloseEvent.
-        unsafe { context.cast::<AtomicBool>().as_ref() }.store(true, Ordering::Release);
+        event_loop::enqueue(context.cast());
     }
 }
 
 impl Completion {
     fn new() -> Result<Self, String> {
-        let mut done = Box::new(AtomicBool::new(false));
+        let mut done = Notification::new();
         // SAFETY: context is stable and valid for the event lifetime. The app
-        // never exits boot services, and this callback only sets an atomic flag.
+        // never exits boot services; the callback only marks and queues completion.
         let event = unsafe {
             boot::create_event(
                 EventType::NOTIFY_SIGNAL,
@@ -85,6 +84,7 @@ impl Drop for Completion {
         if let Some(event) = self.event.take() {
             // Failure would leave firmware with a pointer to freed context.
             boot::close_event(event).expect("Cannot close TCP4 completion event");
+            event_loop::dispatch();
         }
     }
 }
@@ -122,6 +122,14 @@ pub struct Tcp {
     child: Handle,
 }
 
+pub(crate) fn interfaces() -> uefi::Result<usize> {
+    match boot::find_handles::<TcpBinding>() {
+        Ok(handles) => Ok(handles.len()),
+        Err(error) if error.status() == Status::NOT_FOUND => Ok(0),
+        Err(error) => Err(error),
+    }
+}
+
 impl Tcp {
     pub fn connect(
         address: [u8; 4],
@@ -150,38 +158,10 @@ impl Tcp {
         if poll() {
             return Err("Request cancelled".into());
         }
-        let mut ip = Ip4Config2::new(handle).map_err(|e| format!("IPv4 configuration: {e}"))?;
-        if ip
-            .get_interface_info()
-            .map_err(|e| format!("IPv4 configuration: {e}"))?
-            .station_addr
-            == Ipv4Address::from([0; 4])
-        {
-            ip.set_policy(Ip4Config2Policy::DHCP)
-                .map_err(|e| format!("IPv4 DHCP: {e}"))?;
-            let deadline = Deadline::new(Duration::from_secs(30))?;
-            loop {
-                if poll() {
-                    return Err("Request cancelled".into());
-                }
-                if ip
-                    .get_interface_info()
-                    .map_err(|e| format!("IPv4 configuration: {e}"))?
-                    .station_addr
-                    != Ipv4Address::from([0; 4])
-                {
-                    break;
-                }
-                if deadline.expired() {
-                    return Err("IPv4 DHCP timed out".into());
-                }
-                boot::stall(Duration::from_millis(10));
-            }
-        }
-        drop(ip);
-        if poll() {
-            return Err("Request cancelled".into());
-        }
+        // Configure an available IPv4 policy before creating a TCP child. Some
+        // firmware retains an unresolved default mapping once a child exists.
+        // Absence of Config2 is allowed when TCP4 supplies a configured address.
+        let address_configurable = Self::configure_address(handle, poll)?;
         let mut binding = boot::open_protocol_exclusive::<TcpBinding>(handle)
             .map_err(|e| format!("TCP4 binding: {e}"))?;
         let mut raw_child = ptr::null_mut();
@@ -221,10 +201,34 @@ impl Tcp {
         };
         let protocol = connection.raw();
         // SAFETY: Configure reads config only for this call.
-        status(
-            unsafe { ((*protocol).configure)(protocol, &config) },
-            "configure",
-        )?;
+        let configured = unsafe { ((*protocol).configure)(protocol, &config) };
+        if configured == Status::NO_MAPPING {
+            if !address_configurable {
+                return Err("TCP4 has no address and IPv4 Config2 is unavailable; configure the interface in firmware".into());
+            }
+            let deadline = Deadline::new(Duration::from_secs(30))?;
+            loop {
+                if poll() {
+                    return Err("Request cancelled".into());
+                }
+                let configured = unsafe { ((*protocol).configure)(protocol, &config) };
+                if configured != Status::NO_MAPPING {
+                    status(configured, "configure after address setup")?;
+                    break;
+                }
+                if deadline.expired() {
+                    return Err("TCP4 address mapping timed out".into());
+                }
+                // Advance the firmware's child IP state while mapping settles.
+                unsafe {
+                    let _ = ((*protocol).poll)(protocol);
+                }
+                event_loop::idle(Duration::from_millis(10))?;
+            }
+        } else {
+            status(configured, "configure")?;
+        }
+
         let completion = Completion::new()?;
         // Allocate the deadline before queuing the token so an allocation
         // failure cannot return with firmware still retaining stack pointers.
@@ -241,6 +245,48 @@ impl Tcp {
         Ok(connection)
     }
 
+    fn configure_address(handle: Handle, poll: &mut dyn FnMut() -> bool) -> Result<bool, String> {
+        let mut ip = match Ip4Config2::new(handle) {
+            Ok(ip) => ip,
+            Err(error) if matches!(error.status(), Status::UNSUPPORTED | Status::NOT_FOUND) => {
+                return Ok(false);
+            }
+            Err(error) => return Err(format!("IPv4 configuration: {error}")),
+        };
+        if ip
+            .get_interface_info()
+            .map_err(|e| format!("IPv4 configuration: {e}"))?
+            .station_addr
+            == Ipv4Address::from([0; 4])
+        {
+            ip.set_policy(Ip4Config2Policy::DHCP)
+                .map_err(|e| format!("IPv4 DHCP: {e}"))?;
+            let deadline = Deadline::new(Duration::from_secs(30))?;
+            loop {
+                if poll() {
+                    return Err("Request cancelled".into());
+                }
+                if ip
+                    .get_interface_info()
+                    .map_err(|e| format!("IPv4 configuration: {e}"))?
+                    .station_addr
+                    != Ipv4Address::from([0; 4])
+                {
+                    break;
+                }
+                if deadline.expired() {
+                    return Err("IPv4 DHCP timed out".into());
+                }
+                event_loop::idle(Duration::from_millis(10))?;
+            }
+        }
+        drop(ip);
+        if poll() {
+            return Err("Request cancelled".into());
+        }
+        Ok(true)
+    }
+
     fn raw(&mut self) -> *mut Tcp4Protocol {
         &mut self.protocol.as_mut().expect("Open TCP4 protocol").0
     }
@@ -254,7 +300,8 @@ impl Tcp {
     ) -> Result<(), String> {
         let protocol = self.raw();
         loop {
-            if completion.done.load(Ordering::Acquire) {
+            event_loop::dispatch();
+            if completion.done.ready() {
                 // SAFETY: event signals after firmware writes the token status.
                 return status(unsafe { ptr::read_volatile(&token.status) }, "completion");
             }
@@ -271,9 +318,10 @@ impl Tcp {
                     )
                     .expect("Firmware failed to release pending TCP4 token");
                 }
-                // Lowering TPL in Stall permits the completion callback to run.
+                // Pump completion notifications at APPLICATION before retiring storage.
                 for _ in 0..1000 {
-                    if completion.done.load(Ordering::Acquire) {
+                    event_loop::dispatch();
+                    if completion.done.ready() {
                         // Cancellation can race a successful receive. Preserve
                         // completed bytes so the framed stream stays aligned.
                         if interrupted && token.status == Status::SUCCESS {
@@ -288,7 +336,9 @@ impl Tcp {
                     unsafe {
                         let _ = ((*protocol).poll)(protocol);
                     }
-                    boot::stall(Duration::from_millis(1));
+                    // Keep token storage live even if the event scheduler fails.
+                    event_loop::idle(Duration::from_millis(1))
+                        .expect("Cannot drain cancelled TCP4 token");
                 }
                 // Do not unwind and free storage still owned by broken firmware.
                 panic!("Firmware did not signal cancelled TCP4 token");
@@ -297,7 +347,20 @@ impl Tcp {
             unsafe {
                 let _ = ((*protocol).poll)(protocol);
             }
-            boot::stall(Duration::from_millis(1));
+            // A scheduler failure must cancel the live token before unwinding.
+            if event_loop::idle(Duration::from_millis(1)).is_err() {
+                status(
+                    unsafe { ((*protocol).configure)(protocol, ptr::null()) },
+                    "reset after event loop failure",
+                )
+                .expect("Firmware failed to release TCP4 token");
+                event_loop::dispatch();
+                assert!(
+                    completion.done.ready(),
+                    "Firmware did not retire TCP4 token after reset"
+                );
+                return Err("UEFI event loop failed".into());
+            }
         }
     }
 
