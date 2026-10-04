@@ -217,3 +217,41 @@ Remaining native gaps: direct HTTPS provider access, authenticated/encrypted
 relay transport, static IP configuration, physical hardware verification, and
 responsive request cancellation. The current relay is for trusted local networks
 and uses plain framed TCP. Windows WHPX and broader TUI work remain open.
+
+## 2026-10-04: Windows WHPX and ConPTY verification
+
+Windows Hypervisor Platform is enabled on the test host. QEMU 11.1.0
+(`v11.1.0-12130-ge470268ff4`, Windows distribution dated 2026-08-11) was
+downloaded and unpacked into a Windows-local temporary directory. Tests used
+the matched OVMF_CODE_4M.fd and OVMF_VARS_4M.fd templates already used on Linux.
+QEMU ran with `q35,accel=whpx`, with no graphical display.
+
+`uv.exe run scripts/smoke_vm.py --accel whpx` passed serial TUI rendering,
+guest TCP4 host file read, a Chat Completions request, and the guest-driven
+read/edit/write loop with correlated tool results and ambiguous-edit refusal.
+The provider is deterministic local HTTP, not a third-party model service.
+The script now stops its children before removing their temporary working
+directory; Windows previously refused that cleanup while a child was alive.
+The revised script also passed under Linux KVM.
+
+`scripts/smoke_windows.ps1` passed in psmux 3.3.4 using a native Windows
+ConPTY and PowerShell 7. It checked Unicode input against actual host file
+contents, Backspace, cursor editing, Home/End, and exact multiline file content.
+Ctrl+J did not submit before explicit Enter. It checked `/quit` and Ctrl+C by
+executing fresh shell commands after exit, verified that the alternate screen
+was inactive after both exits, and checked that Ctrl+C left no test QEMU alive.
+Captures are saved under artifacts/windows-smoke.
+
+The Windows tests exposed two launcher faults. Control-modified Enter is now
+mapped to newline because Windows can report Ctrl+J that way. A socket reset
+during firmware shutdown is accepted only after QEMU exits successfully.
+The launcher also installs a Ctrl+C handler so a Windows console control event
+returns through normal cleanup instead of skipping Rust Drop handlers.
+
+The updated launcher passed the Linux tmux/KVM regression: asymmetric initial
+and resized dimensions, Unicode editing, multiline input, bracketed paste,
+both exit routes, termios restoration, and alternate-screen restoration.
+Windows host tests and Clippy pass. Windows live resize, clipboard paste,
+physical Windows Terminal keystrokes, and exact console-mode equality remain
+unverified. Physical UEFI hardware, real-provider use, responsive guest
+cancellation, direct native HTTPS, command tools, and richer TUI work remain open.

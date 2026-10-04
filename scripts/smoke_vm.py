@@ -117,95 +117,95 @@ def main():
     thread = threading.Thread(target=provider.serve_forever, daemon=True)
     thread.start()
     children = []
+    temporary = tempfile.TemporaryDirectory(prefix="efi-agent-smoke-")
     try:
-        with tempfile.TemporaryDirectory(prefix="efi-agent-smoke-") as temporary:
-            workspace = Path(temporary)
-            (workspace / "needle.txt").write_text(FILE_MARKER, encoding="utf-8")
-            (workspace / "ambiguous.txt").write_text("aaa", encoding="utf-8")
-            env = os.environ.copy()
-            env.update({
-                "EFI_AGENT_API_BASE": f"http://127.0.0.1:{provider.server_port}/v1",
-                "EFI_AGENT_API_KEY": "smoke-key",
-                "EFI_AGENT_MODEL": "smoke-model",
-            })
-            rpc_port = unused_port()
-            bridge = subprocess.Popen(
-                [str(args.launcher.resolve()), "serve", str(workspace), f"127.0.0.1:{rpc_port}"],
-                cwd=workspace, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            )
-            children.append(("bridge", bridge))
-            wait_for_service(bridge, rpc_port)
-            with socket.socket() as listener:
-                listener.bind(("127.0.0.1", 0))
-                listener.listen()
-                listener.settimeout(15)
-                console_port = listener.getsockname()[1]
-                command = [
-                    args.qemu, "-machine", f"q35,accel={args.accel}", "-m", "256",
-                    "-display", "none", "-serial", "none", "-monitor", "none", "-no-reboot",
-                    "-drive", f"if=pflash,format=raw,readonly=on,file={args.code.resolve()}",
-                    "-drive", f"if=pflash,format=raw,snapshot=on,file={args.vars.resolve()}",
-                    "-drive", f"if=none,id=esp,format=raw,readonly=on,file=fat:ro:{args.esp.resolve()}",
-                    "-device", "virtio-blk-pci,drive=esp", "-device", "virtio-serial-pci",
-                    "-chardev", f"socket,id=terminal,host=127.0.0.1,port={console_port}",
-                    "-device", "virtconsole,chardev=terminal",
-                    "-netdev", f"user,id=network,guestfwd=tcp:10.0.2.100:7420-tcp:127.0.0.1:{rpc_port}",
-                    "-device", "virtio-net-pci,netdev=network",
-                ]
-                qemu = subprocess.Popen(command, cwd=workspace, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                children.append(("qemu", qemu))
-                connection, _ = listener.accept()
-                with connection:
-                    connection.settimeout(0.5)
-                    output = bytearray()
-                    screen = pyte.Screen(100, 30)
-                    terminal_stream = pyte.ByteStream(screen)
-                    state = "boot"
-                    deadline = time.monotonic() + 75
-                    while time.monotonic() < deadline:
-                        try:
-                            data = connection.recv(65536)
-                            if not data:
-                                raise RuntimeError("Guest terminal disconnected")
-                            output.extend(data)
-                            terminal_stream.feed(data)
-                        except TimeoutError:
-                            pass
-                        visible = "\n".join(screen.display)
-                        if state == "boot" and "What would you like to build?" in visible:
-                            print("PASS serial TUI render", flush=True)
-                            connection.sendall(b"\x1b[8;29;103t/host-read needle.txt\r")
-                            screen.resize(lines=29, columns=103)
-                            state = "file"
-                        elif state == "file" and FILE_MARKER in visible:
-                            print("PASS guest TCP4 host file read", flush=True)
-                            connection.sendall(b"Say the model marker\r")
-                            state = "model"
-                        elif state == "model" and MODEL_MARKER in visible:
-                            if not Provider.received:
-                                raise AssertionError("Provider request format was incorrect")
-                            print("PASS Chat Completions request and guest response", flush=True)
-                            connection.sendall(b"/clear\rExercise the file tools\r")
-                            state = "agent"
-                        elif state == "agent" and AGENT_MARKER in visible:
-                            if Provider.agent_steps != 5:
-                                raise AssertionError("Agent did not complete all correlated tool rounds")
-                            if (workspace / "needle.txt").read_text(encoding="utf-8") != "edited 中 853":
-                                raise AssertionError("Agent edit did not change the actual file")
-                            if (workspace / "created.txt").read_text(encoding="utf-8") != "created 419\n":
-                                raise AssertionError("Agent write did not create the actual file")
-                            if (workspace / "ambiguous.txt").read_text(encoding="utf-8") != "aaa":
-                                raise AssertionError("Ambiguous edit changed the file")
-                            print("PASS guest-driven read/edit/write loop and failed edit recovery", flush=True)
-                            state = "done"
-                            break
-                        if qemu.poll() is not None:
-                            raise RuntimeError("QEMU exited during the test")
-                    (args.output / "serial.bin").write_bytes(output)
-                    (args.output / "transcript.txt").write_bytes(ANSI.sub(b"", output))
-                    (args.output / "screen.txt").write_text("\n".join(screen.display), encoding="utf-8")
-                    if state != "done":
-                        raise TimeoutError(f"VM smoke test stopped in state {state}")
+        workspace = Path(temporary.name)
+        (workspace / "needle.txt").write_text(FILE_MARKER, encoding="utf-8")
+        (workspace / "ambiguous.txt").write_text("aaa", encoding="utf-8")
+        env = os.environ.copy()
+        env.update({
+            "EFI_AGENT_API_BASE": f"http://127.0.0.1:{provider.server_port}/v1",
+            "EFI_AGENT_API_KEY": "smoke-key",
+            "EFI_AGENT_MODEL": "smoke-model",
+        })
+        rpc_port = unused_port()
+        bridge = subprocess.Popen(
+            [str(args.launcher.resolve()), "serve", str(workspace), f"127.0.0.1:{rpc_port}"],
+            cwd=workspace, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        )
+        children.append(("bridge", bridge))
+        wait_for_service(bridge, rpc_port)
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            listener.settimeout(15)
+            console_port = listener.getsockname()[1]
+            command = [
+                args.qemu, "-machine", f"q35,accel={args.accel}", "-m", "256",
+                "-display", "none", "-serial", "none", "-monitor", "none", "-no-reboot",
+                "-drive", f"if=pflash,format=raw,readonly=on,file={args.code.resolve()}",
+                "-drive", f"if=pflash,format=raw,snapshot=on,file={args.vars.resolve()}",
+                "-drive", f"if=none,id=esp,format=raw,readonly=on,file=fat:ro:{args.esp.resolve()}",
+                "-device", "virtio-blk-pci,drive=esp", "-device", "virtio-serial-pci",
+                "-chardev", f"socket,id=terminal,host=127.0.0.1,port={console_port}",
+                "-device", "virtconsole,chardev=terminal",
+                "-netdev", f"user,id=network,guestfwd=tcp:10.0.2.100:7420-tcp:127.0.0.1:{rpc_port}",
+                "-device", "virtio-net-pci,netdev=network",
+            ]
+            qemu = subprocess.Popen(command, cwd=workspace, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            children.append(("qemu", qemu))
+            connection, _ = listener.accept()
+            with connection:
+                connection.settimeout(0.5)
+                output = bytearray()
+                screen = pyte.Screen(100, 30)
+                terminal_stream = pyte.ByteStream(screen)
+                state = "boot"
+                deadline = time.monotonic() + 75
+                while time.monotonic() < deadline:
+                    try:
+                        data = connection.recv(65536)
+                        if not data:
+                            raise RuntimeError("Guest terminal disconnected")
+                        output.extend(data)
+                        terminal_stream.feed(data)
+                    except TimeoutError:
+                        pass
+                    visible = "\n".join(screen.display)
+                    if state == "boot" and "What would you like to build?" in visible:
+                        print("PASS serial TUI render", flush=True)
+                        connection.sendall(b"\x1b[8;29;103t/host-read needle.txt\r")
+                        screen.resize(lines=29, columns=103)
+                        state = "file"
+                    elif state == "file" and FILE_MARKER in visible:
+                        print("PASS guest TCP4 host file read", flush=True)
+                        connection.sendall(b"Say the model marker\r")
+                        state = "model"
+                    elif state == "model" and MODEL_MARKER in visible:
+                        if not Provider.received:
+                            raise AssertionError("Provider request format was incorrect")
+                        print("PASS Chat Completions request and guest response", flush=True)
+                        connection.sendall(b"/clear\rExercise the file tools\r")
+                        state = "agent"
+                    elif state == "agent" and AGENT_MARKER in visible:
+                        if Provider.agent_steps != 5:
+                            raise AssertionError("Agent did not complete all correlated tool rounds")
+                        if (workspace / "needle.txt").read_text(encoding="utf-8") != "edited 中 853":
+                            raise AssertionError("Agent edit did not change the actual file")
+                        if (workspace / "created.txt").read_text(encoding="utf-8") != "created 419\n":
+                            raise AssertionError("Agent write did not create the actual file")
+                        if (workspace / "ambiguous.txt").read_text(encoding="utf-8") != "aaa":
+                            raise AssertionError("Ambiguous edit changed the file")
+                        print("PASS guest-driven read/edit/write loop and failed edit recovery", flush=True)
+                        state = "done"
+                        break
+                    if qemu.poll() is not None:
+                        raise RuntimeError("QEMU exited during the test")
+                (args.output / "serial.bin").write_bytes(output)
+                (args.output / "transcript.txt").write_bytes(ANSI.sub(b"", output))
+                (args.output / "screen.txt").write_text("\n".join(screen.display), encoding="utf-8")
+                if state != "done":
+                    raise TimeoutError(f"VM smoke test stopped in state {state}")
     finally:
         for name, child in reversed(children):
             if child.poll() is None:
@@ -219,6 +219,8 @@ def main():
         provider.shutdown()
         provider.server_close()
         thread.join(timeout=2)
+        # Windows holds child working directories open until the children exit.
+        temporary.cleanup()
 
 
 if __name__ == "__main__":

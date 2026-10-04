@@ -13,8 +13,9 @@ a Chat Completions round trip and a guest-driven read/edit/write tool loop
 against a local simulated provider. The Linux launcher has also been tested in a
 real tmux PTY for initial size, resize, Unicode input, host files, and exit
 restoration. Native mode with a model relay and local FAT file tools has been
-tested through SimpleText under OVMF. Physical bare-metal networking, direct
-HTTPS provider access, and Windows WHPX/ConPTY are still pending.
+tested through SimpleText under OVMF. Windows WHPX transport and native ConPTY
+input, file operations, and exit have also been tested. Physical bare-metal
+networking and direct HTTPS provider access are still pending.
 
 The interface follows the Grok Build header, conversation area, prompt separator,
 and muted status-line design. It does not use Grok Build source code or branding.
@@ -93,8 +94,8 @@ between operations do not provide cancellation during a network wait.
 The prompt editor supports Left/Right, Home/End (current line), Backspace, and
 Delete at Unicode grapheme boundaries. Ctrl+J inserts a newline; Enter submits
 the whole prompt. Alt/Shift+Enter also inserts a newline when the host terminal
-reports that modifier. The prompt expands to six visible lines and follows the
-editing cursor. Prompts are limited to 64 KiB.
+reports that modifier. Ctrl+Enter also inserts a newline. The prompt expands to
+six visible lines and follows the editing cursor. Prompts are limited to 64 KiB.
 
 The launcher enables bracketed paste. Pasted line breaks remain inside a single
 prompt and require an explicit Enter to submit. Terminal control characters
@@ -160,13 +161,30 @@ This checks initial and changed dimensions, Unicode file input, Backspace,
 cursor editing, multiline input, bracketed paste, `/quit`, Ctrl+C, termios
 restoration, and leaving the alternate screen.
 
+## Windows VM smoke tests
+
+Run the same `scripts/smoke_vm.py` test with Windows-local paths and
+`--accel whpx`. Use `uv.exe run` in PowerShell. This checks serial rendering,
+TCP4 file operations, and a deterministic Chat Completions tool loop.
+
+To check the native launcher through a Windows ConPTY session, use psmux:
+
+```powershell
+./scripts/smoke_windows.ps1 -Qemu 'C:\qemu\qemu-system-x86_64.exe' -Code 'C:\firmware\OVMF_CODE_4M.fd' -Vars 'C:\firmware\OVMF_VARS_4M.fd'
+```
+
+The test checks Unicode file input, Backspace, cursor editing, multiline input,
+`/quit`, Ctrl+C, and shell recovery. It saves captures under
+`artifacts/windows-smoke`. It does not test physical Windows Terminal keystrokes,
+Windows clipboard paste, or live window resize.
+
 ## Work remaining
 
 - Direct HTTPS provider networking and physical bare-metal verification.
 - Host command execution.
-- Responsive model requests, cancellation, multiline editing, and tool views.
+- Responsive model requests, cancellation, and richer tool views.
 - FAT image packaging.
-- Windows WHPX and Linux KVM end-to-end tests.
+- Windows live resize, clipboard paste, and physical terminal input checks.
 - Bare-metal file and network configuration and hardware verification.
 
 GOP, virtio-fs, and macOS HVF support are outside the current scope.

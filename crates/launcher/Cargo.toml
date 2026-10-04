@@ -9,6 +9,7 @@ rust-version.workspace = true
 efi-agent-core.workspace = true
 ratatui = { workspace = true, features = ["crossterm"] }
 crossterm = "0.29"
+ctrlc = "3.5"
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }

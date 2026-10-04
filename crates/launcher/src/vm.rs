@@ -9,6 +9,10 @@ use std::{
     net::{TcpListener, TcpStream},
     path::PathBuf,
     process::{Child, Command, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -37,6 +41,9 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 .into(),
         );
     }
+    let interrupted = Arc::new(AtomicBool::new(false));
+    let signal = Arc::clone(&interrupted);
+    ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed))?;
     let firmware = PathBuf::from(&args[1]).canonicalize()?;
     let variables = PathBuf::from(&args[2]).canonicalize()?;
     let esp = PathBuf::from(&args[3]).canonicalize()?;
@@ -104,6 +111,9 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     };
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut socket: TcpStream = loop {
+        if interrupted.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         if let Some(status) = session.child.try_wait()? {
             return Err(format!("QEMU exited: {status}").into());
         }
@@ -132,6 +142,9 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let boot_deadline = Instant::now() + Duration::from_secs(60);
     let mut buffer = [0; 8192];
     loop {
+        if interrupted.load(Ordering::Relaxed) {
+            break;
+        }
         if session.child.try_wait()?.is_some() {
             break;
         }
@@ -158,6 +171,24 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                         | std::io::ErrorKind::TimedOut
                         | std::io::ErrorKind::Interrupted
                 ) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {
+                // Windows can reset the virtconsole socket while QEMU exits
+                // after a firmware shutdown. Confirm a successful process exit
+                // before treating that reset as normal terminal completion.
+                let deadline = Instant::now() + Duration::from_secs(1);
+                loop {
+                    if let Some(status) = session.child.try_wait()? {
+                        if status.success() {
+                            return Ok(());
+                        }
+                        return Err(format!("QEMU exited: {status}").into());
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(e.into());
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
             Err(e) => return Err(e.into()),
         }
         if !ready && Instant::now() > boot_deadline {
@@ -199,9 +230,9 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                         }
                         KeyCode::Char(c) => c.to_string().into_bytes(),
                         KeyCode::Enter
-                            if key
-                                .modifiers
-                                .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT) =>
+                            if key.modifiers.intersects(
+                                KeyModifiers::ALT | KeyModifiers::SHIFT | KeyModifiers::CONTROL,
+                            ) =>
                         {
                             vec![10]
                         }
