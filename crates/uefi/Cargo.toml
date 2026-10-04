@@ -1,0 +1,11 @@
+[package]
+name = "efi-agent-uefi"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+efi-agent-core.workspace = true
+ratatui.workspace = true
+uefi = { version = "0.41", features = ["alloc", "global_allocator", "panic_handler"] }

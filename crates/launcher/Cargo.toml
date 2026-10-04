@@ -1,0 +1,14 @@
+[package]
+name = "efi-agent"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+efi-agent-core.workspace = true
+ratatui = { workspace = true, features = ["crossterm"] }
+crossterm = "0.29"
+serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
