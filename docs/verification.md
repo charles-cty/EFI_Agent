@@ -444,3 +444,32 @@ Structured randomized completion-queue tests cover batches of 1, 2, 31, 64, and
 257 nodes, duplicate callback notifications, delayed dispatch, and repeated
 draining against an independent readiness oracle. Physical firmware/NIC behavior
 and an RNG image with a successful recognized DRBG request remain unverified.
+
+## 2026-10-04: Session commands and API configuration checks
+
+`/exit` and `/quit` use the same exit path. Session commands are /help, /clear,
+/capabilities, /quit, and /exit. File slash commands have been removed. The
+agent uses read/write/edit tools against one configured workspace; VM host
+routing and native FAT routing are implementation details. The unused list RPC
+operation and separate host-command entry point were removed. read still lists
+directories when its path refers to a directory.
+
+The launcher and relay reject missing or blank API base, key, and model before
+startup. URL scheme/host and reasoning effort are checked as well. Before a
+prompt enters model history, the guest sends a model_config preflight request.
+Failed preflight reports an error without entering model-wait state. Each model
+call also validates configuration before opening the HTTP request. Native mode
+still needs a reachable relay; connecting to a relay is transport work, not an
+API inference request.
+
+Linux CLI checks refused missing configuration, a blank key, and a file URL in
+less than one second before accessing the workspace or starting QEMU. Windows
+also refused missing configuration before QEMU boot. KVM and WHPX SSE smoke
+tests refused the removed file commands and passed cancellation, streamed text,
+and the actual file tool loop. Native OVMF passed model configuration preflight,
+partial-frame cancellation, and local FAT tools. Linux tmux and Windows ConPTY
+passed Unicode prompt editing, multiline input, /exit, and Ctrl+C restoration;
+Linux also passed resize and bracketed paste with an embedded /exit line.
+Terminal checks use test configuration and unknown slash commands to exercise
+the editor without issuing API requests. File behavior is verified through the
+agent tool-loop tests. Builds, Clippy, and the existing 23 tests passed.

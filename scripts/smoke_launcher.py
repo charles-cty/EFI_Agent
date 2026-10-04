@@ -34,6 +34,7 @@ def main():
         script.write_text(
             "#!/usr/bin/env bash\n"
             f"stty -g > {shlex.quote(str(workspace / 'before'))}\n"
+            "export EFI_AGENT_API_BASE=http://127.0.0.1:1/v1 EFI_AGENT_API_KEY=test EFI_AGENT_MODEL=test\n"
             f"{command}\nresult=$?\n"
             f"stty -g > {shlex.quote(str(workspace / 'after'))}\n"
             "printf '\\nLAUNCHER_EXIT_%s\\n' \"$result\"\n"
@@ -87,59 +88,25 @@ def main():
                 raise AssertionError("Guest did not redraw at resized PTY dimensions")
             (output / "resized.txt").write_text(resized, encoding="utf-8")
             print("PASS live resize to 107x31", flush=True)
-            send("/host-write unicode.txt left 中 right")
-            wait_for("File saved")
-            if (workspace / "unicode.txt").read_text(encoding="utf-8") != "left 中 right":
-                raise AssertionError("Unicode input did not reach the actual host file")
-            tmux("send-keys", "-t", pane, "-l", "/host-read unicode.txtX")
-            tmux("send-keys", "-t", pane, "BSpace", "Enter")
-            screen = wait_for("left 中 right")
-            (output / "file.txt").write_text(screen, encoding="utf-8")
-            print("PASS Unicode input, Backspace, and host file RPC", flush=True)
-            tmux("send-keys", "-t", pane, "-l", "/host-write editor.txt left 中X right")
-            tmux("send-keys", "-t", pane, "Left", "Left", "Left", "Left", "Left", "Left", "BSpace")
-            tmux("send-keys", "-t", pane, "Home", "End", "Enter")
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline:
-                path = workspace / "editor.txt"
-                if path.exists() and path.read_text(encoding="utf-8") == "left 中 right":
-                    break
-                time.sleep(0.1)
-            else:
-                raise AssertionError("Cursor editing did not preserve Unicode file content")
-            print("PASS Unicode cursor editing and Home/End", flush=True)
-            tmux("send-keys", "-t", pane, "-l", "/host-write multiline.txt first")
+            tmux("send-keys", "-t", pane, "-l", "/unsupported left 中X right")
+            tmux("send-keys", "-t", pane, "Left", "Left", "Left", "Left", "Left", "Left", "BSpace", "Home", "End")
+            wait_for("/unsupported left 中 right")
             tmux("send-keys", "-t", pane, "C-j")
             tmux("send-keys", "-t", pane, "-l", "second 中")
             wait_for("second 中")
-            if (workspace / "multiline.txt").exists():
-                raise AssertionError("Newline submitted a partial prompt")
             tmux("send-keys", "-t", pane, "Enter")
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline:
-                path = workspace / "multiline.txt"
-                if path.exists() and path.read_text(encoding="utf-8") == "first\nsecond 中":
-                    break
-                time.sleep(0.1)
-            else:
-                raise AssertionError("Multiline prompt was not saved exactly")
-            tmux("send-keys", "-t", pane, "-l", "\x1b[200~/host-write pasted.txt alpha\n/quit\nβ\x1b[201~")
+            wait_for("Unknown command. Use /help.")
+            send("/clear")
+            tmux("send-keys", "-t", pane, "-l", "\x1b[200~/unsupported alpha\n/exit\nβ\x1b[201~")
             wait_for("β")
-            if (workspace / "pasted.txt").exists():
+            if "Unknown command" in capture():
                 raise AssertionError("Paste submitted before explicit Enter")
             tmux("send-keys", "-t", pane, "Enter")
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline:
-                path = workspace / "pasted.txt"
-                if path.exists() and path.read_text(encoding="utf-8") == "alpha\n/quit\nβ":
-                    break
-                time.sleep(0.1)
-            else:
-                raise AssertionError("Bracketed paste did not preserve exact content")
-            print("PASS multiline input and bracketed paste without accidental submit", flush=True)
-            send("/quit")
+            wait_for("Unknown command. Use /help.")
+            print("PASS Unicode editing, multiline and bracketed paste", flush=True)
+            send("/exit")
             restored()
-            print("PASS /quit and terminal restoration", flush=True)
+            print("PASS /exit and terminal restoration", flush=True)
             send(f"bash {shlex.quote(str(script))}")
             wait_for("What would you like to build?")
             tmux("send-keys", "-t", pane, "C-c")

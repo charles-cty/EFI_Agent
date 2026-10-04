@@ -3,6 +3,26 @@ use efi_agent_core::protocol::{ChatMessage, FunctionCall, MAX_FRAME, ToolCall};
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Read};
 
+pub fn validate_configuration() -> Result<(), String> {
+    let missing: Vec<_> = ["EFI_AGENT_API_BASE", "EFI_AGENT_API_KEY", "EFI_AGENT_MODEL"]
+        .into_iter()
+        .filter(|name| std::env::var(name).map_or(true, |value| value.trim().is_empty()))
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "Missing API configuration: {}. Set these variables on the launcher or relay host.",
+            missing.join(", ")
+        ));
+    }
+    let base = std::env::var("EFI_AGENT_API_BASE").map_err(|_| "Invalid API base URL")?;
+    let url = reqwest::Url::parse(&base).map_err(|_| "Invalid EFI_AGENT_API_BASE URL")?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err("EFI_AGENT_API_BASE must be an HTTP or HTTPS URL".into());
+    }
+    reasoning_effort(std::env::var("EFI_AGENT_REASONING_EFFORT").ok().as_deref())?;
+    Ok(())
+}
+
 pub fn reasoning_effort(value: Option<&str>) -> Result<&str, String> {
     match value.unwrap_or("medium") {
         effort @ ("none" | "minimal" | "low" | "medium" | "high" | "xhigh") => Ok(effort),

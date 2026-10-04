@@ -23,19 +23,6 @@ impl Runtime {
         let relay = Bridge::new(config.relay_address, config.relay_port);
         Ok(Self::Native { config, relay })
     }
-
-    pub fn host(
-        &mut self,
-        operation: Operation,
-        poll: &mut dyn FnMut() -> bool,
-    ) -> Result<String, String> {
-        match self {
-            Self::Vm(bridge) => bridge.call(operation, poll),
-            Self::Native { .. } => Err(String::from(
-                "Host commands are only available in VM mode; native agent tools use the UEFI workspace",
-            )),
-        }
-    }
 }
 
 pub struct Interactive<'a> {
@@ -88,9 +75,7 @@ impl Environment for Interactive<'_> {
         match self.runtime {
             Runtime::Vm(bridge) => bridge.call(operation, &mut control),
             Runtime::Native { config, .. } => match operation {
-                Operation::Read { path } | Operation::List { path } => {
-                    files::read_or_list(&config.resolve(&path)?)
-                }
+                Operation::Read { path } => files::read_or_list(&config.resolve(&path)?),
                 Operation::Write { path, content } => {
                     files::write(&config.resolve(&path)?, &content)?;
                     Ok("File saved".into())
@@ -106,7 +91,7 @@ impl Environment for Interactive<'_> {
                     files::write(&path, &edited)?;
                     Ok("File edited".into())
                 }
-                Operation::Complete { .. } => {
+                Operation::Complete { .. } | Operation::ModelConfig => {
                     Err(String::from("Model requests are not file tools"))
                 }
             },

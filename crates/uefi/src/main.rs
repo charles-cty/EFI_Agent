@@ -54,7 +54,7 @@ fn submit(
     text: String,
     mut refresh: impl FnMut(&mut App, bool) -> Result<bool, terminal::Error>,
 ) -> Result<(), terminal::Error> {
-    if text == "/quit" {
+    if matches!(text.as_str(), "/quit" | "/exit") {
         app.quit = true;
         return Ok(());
     }
@@ -73,74 +73,49 @@ fn submit(
         app.capabilities.clone()
     } else if text == "/help" {
         String::from(
-            "/help  Show commands\n/capabilities  Probe firmware network and cryptographic RNG capabilities\n/clear  Start a new conversation\n/quit  Exit (VM: shut down; hardware: return to firmware)\n/read <path>  Read a UTF-8 file from the boot volume\n/write <path> <text>  Save a file on the boot volume\n/host-list [path]  List host files\n/host-read <path>  Read a host file\n/host-write <path> <text>  Save a host file\nSend a prompt to run the coding agent (read, write, edit tools).",
+            "/help  Show commands\n/capabilities  Probe firmware network and cryptographic RNG capabilities\n/clear  Start a new conversation\n/quit, /exit  Exit\nSend a prompt to run the coding agent (read, write, edit tools).",
         )
-    } else if let Some(path) = text.strip_prefix("/read ") {
-        files::read(path).unwrap_or_else(|e| e)
-    } else if let Some(arguments) = text.strip_prefix("/write ") {
-        match arguments.split_once(' ') {
-            Some((path, content)) => files::write(path, content)
-                .map(|()| String::from("File saved"))
-                .unwrap_or_else(|e| e),
-            None => String::from("Usage: /write <path> <text>"),
-        }
+    } else if text.starts_with('/') {
+        String::from("Unknown command. Use /help.")
     } else if let Some(bridge) = bridge.as_mut() {
-        use efi_agent_core::protocol::Operation;
-        let operation = if text == "/host-list" {
-            Operation::List {
-                path: String::from("."),
-            }
-        } else if let Some(path) = text.strip_prefix("/host-list ") {
-            Operation::List { path: path.into() }
-        } else if let Some(path) = text.strip_prefix("/host-read ") {
-            Operation::Read { path: path.into() }
-        } else if let Some(arguments) = text.strip_prefix("/host-write ") {
-            match arguments.split_once(' ') {
-                Some((path, content)) => Operation::Write {
-                    path: path.into(),
-                    content: content.into(),
-                },
-                None => {
-                    app.message(
-                        "assistant",
-                        String::from("Usage: /host-write <path> <text>"),
-                    );
-                    app.status = String::from("Ready");
-                    return Ok(());
+        app.status = String::from("Checking model configuration");
+        refresh(app, false)?;
+        let render_error = RefCell::new(None);
+        let cancelled = Cell::new(false);
+        let result = {
+            let ui = RefCell::new((&mut *app, &mut refresh));
+            let mut control = || {
+                if cancelled.get() {
+                    return true;
                 }
-            }
-        } else if text.starts_with('/') {
-            app.message("assistant", String::from("Unknown command. Use /help."));
-            app.status = String::from("Ready");
-            return Ok(());
-        } else {
-            app.status = String::from("Waiting for model");
-            refresh(app, false)?;
-            let render_error = RefCell::new(None);
-            let cancelled = Cell::new(false);
-            let result = {
-                let ui = RefCell::new((&mut *app, &mut refresh));
-                let mut control = || {
-                    if cancelled.get() {
-                        return true;
+                let mut ui = ui.borrow_mut();
+                let (app, refresh) = &mut *ui;
+                match refresh(app, true) {
+                    Ok(stop) => cancelled.set(stop),
+                    Err(error) => {
+                        *render_error.borrow_mut() = Some(error);
+                        cancelled.set(true);
                     }
-                    let mut ui = ui.borrow_mut();
-                    let (app, refresh) = &mut *ui;
-                    match refresh(app, true) {
-                        Ok(stop) => cancelled.set(stop),
-                        Err(error) => {
-                            *render_error.borrow_mut() = Some(error);
-                            cancelled.set(true);
-                        }
-                    }
-                    cancelled.get()
-                };
-                let mut environment = environment::Interactive {
-                    runtime: bridge,
-                    poll: &mut control,
-                    cancelled: false,
-                };
-                let mut streaming_row = None;
+                }
+                cancelled.get()
+            };
+            let mut environment = environment::Interactive {
+                runtime: bridge,
+                poll: &mut control,
+                cancelled: false,
+            };
+            let mut streaming_row = None;
+            let preflight = match environment.runtime {
+                environment::Runtime::Vm(bridge) => bridge.call(
+                    efi_agent_core::protocol::Operation::ModelConfig,
+                    environment.poll,
+                ),
+                environment::Runtime::Native { relay, .. } => relay.call(
+                    efi_agent_core::protocol::Operation::ModelConfig,
+                    environment.poll,
+                ),
+            };
+            preflight.and_then(|_| {
                 agent.turn(text, &mut environment, |event| {
                     let mut ui = ui.borrow_mut();
                     let (app, refresh) = &mut *ui;
@@ -184,31 +159,17 @@ fn submit(
                         cancelled.set(true);
                     }
                 })
-            };
-            if let Err(error) = result {
-                app.message("error", error);
-            }
-            app.status = String::from("Ready");
-            if let Some(error) = render_error.into_inner() {
-                return Err(error);
-            }
-            refresh(app, false)?;
-            return Ok(());
+            })
         };
-        {
-            let mut render_error = None;
-            let result = bridge.host(operation, &mut || match refresh(app, true) {
-                Ok(stop) => stop,
-                Err(error) => {
-                    render_error = Some(error);
-                    true
-                }
-            });
-            if let Some(error) = render_error {
-                return Err(error);
-            }
-            result.unwrap_or_else(|e| e)
+        if let Err(error) = result {
+            app.message("error", error);
         }
+        app.status = String::from("Ready");
+        if let Some(error) = render_error.into_inner() {
+            return Err(error);
+        }
+        refresh(app, false)?;
+        return Ok(());
     } else {
         String::from(
             "Model environment is not configured. On hardware, provide EFI/AGENT/NATIVE.JSON with a model relay and native workspace.",

@@ -74,7 +74,7 @@ VirtioNetDxe. WHPX must be enabled on Windows; KVM must be available on Linux.
 The launcher uses the current terminal, with no graphical QEMU window.
 It waits for an application readiness marker before forwarding input, so OVMF
 cannot interpret initial terminal dimensions as firmware menu keystrokes.
-`/quit` shuts down the VM and returns to the host shell. On bare metal it returns
+`/quit` or `/exit` shuts down the VM and returns to the host shell. On bare metal it returns
 to firmware. Ctrl+C immediately exits the launcher, including during guest waits.
 
 ```powershell
@@ -91,11 +91,13 @@ image (read-only virtio-blk). HostBridge supplies writable host files separately
 Supply matching OVMF code and variable-store images. QEMU uses a temporary snapshot of the variable store, so booting does not
 modify the supplied template. Read-only vvfat is attached through virtio-blk.
 
-The VM supports `/host-list`, `/host-read <path>`, and
-`/host-write <path> <text>`. A normal prompt calls the provider configured on the
-host. The agent can read UTF-8 files or directory listings, write files, and
+Slash commands control the session: `/help`, `/clear`, `/capabilities`,
+`/quit`, and `/exit`. File operations are agent tools, not slash commands.
+A normal prompt calls the provider configured on the host. The agent can read UTF-8 files or directory listings, write files, and
 replace one exact occurrence with `edit`. It returns tool results to the model
-and stops after at most twelve rounds of executed tools. Slash commands are
+and stops after at most twelve rounds of executed tools. All tools use one
+configured workspace: the launcher workspace in VM mode or the boot-volume
+workspace in native mode. Slash commands are
 separate from model history. `/clear` resets the conversation.
 
 The TUI shows model and tool status, tool arguments, bounded result previews,
@@ -171,8 +173,14 @@ uv run scripts/smoke_native.py --launcher target/debug/efi-agent \
 
 ## HostBridge
 
+The launcher and relay validate API configuration before starting. Missing or
+blank base URL, key, or model produces an immediate error. The base must be an
+HTTP or HTTPS URL. Before adding a prompt to model history, the guest also
+checks the relay configuration; it does not enter model-wait status when that
+check fails.
+
 Frames contain a four-byte big-endian length and JSON, with a 1 MiB limit.
-Requests carry an ID and a tagged operation: `list`, `read`, `write`, `edit`, or
+Requests carry an ID and a tagged operation: `model_config`, `read`, `write`, `edit`, or
 `complete`. Responses carry the same ID and a result. A model request can send
 text progress frames with a `delta` field before its final response. The guest
 uses request IDs to discard both progress and final frames from cancelled calls.
@@ -253,8 +261,8 @@ uv run scripts/smoke_launcher.py --launcher target/debug/efi-agent \
   --esp artifacts/esp --output artifacts/launcher-smoke
 ```
 
-This checks initial and changed dimensions, Unicode file input, Backspace,
-cursor editing, multiline input, bracketed paste, `/quit`, Ctrl+C, termios
+This checks initial and changed dimensions, Unicode prompt input, Backspace,
+cursor editing, multiline input, bracketed paste, `/exit`, Ctrl+C, termios
 restoration, and leaving the alternate screen.
 
 ## Windows VM smoke tests
@@ -269,8 +277,8 @@ To check the native launcher through a Windows ConPTY session, use psmux:
 ./scripts/smoke_windows.ps1 -Qemu 'C:\qemu\qemu-system-x86_64.exe' -Code 'C:\firmware\OVMF_CODE_4M.fd' -Vars 'C:\firmware\OVMF_VARS_4M.fd'
 ```
 
-The test checks Unicode file input, Backspace, cursor editing, multiline input,
-`/quit`, Ctrl+C, and shell recovery. It saves captures under
+The test checks Unicode prompt input, Backspace, cursor editing, multiline input,
+`/exit`, Ctrl+C, and shell recovery. It saves captures under
 `artifacts/windows-smoke`. It does not test physical Windows Terminal keystrokes,
 Windows clipboard paste, or live window resize.
 

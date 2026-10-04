@@ -56,6 +56,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         128
     };
     let memory = memory_mib.to_string();
+    crate::model::validate_configuration()?;
     let interrupted = Arc::new(AtomicBool::new(false));
     let signal = Arc::clone(&interrupted);
     ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed))?;

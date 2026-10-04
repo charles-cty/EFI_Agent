@@ -216,12 +216,14 @@ def main():
                     visible = "\n".join(screen.display)
                     if state == "boot" and "What would you like to build?" in visible:
                         print("PASS serial TUI render", flush=True)
-                        connection.sendall(b"\x1b[8;29;103t/host-read needle.txt\r")
+                        connection.sendall(b"\x1b[8;29;103t/read needle.txt\r")
                         screen.resize(lines=29, columns=103)
-                        state = "file"
-                    elif state == "file" and FILE_MARKER in visible:
-                        print("PASS guest TCP4 host file read", flush=True)
-                        connection.sendall(b"Delay until cancelled\r")
+                        state = "commands"
+                    elif state == "commands" and "Unknown command. Use /help." in visible:
+                        if Provider.agent_steps:
+                            raise AssertionError("Removed slash command reached the model")
+                        print("PASS file slash command refused", flush=True)
+                        connection.sendall(b"/clear\rDelay until cancelled\r")
                         state = "waiting"
                     elif state == "waiting" and Provider.waiting.is_set():
                         connection.sendall(b"\x1b[8;27;97t\x1b")

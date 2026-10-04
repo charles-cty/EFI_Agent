@@ -44,6 +44,15 @@ class Relay:
             output.extend(data)
         return output
 
+    def request(self, connection, length):
+        request = json.loads(self.exact(connection, length))
+        while request["operation"]["type"] == "model_config":
+            reply = json.dumps({"id": request["id"], "result": {"Ok": "Model configured"}}).encode()
+            connection.sendall(len(reply).to_bytes(4, "big") + reply)
+            length = int.from_bytes(self.exact(connection, 4), "big")
+            request = json.loads(self.exact(connection, length))
+        return request
+
     def serve(self):
         try:
             self.listener.settimeout(0.5)
@@ -59,7 +68,7 @@ class Relay:
             # cancellation. The next prompt must preserve the frame boundary.
             connection.settimeout(10)
             length = int.from_bytes(self.exact(connection, 4), "big")
-            delayed = json.loads(self.exact(connection, length))
+            delayed = self.request(connection, length)
             assert delayed["operation"]["messages"][-1]["content"] == "delay native"
             stale = json.dumps({"id": delayed["id"], "result": {"Ok": json.dumps({
                 "role": "assistant", "content": "STALE_NATIVE_RESPONSE"
@@ -68,9 +77,9 @@ class Relay:
             connection.sendall(stale_frame[:2])
             self.waiting.set()
             length = int.from_bytes(self.exact(connection, 4), "big")
-            resumed = json.loads(self.exact(connection, length))
             self.cancelled.set()
             connection.sendall(stale_frame[2:])
+            resumed = self.request(connection, length)
             assert resumed["operation"]["messages"][-1]["content"] == "delay body"
             stale = json.dumps({"id": resumed["id"], "result": {"Ok": json.dumps({
                 "role": "assistant", "content": "STALE_NATIVE_BODY_RESPONSE"
@@ -79,8 +88,8 @@ class Relay:
             connection.sendall(stale_frame[:17])
             self.waiting_body.set()
             length = int.from_bytes(self.exact(connection, 4), "big")
-            resumed = json.loads(self.exact(connection, length))
             connection.sendall(stale_frame[17:])
+            resumed = self.request(connection, length)
             with connection:
                 connection.settimeout(10)
                 calls = [
@@ -94,7 +103,7 @@ class Relay:
                     length = int.from_bytes(self.exact(connection, 4), "big") if step else 1
                     if not 0 < length <= 1024 * 1024:
                         raise AssertionError("Invalid RPC frame length")
-                    request = json.loads(self.exact(connection, length)) if step else resumed
+                    request = self.request(connection, length) if step else resumed
                     if request["operation"]["type"] != "complete":
                         raise AssertionError("Native files were sent to the model relay")
                     messages = request["operation"]["messages"]

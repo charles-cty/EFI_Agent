@@ -50,18 +50,6 @@ function Assert-MainScreen {
     if ($alternate -ne '0') { throw 'Launcher left the alternate screen active' }
 }
 
-function Wait-File([string]$Name, [string]$Expected) {
-    $file = Join-Path $workspace $Name
-    $deadline = (Get-Date).AddSeconds(60)
-    do {
-        if ((Test-Path -LiteralPath $file) -and
-            [IO.File]::ReadAllText($file) -eq $Expected) { return }
-        Start-Sleep -Milliseconds 100
-    } while ((Get-Date) -lt $deadline)
-    & $Psmux capture-pane -p -t $pane |
-        Set-Content -LiteralPath (Join-Path $Output 'failure.txt') -Encoding utf8NoBOM
-    throw "Host file content mismatch: $Name"
-}
 
 try {
     & $Psmux new-session -d -s $session -c $root
@@ -71,6 +59,7 @@ try {
     $null = Wait-Screen ($root + '>') 30
     Send-Text "Write-Output ('EFI_' + 'SHELL_READY')"
     $null = Wait-Screen 'EFI_SHELL_READY'
+    Send-Text '$env:EFI_AGENT_API_BASE = "http://127.0.0.1:1/v1"; $env:EFI_AGENT_API_KEY = "test"; $env:EFI_AGENT_MODEL = "test"'
     $command = '& ' + (Quote-PS $Launcher) + ' vm ' +
         ((@($Qemu, $Code, $Vars, $Esp, $workspace) | ForEach-Object { Quote-PS $_ }) -join ' ')
     if ($PSBoundParameters.ContainsKey('MemoryMiB')) {
@@ -80,33 +69,22 @@ try {
     $screen = Wait-Screen 'What would you like to build?' 60
     Set-Content -LiteralPath (Join-Path $Output 'initial.txt') -Value $screen -Encoding utf8NoBOM
     Write-Output 'PASS Windows WHPX boot and ConPTY TUI'
-    Send-Text '/host-write unicode.txt left 中 right'
-    Wait-File 'unicode.txt' 'left 中 right'
-    & $Psmux send-keys -t $pane -l '/host-read unicode.txtX'
-    & $Psmux send-keys -t $pane Backspace Enter
-    $screen = Wait-Screen 'left 中 right'
-    Set-Content -LiteralPath (Join-Path $Output 'file.txt') -Value $screen -Encoding utf8NoBOM
-    Write-Output 'PASS Windows Unicode input and guest TCP4 host filesystem'
-    & $Psmux send-keys -t $pane -l '/host-write editor.txt left 中X right'
-    & $Psmux send-keys -t $pane Left Left Left Left Left Left Backspace Home End Enter
-    Wait-File 'editor.txt' 'left 中 right'
-    & $Psmux send-keys -t $pane -l '/host-write multiline.txt first'
+    & $Psmux send-keys -t $pane -l '/unsupported left 中X right'
+    & $Psmux send-keys -t $pane Left Left Left Left Left Left Backspace Home End
+    $null = Wait-Screen '/unsupported left 中 right'
     & $Psmux send-keys -t $pane C-j
     & $Psmux send-keys -t $pane -l 'second 中'
     $null = Wait-Screen 'second 中'
-    if (Test-Path -LiteralPath (Join-Path $workspace 'multiline.txt')) {
-        throw 'Ctrl+J submitted a partial prompt'
-    }
     & $Psmux send-keys -t $pane Enter
-    Wait-File 'multiline.txt' "first`nsecond 中"
-    Write-Output 'PASS Windows cursor editing and multiline input'
-    Send-Text '/quit'
+    $null = Wait-Screen 'Unknown command. Use /help.'
+    Write-Output 'PASS Windows Unicode cursor editing and multiline input'
+    Send-Text '/exit'
     $screen = Wait-Screen 'EFI_EXIT_0' 15
     Set-Content -LiteralPath (Join-Path $Output 'exit.txt') -Value $screen -Encoding utf8NoBOM
     Send-Text "Write-Output ('EFI_' + 'SHELL_RESTORED')"
     $null = Wait-Screen 'EFI_SHELL_RESTORED'
     Assert-MainScreen
-    Write-Output 'PASS /quit returns to the Windows shell'
+    Write-Output 'PASS /exit returns to the Windows shell'
     Send-Text ($command + "; Write-Output ('EFI_INTERRUPT_' + `$LASTEXITCODE)")
     $null = Wait-Screen 'What would you like to build?' 60
     & $Psmux send-keys -t $pane C-c

@@ -62,14 +62,9 @@ impl Bridge {
 
     pub fn execute(&self, operation: Operation) -> Result<String, String> {
         match operation {
-            Operation::List { path } => {
-                let mut entries = fs::read_dir(self.resolve(&path, false)?)
-                    .map_err(|e| e.to_string())?
-                    .map(|entry| entry.map(|e| e.file_name().to_string_lossy().into_owned()))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| e.to_string())?;
-                entries.sort();
-                Ok(entries.join("\n"))
+            Operation::ModelConfig => {
+                crate::model::validate_configuration()?;
+                Ok("Model configured".into())
             }
             Operation::Read { path } => {
                 let path = self.resolve(&path, false)?;
@@ -130,6 +125,7 @@ impl Bridge {
         messages: Vec<ChatMessage>,
         progress: &mut dyn FnMut(&str) -> Result<(), String>,
     ) -> Result<String, String> {
+        crate::model::validate_configuration()?;
         let base = std::env::var("EFI_AGENT_API_BASE")
             .map_err(|_| "Set EFI_AGENT_API_BASE to the provider base URL")?;
         let key = std::env::var("EFI_AGENT_API_KEY").map_err(|_| "Set EFI_AGENT_API_KEY")?;

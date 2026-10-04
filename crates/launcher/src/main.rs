@@ -16,6 +16,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some("vm") => vm::run(args.collect()),
         Some("pack") => pack::run(args.collect()),
         Some("serve") => {
+            model::validate_configuration()?;
             let root = std::path::PathBuf::from(
                 args.next()
                     .ok_or("Usage: efi-agent serve <workspace> [address]")?,
