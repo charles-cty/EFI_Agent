@@ -1,4 +1,5 @@
 mod bridge;
+mod pack;
 mod vm;
 
 fn main() {
@@ -12,6 +13,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("vm") => vm::run(args.collect()),
+        Some("pack") => pack::run(args.collect()),
         Some("serve") => {
             let root = std::path::PathBuf::from(
                 args.next()
@@ -28,7 +30,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             println!(
-                "EFI Agent\n  vm <qemu> <OVMF_CODE.fd> <OVMF_VARS.fd> <ESP-directory> <workspace>\n  serve <workspace> [address]"
+                "EFI Agent\n  vm <qemu> <OVMF_CODE.fd> <OVMF_VARS.fd> <ESP-directory-or-image> <workspace>\n  serve <workspace> [address]\n  pack <ESP-directory> <new-disk.img>"
             );
             Ok(())
         }

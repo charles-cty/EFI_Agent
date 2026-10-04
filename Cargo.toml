@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/core", "crates/uefi", "crates/launcher"]
+exclude = ["vendor/fatfs"]
 default-members = ["crates/core", "crates/launcher"]
 resolver = "3"
 

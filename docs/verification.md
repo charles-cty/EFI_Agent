@@ -306,3 +306,44 @@ multiline input, and terminal restoration. Linux also checks live resize and
 bracketed paste. Physical hardware, real-provider use, direct native HTTPS,
 command tools, richer TUI work, and the previously noted Windows input checks
 remain open.
+
+## 2026-10-04: GPT/FAT32 boot image packaging
+
+The host launcher now has `pack <ESP-directory> <new-disk.img>`. It creates a
+66 MiB disk with a protective MBR, primary and backup GPT tables, and a 64 MiB
+FAT32 EFI System Partition at sector 2048. Build scripts publish
+artifacts/efi-agent-vm.img after packaging succeeds. The VM launcher accepts
+either a boot directory or a raw disk image, mounted read-only through
+virtio-blk. Native testing uses the same pack command for a writable disk image
+with NATIVE.JSON and a local workspace, without VM.TXT.
+
+`smoke_pack.py` checks the disk with sgdisk, fsck.fat, and mtools. GPT checksums
+and FAT consistency pass. Independent extraction matches the EFI executable,
+VM marker, binary data, empty files, Chinese filenames (including a single
+Chinese character), and files of 511/512/513 and 4095/4096/4097 bytes. It verifies
+refusal of an existing output without changing its hash, symlinks, case
+collisions, invalid/non-BMP names, excessive file data, and output inside the
+source tree. Windows packaging also passed a Chinese filename and junction
+refusal; independent Linux extraction checked that Windows-generated image.
+
+The crates.io fatfs 0.3.6 version failed fsck due to malformed dot entries.
+The current upstream 0.4.0 fixed those entries but panicked when a filename
+began with a multibyte UTF-8 character. The repository therefore includes the
+upstream library at revision 2aefc2a027ce94ed0671752814dac203f0450e11, with one
+UTF-8 boundary fix, original licenses, and vendor/fatfs/UPSTREAM.md. The package
+test covers that fix through independent extraction. Non-BMP filename characters
+are rejected because this library accepts UCS-2 filename characters.
+
+KVM boot from the generated GPT disk passed serial rendering, TCP4 host files,
+responsive cancellation, simulated Chat Completions, and the file tool loop.
+WHPX/ConPTY boot from the Windows-generated GPT disk passed Unicode editing,
+multiline input, both exits, and terminal recovery. Native SimpleText boot from
+the packed writable GPT disk passed two partial-frame cancellation boundaries,
+local read/edit/write/list, traversal refusal, and independent persisted-file
+checks. Windows and Linux tests, host Clippy, and UEFI release builds pass.
+After installing the missing Linux UEFI target, the Linux build script created
+the application and GPT image entirely with Linux tools in a Linux-local tree.
+
+The pack command does not write physical media. USB-device boot, physical
+firmware compatibility, Secure Boot signing, and physical NIC behavior remain
+unverified. The previous real-provider, native HTTPS, and TUI gaps remain open.

@@ -32,7 +32,9 @@ rustup.exe target add x86_64-unknown-uefi
 cargo.exe test
 ```
 
-The build creates `artifacts/esp/EFI/BOOT/BOOTX64.EFI`. The `VM.TXT` marker
+The build creates `artifacts/esp/EFI/BOOT/BOOTX64.EFI` and
+`artifacts/efi-agent-vm.img`, a GPT disk with a 64 MiB FAT32 EFI System Partition.
+The `VM.TXT` marker
 selects serial input and output. For bare metal, copy `BOOTX64.EFI` to a FAT ESP
 and omit this marker. Bare metal uses firmware text input and output.
 
@@ -74,9 +76,9 @@ to firmware. Ctrl+C immediately exits the launcher, including during guest waits
 ./target/debug/efi-agent.exe vm 'C:\Program Files\qemu\qemu-system-x86_64.exe' 'C:\firmware\OVMF_CODE.fd' 'C:\firmware\OVMF_VARS.fd' ./artifacts/esp ./workspace
 ```
 
-The VM currently uses read-only QEMU vvfat for the boot files. HostBridge supplies
-writable host files separately. Supply matching OVMF code and variable-store
-images. QEMU uses a temporary snapshot of the variable store, so booting does not
+The launcher accepts an ESP directory (read-only QEMU vvfat) or a raw boot disk
+image (read-only virtio-blk). HostBridge supplies writable host files separately.
+Supply matching OVMF code and variable-store images. QEMU uses a temporary snapshot of the variable store, so booting does not
 modify the supplied template. Read-only vvfat is attached through virtio-blk.
 
 The VM supports `/host-list`, `/host-read <path>`, and
@@ -110,6 +112,52 @@ prompt and require an explicit Enter to submit. Terminal control characters
 are removed from paste; tabs and line breaks are preserved, and CRLF is
 normalized to LF. Bare-metal keyboards use the same editor with firmware key
 codes; the exact modified-key support depends on firmware.
+
+## Boot image packaging
+
+Both build scripts create `artifacts/efi-agent-vm.img`. Pass this path instead
+of the ESP directory to `efi-agent vm`. The image has a protective MBR, primary
+and backup GPT tables, and a FAT32 EFI System Partition starting at sector 2048.
+Its total size is 66 MiB. Each build replaces only this generated artifact after
+the new image is complete.
+
+To package a separate boot tree:
+
+```powershell
+./target/debug/efi-agent.exe pack ./native-esp ./efi-agent-native.img
+```
+
+The source must contain `EFI/BOOT/BOOTX64.EFI`. For native mode, omit
+`EFI/AGENT/VM.TXT`, include `EFI/AGENT/NATIVE.JSON`, and create the configured
+workspace directory in that tree before packaging. Packaging copies all regular
+files, including workspace contents. It supports BMP Unicode long filenames and
+empty files and directories. It rejects links, Windows reparse points,
+case-insensitive name collisions, invalid FAT names, non-BMP filename characters,
+more than 4096 entries,
+more than 32 directory levels, or more than 48 MiB of file data.
+
+`pack` creates a new regular file and refuses to overwrite an existing path.
+Keep its output outside the source tree. It does not flash hardware or write a
+physical disk. The native disk image has been tested with writable virtio-blk
+under OVMF; physical USB media and firmware remain unverified. Firmware must
+permit this unsigned application to run.
+
+To check the package with independent Linux tools:
+
+```sh
+uv run scripts/smoke_pack.py --launcher target/debug/efi-agent \
+  --efi artifacts/esp/EFI/BOOT/BOOTX64.EFI --output artifacts/pack-smoke
+```
+
+This needs sgdisk, fsck.fat, and mtools. Native protocol testing now also uses
+the pack command:
+
+```sh
+uv run scripts/smoke_native.py --launcher target/debug/efi-agent \
+  --efi artifacts/esp/EFI/BOOT/BOOTX64.EFI \
+  --code /usr/share/OVMF/OVMF_CODE_4M.fd \
+  --vars /usr/share/OVMF/OVMF_VARS_4M.fd --output artifacts/native-smoke
+```
 
 ## HostBridge
 
@@ -191,7 +239,6 @@ Windows clipboard paste, or live window resize.
 - Direct HTTPS provider networking and physical bare-metal verification.
 - Host command execution.
 - Richer tool views and conversation navigation.
-- FAT image packaging.
 - Windows live resize, clipboard paste, and physical terminal input checks.
 - Bare-metal file and network configuration and hardware verification.
 

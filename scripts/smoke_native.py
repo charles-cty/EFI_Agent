@@ -1,7 +1,7 @@
 """Test the native UEFI mode on OVMF/KVM with a writable FAT boot volume.
 
 Uses SimpleText and QMP keyboard input, no VM marker or serial terminal.
-Needs uv, QEMU, mkfs.vfat and mtools. A local relay uses deterministic responses.
+Needs uv, QEMU, the host launcher, and mtools. The relay is deterministic.
 This checks native protocol execution under firmware, not physical hardware.
 """
 import argparse
@@ -163,7 +163,7 @@ class Qmp:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--qemu", default="qemu-system-x86_64")
-    for name in ("code", "vars", "efi", "output"):
+    for name in ("code", "vars", "efi", "launcher", "output"):
         parser.add_argument(f"--{name}", type=Path, required=True)
     args = parser.parse_args()
     output = args.output.resolve()
@@ -175,20 +175,19 @@ def main():
         with tempfile.TemporaryDirectory(prefix="efi-native-") as temporary:
             work = Path(temporary)
             image = work / "esp.img"
-            with image.open("wb") as file:
-                file.truncate(64 * 1024 * 1024)
-            run("mkfs.vfat", str(image))
-            run("mmd", "-i", str(image), "::/EFI", "::/EFI/BOOT", "::/EFI/AGENT", "::/work")
-            run("mcopy", "-i", str(image), str(args.efi.resolve()), "::/EFI/BOOT/BOOTX64.EFI")
-            config = work / "NATIVE.JSON"
+            tree = work / "tree"
+            (tree / "EFI/BOOT").mkdir(parents=True)
+            (tree / "EFI/AGENT").mkdir()
+            (tree / "work").mkdir()
+            (tree / "EFI/BOOT/BOOTX64.EFI").write_bytes(args.efi.read_bytes())
+            config = tree / "EFI/AGENT/NATIVE.JSON"
             config.write_text(json.dumps({"relay_address": [10, 0, 2, 100], "relay_port": 7420, "workspace": "\\work"}), encoding="utf-8")
-            run("mcopy", "-i", str(image), str(config), "::/EFI/AGENT/NATIVE.JSON")
-            seed = work / "seed.txt"
+            seed = tree / "work/seed.txt"
             seed.write_text("original 731", encoding="utf-8")
-            run("mcopy", "-i", str(image), str(seed), "::/work/seed.txt")
-            outside = work / "outside.txt"
+            outside = tree / "outside.txt"
             outside.write_text("must not be read", encoding="utf-8")
-            run("mcopy", "-i", str(image), str(outside), "::/outside.txt")
+            run(str(args.launcher.resolve()), "pack", str(tree), str(image))
+            image_spec = f"{image}@@1048576"
             qmp_path = work / "qmp.sock"
             qemu = subprocess.Popen([
                 args.qemu, "-machine", "q35,accel=kvm", "-m", "256", "-display", "none",
@@ -255,9 +254,9 @@ def main():
             qmp.command("screendump", {"filename": str(output / "final.ppm")})
             qmp.command("quit")
             qemu.communicate(timeout=10)
-            edited = run("mtype", "-i", str(image), "::/work/seed.txt").decode("utf-8")
-            created = run("mtype", "-i", str(image), "::/work/created.txt").decode("utf-8")
-            unchanged = run("mtype", "-i", str(image), "::/outside.txt").decode("utf-8")
+            edited = run("mtype", "-i", image_spec, "::/work/seed.txt").decode("utf-8")
+            created = run("mtype", "-i", image_spec, "::/work/created.txt").decode("utf-8")
+            unchanged = run("mtype", "-i", image_spec, "::/outside.txt").decode("utf-8")
             assert edited == "native 中 419"
             assert created == "UEFI native file\n"
             assert unchanged == "must not be read"

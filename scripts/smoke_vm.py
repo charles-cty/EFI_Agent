@@ -156,7 +156,7 @@ def main():
                 "-display", "none", "-serial", "none", "-monitor", "none", "-no-reboot",
                 "-drive", f"if=pflash,format=raw,readonly=on,file={args.code.resolve()}",
                 "-drive", f"if=pflash,format=raw,snapshot=on,file={args.vars.resolve()}",
-                "-drive", f"if=none,id=esp,format=raw,readonly=on,file=fat:ro:{args.esp.resolve()}",
+                    "-drive", f"if=none,id=esp,format=raw,readonly=on,file={('fat:ro:' if args.esp.is_dir() else '')}{args.esp.resolve()}",
                 "-device", "virtio-blk-pci,drive=esp", "-device", "virtio-serial-pci",
                 "-chardev", f"socket,id=terminal,host=127.0.0.1,port={console_port}",
                 "-device", "virtconsole,chardev=terminal",
