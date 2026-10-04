@@ -46,6 +46,14 @@ class Provider(BaseHTTPRequestHandler):
             and {tool["function"]["name"] for tool in request["tools"]} == {"read", "write", "edit"}
         )
         messages = request["messages"]
+        if messages[-1]["content"] == "Quota error":
+            response = json.dumps({"error": {"message": "Insufficient quota for this request"}}).encode()
+            self.send_response(402)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+            return
         message = {"role": "assistant", "content": MODEL_MARKER}
         if messages[-1] == {"role": "user", "content": "Delay until cancelled"}:
             Provider.waiting.set()
@@ -255,6 +263,10 @@ def main():
                             raise AssertionError("New request waited for the cancelled provider response")
                         Provider.release.set()
                         print("PASS Chat Completions request and guest response", flush=True)
+                        connection.sendall(b"Quota error\r")
+                        state = "quota"
+                    elif state == "quota" and "Provider HTTP 402" in visible and "Insufficient quota" in visible:
+                        print("PASS actual provider quota error reported", flush=True)
                         connection.sendall(b"/clear\rExercise truncated tools\r")
                         state = "truncated"
                     elif state == "truncated" and "Provider stream ended before [DONE]" in visible:

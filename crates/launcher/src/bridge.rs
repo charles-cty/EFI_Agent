@@ -139,9 +139,25 @@ impl Bridge {
                 "reasoning_effort":effort,"tools":agent::tool_definitions(),"tool_choice":"auto"}),
             )
             .send()
-            .map_err(|e| e.to_string())?
-            .error_for_status()
             .map_err(|e| e.to_string())?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let mut body = String::new();
+            response
+                .take(64 * 1024)
+                .read_to_string(&mut body)
+                .map_err(|e| e.to_string())?;
+            let detail = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|value| value["error"]["message"].as_str().map(str::to_owned))
+                .unwrap_or_else(|| String::from("Provider request failed"));
+            let detail: String = detail
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(2000)
+                .collect();
+            return Err(format!("Provider HTTP {status}: {detail}"));
+        }
         if !response
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
