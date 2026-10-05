@@ -85,7 +85,7 @@ def main():
                             pass
                     connection.sendall(b"\x1b[8;40;120t")
                     wait_screen("What would you like to build?")
-                    connection.sendall(b"/capabilities\r")
+                    connection.sendall(b"/caps\r")
                     wait_screen("Cryptographic RNG:")
                     wait_screen("TCP4 interfaces: 0")
                     print("PASS no-NIC boot and explicit network/RNG capability report", flush=True)

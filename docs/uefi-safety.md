@@ -60,7 +60,7 @@ possibly active timer. `uefi::helpers::init()` does not perform this operation.
 ## Firmware capability requirements
 
 Probe capabilities instead of assuming that all UEFI implementations provide
-the same protocols. Startup records a capability report. `/capabilities`
+the same protocols. Startup records a capability report. `/caps`
 refreshes it and shows network interface counts and cryptographic RNG results.
 Missing optional capabilities do not prevent local console and file use.
 

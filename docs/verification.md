@@ -420,7 +420,7 @@ first corrected that behavior. Address mapping has a deadline and child Poll
 calls. Missing protocols produce explicit diagnostic reports rather than
 preventing local UI use.
 
-Startup and /capabilities probe TCP4, IPv4 configuration, and EFI RNG protocols.
+Startup and /caps probe TCP4, IPv4 configuration, and EFI RNG protocols.
 NOT_FOUND is reported as an absent capability. RNG probing uses bounded
 algorithm enumeration and explicit SP800-90 DRBG requests. Raw entropy and
 unknown defaults do not qualify as an application cryptographic DRBG. The
@@ -448,7 +448,7 @@ and an RNG image with a successful recognized DRBG request remain unverified.
 ## 2026-10-04: Session commands and API configuration checks
 
 `/exit` and `/quit` use the same exit path. Session commands are /help, /clear,
-/capabilities, /quit, and /exit. File slash commands have been removed. The
+/caps, /effort, /status, /quit, and /exit. File slash commands have been removed. The
 agent uses read/write/edit tools against one configured workspace; VM host
 routing and native FAT routing are implementation details. The unused list RPC
 operation and separate host-command entry point were removed. read still lists
@@ -504,3 +504,287 @@ The installed Linux QEMU 7.2 rejects reconnect-ms. It passed the firmware
 heartbeat and file/tool regression before the chardev change, but the final
 launcher requires a current QEMU with that option. No deprecated reconnect
 option or compatibility fallback was added. The README states this requirement.
+
+## 2026-10-04: Effort, caps, and status commands
+
+Windows native builds and all 24 core/launcher tests passed. Clippy passed with
+warnings denied for core/launcher (all targets) and x86_64-unknown-uefi.
+QEMU/WHPX with OVMF passed the updated scripts/smoke_vm.py checks. The guest
+accepted /caps, rejected the removed /capabilities command, and sent a new
+effort value (future-budget) to the local HTTP provider across tool rounds.
+Slash commands did not enter model history.
+
+The initial /status showed zero API attempts and unavailable token/cache data.
+The final status matched seven real SSE usage reports from the test provider:
+731 input and 419 output tokens per report, with totals of 5117 input, 2933
+output, and 8050 combined tokens. Each report had 73 cached input tokens and
+19 reasoning tokens. The displayed cache ratio was 9.99%. Nine API attempts
+included one HTTP quota error and one truncated stream without usage reports.
+/clear reduced history to the system message while preserving effort and usage
+totals. The boundary test distinguishes a reported zero cache count from a
+missing field, retains per-field report counts, and removes stale last-request
+usage when a later request supplies no report.
+
+The test provider supplied deterministic usage values. These checks verify
+transport, accounting, and display; they do not verify a third-party provider's
+effort support or billing. Exact current history tokens and the model's context
+window remain unavailable and are labelled as such. Native hardware was not
+retested for these commands.
+
+## 2026-10-04: Reasoning display and Responses API
+
+`EFI_AGENT_API_FORMAT` defaults to chat_completions and accepts responses as an
+explicit alternative. Responses requests use reasoning.summary=auto, store=false,
+and include reasoning.encrypted_content. The adapter retains completed output
+items for subsequent requests, maps function call IDs to tool results, and
+normalizes only supplied usage fields. Failed, incomplete, and truncated streams
+do not authorize tool execution. The common SSE reader retains bounded event
+and wire sizes.
+
+Windows core/launcher tests passed (29 tests), and all-target Clippy plus UEFI
+target Clippy passed with warnings denied. Windows launcher, UEFI application,
+and boot-image builds passed. QEMU/WHPX checked both API formats with a local
+HTTP provider: model text streaming, tool correlation, quota and truncated-stream
+errors, reasoning state retention, effort forwarding, and actual reported usage.
+The guest showed reasoning text for Chat Completions and summaries for Responses.
+Reasoning and tool panels started collapsed. SGR mouse presses expanded and
+collapsed reasoning and failed tool results; release events did not toggle them.
+The UI test covers wrapped headers, nonzero viewport origins, scrolling, resize,
+keyboard toggling, and clearing old hit targets. Decoder tests include malformed
+mouse coordinates, motion events, mouse release, wheel events, and paste mode.
+
+Windows ConPTY checks passed Unicode/multiline input, /exit shell restoration,
+and Ctrl+C restoration. The launcher disables terminal mouse modes during cleanup.
+Native mode uses optional absolute/relative firmware pointer protocols and a
+visible pointer cell; Tab and Enter remain available without pointer hardware.
+Physical pointer devices and a live external Responses provider were not tested.
+The HTTP provider supplies deterministic text and usage, so these checks do not
+establish model availability, provider effort support, or billing accuracy.
+
+## 2026-10-05: Preserve reasoning state through stream and tool rounds
+
+Chat Completions now retains extension fields on tool calls and function
+objects through streaming, bridge serialization, agent history, and the next
+request. Nested opaque signatures keep their JSON values; conflicting scalar
+metadata reports an error instead of concatenating state. Reasoning detail
+nulls remain null. Text fragments still concatenate, and a later null delta
+does not erase existing text.
+
+Responses collects reasoning output-item snapshots and indexed text parts.
+Completed output remains authoritative, with absent reasoning items restored
+by output index and absent fields filled from stream snapshots. Item IDs prevent
+duplicate replay. Unindexed text can fill a unique reasoning item; unresolved
+identity reports an error before tools run. Failed and truncated streams still
+do not enter model history or execute tools.
+
+Windows passed all 35 core/launcher tests, all-target Clippy and UEFI-target
+Clippy with warnings denied, launcher/UEFI builds, and boot-image packaging.
+The independent sequence oracle covers all eight subsets of three omitted
+reasoning items and both forward/reverse snapshot arrival orders. Tests also
+cover RPC round trips, nested signatures, nulls, text fragmentation, final
+snapshot precedence, ambiguous identity, and no duplicate replay.
+
+QEMU/WHPX passed both API modes using the local HTTP provider. Chat Completions
+tool rounds required exact signature metadata and null reasoning detail fields
+in the next HTTP request. Responses tool rounds deliberately omitted reasoning
+from final output; the next HTTP request still contained the stream item's
+encrypted content, null signature, nested extension data, and correct ordering.
+Existing cancellation, quota/truncation errors, file changes, folded panels,
+mouse toggles, effort, and usage checks also passed. These are local protocol
+checks; no live third-party API or physical firmware call was made.
+
+## 2026-10-05: HostBridge disconnect diagnostics
+
+Typed connection resets, aborted connections, broken pipes, and disconnected
+sockets now retire a bridge connection without reporting a service error.
+This also covers asynchronous model reply writes after the peer leaves.
+Timeouts, partial-frame graceful EOF, and malformed frames remain errors.
+VM diagnostics wait until terminal restoration; standalone `serve` reports
+diagnostics immediately.
+
+Windows passed 36 core/launcher tests, all-target Clippy with warnings denied,
+and launcher/UEFI/image builds. `smoke_disconnect.py`, run with Windows uv,
+forced real TCP resets before a frame, inside its header, and inside its body.
+Each reset produced no diagnostic and a subsequent connection returned pong.
+Graceful EOF inside a header and zero frame length each retained an error.
+
+QEMU/WHPX and Windows ConPTY passed `/status` followed by `/exit` and Ctrl+C,
+shell and alternate-screen restoration, and QEMU process cleanup. `/exit`
+stderr contained QEMU platform warnings but no launcher/HostBridge error.
+Ctrl+C used native console handles and the restored screen had no bridge error.
+PowerShell stderr redirection changes native pipeline cancellation, so that
+Ctrl+C check uses pane capture instead. Capture markers distinguish executed
+sentinel output from echoed commands and allow omitted status spaces.
+
+## 2026-10-05: VM text selection and clipboard
+
+The launcher mirrors guest ANSI output in a terminal cell grid and emits
+complete screen differences. This lets selection overlays coexist with ANSI
+commands and Unicode split across TCP reads. Left-button dragging highlights
+visible cells; a click without dragging still reaches guest disclosures.
+Selections copy to the host system clipboard with Ctrl+C, Ctrl+Shift+C, or
+right-click. Ctrl+C without a selection still exits. Ctrl+V, Ctrl+Shift+V,
+and right-click without a selection paste through the sanitized bracketed
+paste path. Esc clears selection. Cell changes and real resizes retire it;
+idle hide-cursor commands and duplicate resize events do not.
+
+Windows passed 40 core/launcher tests, all-target Clippy with warnings denied,
+and launcher/UEFI/image builds. Selection checks cover reverse ranges, both
+halves of wide Unicode glyphs, combining marks, multiple rows, idle controls,
+and cell changes. Every chunk size of an ANSI/Unicode fixture reconstructs
+the expected visible text and cursor mode without partial terminal commands.
+
+`smoke_clipboard.py` used QEMU/WHPX, Windows ConPTY, native mouse INPUT_RECORDs,
+and the real system clipboard. It verified drag highlighting, exact copied
+text, Ctrl+C copy without exiting, right-click copy, Unicode multiline Ctrl+V
+paste without submission, right-click paste, explicit submission, and exit.
+`smoke_windows.ps1` also passed actual clipboard paste, Unicode editing,
+`/status`, `/exit`, Ctrl+C cleanup, and alternate-screen restoration. Tests
+restore the original clipboard text. Physical mouse hardware and clipboard
+shortcuts intercepted by a particular terminal host were not tested.
+
+## 2026-10-05: Stable transcript selection and edge scrolling
+
+Guest frames now end with bounded selection metadata: transcript revision,
+frame dimensions, viewport offset, and selectable message-body ranges.
+Headers, disclosure controls, welcome text, prompt chrome, status text, and
+padding are excluded. Body indentation and empty lines are retained. The
+host commits complete frames, composes the highlight before emitting a diff,
+and updates only changed cells. It no longer restores the full unselected
+screen before each drag update. Metadata and ANSI can span arbitrary TCP reads.
+
+Selection anchors refer to logical transcript rows. Holding the left button
+at either viewport edge repeats scroll requests every 90 ms, including when
+the pointer stops moving. Visited rows stay available for clipboard copying.
+Mouse release stops repeats. Scrolling retains selection; transcript changes
+or resizing reset it. Dragging over a control does not toggle its disclosure.
+Committed frame dimensions handle older frames arriving after a host resize.
+
+Windows passed 44 core/launcher tests and launcher/core plus UEFI-target Clippy
+with warnings denied. Byte-by-byte overlay checks show that expansion never
+removes the existing highlight and emits no full-screen erase. Tests also
+cover fragmented frame markers, Unicode continuation cells, reverse ranges,
+control exclusion, code indentation, empty body lines, cached offscreen text,
+both scroll limits, release, transcript changes, and in-flight resize frames.
+
+Real QEMU/WHPX and ConPTY tests passed clipboard copy/paste and stationary
+dragging at both edges. Each direction copied all 90 numbered Chinese text
+rows across multiple viewports without losing rows or including UI chrome.
+The psmux smoke passed Unicode editing, multiline clipboard paste, `/status`,
+`/exit`, Ctrl+C, shell restoration, and process cleanup. The local-provider VM
+smoke passed Chat Completions streaming, tool rounds, cancellation, quota and
+truncation errors, disclosure toggles, effort forwarding, and usage reports.
+
+An existing user VM held `target/debug/efi-agent.exe` open. It was left running;
+the verified launcher is `target/x86_64-pc-windows-msvc/debug/efi-agent.exe`.
+The ESP firmware and `artifacts/efi-agent-vm.img` were rebuilt with the matching
+guest protocol. Run the standard build after the old process exits to replace
+the default launcher path. Physical mouse hardware was not tested.
+
+## 2026-10-05: Selection anchors in blank transcript space
+
+Body-row indentation, trailing blank cells, and empty transcript rows can
+start a selection. Anchor columns retain their actual coordinates instead of
+snapping to the first or last glyph. Copying and highlighting still intersect
+only message-body text ranges. Non-body text and areas outside the transcript
+remain controls. Drag endpoints use transcript coordinates even on blank rows.
+
+Windows passed 45 core/launcher tests and all-target Clippy with warnings denied.
+The real ConPTY clipboard smoke copied exact text after starting from both the
+left margin and right padding, and passed existing copy/paste, stationary top
+and bottom autoscroll, 90-row Unicode selection, and exit checks. The default
+launcher path was rebuilt after the previous user process released its file.
+
+## 2026-10-05: One prompt marker for multiline input
+
+Only the first logical input line starts with `› `. Continuation lines contain
+the input text directly. The cursor-height calculation uses the same prefix
+rule, including when the editor cursor is before a later newline.
+Windows Clippy and launcher/UEFI/image builds passed. The ConPTY clipboard
+smoke asserted that multiline pasted input has one prompt marker and an
+unprefixed second line, then passed copy/paste, blank selection anchors,
+stationary autoscroll in both directions, cross-screen copying, and exit.
+
+## 2026-10-05: Select visible input text
+
+Guest frame metadata includes visible input ranges, input revision, and the
+editor cursor cell. Input and transcript selections have separate coordinate
+domains. Input selection accepts blank starting cells, excludes the prompt
+marker, cursor and borders, and remains within the input when dragged outside
+it. It does not scroll the transcript. Input edits or cursor movement clear
+the input selection; unrelated transcript changes preserve it.
+
+Windows passed 46 core/launcher tests, launcher/core and UEFI-target Clippy with
+warnings denied, and launcher/UEFI/image builds. The ConPTY smoke selected two
+lines of actual Chinese input from blank cells, copied the exact text without
+the marker or cursor, and verified that copy neither submitted nor exited.
+Existing blank anchors, clipboard paste, 90-row Unicode selection, stationary
+edge scrolling in both directions, and exit checks also passed.
+
+## 2026-10-05: Ctrl+C copy and confirmed VM exit
+
+Ctrl+C copies the current selection and Ctrl+V pastes the host clipboard.
+With no selection, the first Ctrl+C shows an exit hint; a second press within
+one second exits. The exact one-second boundary is included; later presses
+start a new confirmation. Copy and other keyboard input disarm confirmation.
+Keyboard repeat events do not count as a second press. The host consumes the
+gesture instead of forwarding Ctrl+C as a guest quit byte. Console signals
+use the same guard, including during VM boot. An opposite-source delivery
+within 100 ms is treated as the same physical press.
+
+Windows passed 47 core/launcher tests, all-target Clippy with warnings denied,
+and both launcher output builds. The ConPTY smoke passed exact input/transcript
+copy, Ctrl+V multiline paste, autoscroll, single-press survival, confirmation
+expiry, and two-press exit. Native psmux console Ctrl+C also displayed the hint
+and exited on the second press, with shell restoration and QEMU cleanup.
+
+## 2026-10-05: Terminal-handled Windows paste
+
+The previous Ctrl+V smoke sent the shortcut directly to the application. It
+missed terminal hosts that consume the shortcut and inject ordinary character
+and Enter records, causing multiline prompts to submit each line. The launcher
+now holds matching multiline clipboard input before forwarding newlines and
+uses the bracketed-paste path when the match completes. A mismatch or 150 ms
+idle restores ordinary typing; if a newline already matched, buffered text
+remains paste text even after a mismatch or delay. Detection is limited to the
+current system clipboard and 64 KiB, matching the prompt limit.
+
+The ConPTY regression reproduces the old behavior by injecting plain key
+records, including Chinese, multiple CR newlines, and a trailing newline. The
+fixed launcher retains all text in the editor until a separate Enter arrives.
+Existing Ctrl+V, selection copy, right-click, autoscroll and double-interrupt
+checks pass. Core/launcher tests (48) and all-target Clippy pass. An active user
+VM locks the default exe; the updated tested launcher is built under
+`target/x86_64-pc-windows-msvc/debug/efi-agent.exe` without stopping that VM.
+
+## 2026-10-05: Edit drafts during model output
+
+The guest previously queued editor input during provider requests and applied
+it only after the request ended. Request input now goes directly to the editor;
+only Enter submissions are deferred. Empty-editor Enter still toggles the
+focused disclosure panel. Escape still cancels the active request.
+
+UEFI-target Clippy with warnings denied and the UEFI build passed. The firmware
+and VM images were updated. Both Chat Completions and Responses QEMU smoke
+tests paused a local provider after its first streamed text, pasted a multiline
+Unicode draft, and verified the visible draft and Backspace result before
+allowing the response to finish. The draft was then deleted without submission
+or cancellation. Both full smoke tests passed their existing protocol, tool,
+usage, cancellation, and disclosure checks.
+
+## 2026-10-05: Up/Down draft navigation
+
+Keyboard arrows previously scrolled the transcript instead of moving the editor
+cursor. With draft text present, Up/Down now move between newline-separated
+lines. Navigation retains the display column across shorter and empty lines,
+uses grapheme boundaries, and resets the target column after horizontal moves
+or edits. Empty-editor arrows still scroll the transcript. Mouse wheel events
+have separate scroll keys so they scroll output with a draft present.
+
+Core and launcher tests passed (50 total), including wide-character boundaries,
+combining characters, short and empty lines, first/last line boundaries, and
+12,000 structured random edits with vertical moves. Launcher all-target and
+UEFI-target Clippy passed with warnings denied. The UEFI build and VM images
+were updated. Both Chat Completions and Responses QEMU smoke tests moved up
+from a pasted draft, edited the first line, moved down, and edited the second
+line while the provider was paused mid-response. Both full smoke tests passed.

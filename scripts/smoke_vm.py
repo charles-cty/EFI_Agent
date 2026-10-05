@@ -29,6 +29,8 @@ ANSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
 
 class Provider(BaseHTTPRequestHandler):
     received = False
+    api_format = "chat_completions"
+    expected_effort = "medium"
     agent_steps = 0
     waiting = threading.Event()
     release = threading.Event()
@@ -37,12 +39,47 @@ class Provider(BaseHTTPRequestHandler):
     def do_POST(self):
         body = self.rfile.read(int(self.headers["Content-Length"]))
         request = json.loads(body)
+        responses = Provider.api_format == "responses"
+        format_valid = True
+        if responses:
+            format_valid = (
+                request["reasoning"]["summary"] == "auto"
+                and request["store"] is False
+                and "reasoning.encrypted_content" in request["include"]
+            )
+            messages = []
+            pending_reasoning = None
+            for item in request["input"]:
+                if item.get("type") == "reasoning":
+                    assert item["encrypted_content"] == "OPAQUE_REASONING_731"
+                    assert item["signature"] is None
+                    assert item["extensions"] == {"nested": [None, "中", 419]}
+                    pending_reasoning = item
+                elif item.get("type") == "function_call":
+                    messages.append({"role": "assistant", "content": None,
+                                     "reasoning_content": "reason 中 retained",
+                                     "tool_calls": [{"id": item["call_id"], "type": "function",
+                                                     "function": {"name": item["name"], "arguments": item["arguments"]}}]})
+                    assert pending_reasoning is not None
+                    pending_reasoning = None
+                elif item.get("type") == "function_call_output":
+                    messages.append({"role": "tool", "content": item["output"], "tool_call_id": item["call_id"]})
+                elif item.get("type") == "message":
+                    messages.append({"role": item["role"], "content": "".join(part["text"] for part in item["content"])})
+                    pending_reasoning = None
+                else:
+                    messages.append(item)
+            request = dict(request, messages=messages, reasoning_effort=request["reasoning"]["effort"],
+                           stream_options={"include_usage": True},
+                           tools=[{"function": tool} for tool in request["tools"]])
         valid = (
-            self.path == "/v1/chat/completions"
+            self.path == ("/v1/responses" if responses else "/v1/chat/completions")
+            and format_valid
             and self.headers["Authorization"] == "Bearer smoke-key"
             and request["model"] == "smoke-model"
             and request["stream"] is True
-            and request["reasoning_effort"] == "medium"
+            and request["reasoning_effort"] == Provider.expected_effort
+            and request["stream_options"] == {"include_usage": True}
             and {tool["function"]["name"] for tool in request["tools"]} == {"read", "write", "edit"}
         )
         messages = request["messages"]
@@ -84,6 +121,11 @@ class Provider(BaseHTTPRequestHandler):
                 valid = valid and messages[-1] == {"role": "tool", "content": expected, "tool_call_id": f"call-{step}"}
                 valid = valid and messages[-2]["tool_calls"][0]["id"] == f"call-{step}"
                 valid = valid and messages[-2]["reasoning_content"] == "reason 中 retained"
+                if not responses:
+                    previous = messages[-2]
+                    valid = valid and previous["tool_calls"][0]["extra_content"] == {"provider": {"thought_signature": "SIGNED_STATE_419"}}
+                    valid = valid and previous["tool_calls"][0]["function"]["signature"] is None
+                    valid = valid and previous["reasoning_details"] == [{"index": 0, "type": "reasoning.encrypted", "text": None, "summary": None, "data": "OPAQUE_419"}]
             if step < len(steps):
                 name, arguments = steps[step]
                 message = {"role": "assistant", "content": None, "tool_calls": [{"id": f"call-{step+1}", "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}]}
@@ -95,7 +137,16 @@ class Provider(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.end_headers()
         def event(delta, finish=None):
-            data = json.dumps({"choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}, ensure_ascii=False)
+            if responses:
+                if "content" in delta:
+                    value = {"type": "response.output_text.delta", "delta": delta["content"]}
+                elif "reasoning_content" in delta:
+                    value = {"type": "response.reasoning_summary_text.delta", "delta": delta["reasoning_content"]}
+                else:
+                    value = {"type": "response.function_call_arguments.delta", "delta": ""}
+            else:
+                value = {"choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+            data = json.dumps(value, ensure_ascii=False)
             wire = ("data: " + data + "\r\n\r\n").encode()
             # Split UTF-8 and event delimiters across writes.
             for offset in range(0, len(wire), 7):
@@ -106,7 +157,9 @@ class Provider(BaseHTTPRequestHandler):
             event({"reasoning_content": "retained"})
             if message.get("tool_calls"):
                 call = message["tool_calls"][0]
-                event({"tool_calls": [{"index": 0, "id": call["id"], "type": "function", "function": {"name": call["function"]["name"], "arguments": ""}}]})
+                event({"reasoning_details": [{"index": 0, "type": "reasoning.encrypted", "text": None, "summary": None, "data": "OPAQUE_419"}],
+                       "tool_calls": [{"index": 0, "id": call["id"], "type": "function", "extra_content": {"provider": {"thought_signature": "SIGNED_STATE_419"}},
+                                       "function": {"name": call["function"]["name"], "arguments": "", "signature": None}}]})
                 arguments = call["function"]["arguments"]
                 for offset in range(0, len(arguments), 3):
                     event({"tool_calls": [{"index": 0, "function": {"arguments": arguments[offset:offset + 3]}}]})
@@ -122,7 +175,30 @@ class Provider(BaseHTTPRequestHandler):
                 for offset in range(0, len(content), 5):
                     event({"content": content[offset:offset + 5]})
                 event({}, "stop")
-            self.wfile.write(b"data: [DONE]\n\n")
+            usage = {"prompt_tokens": 731, "completion_tokens": 419, "total_tokens": 1150,
+                     "prompt_tokens_details": {"cached_tokens": 73},
+                     "completion_tokens_details": {"reasoning_tokens": 19}}
+            if responses:
+                output = [{"type": "reasoning", "id": "rs_731", "encrypted_content": "OPAQUE_REASONING_731",
+                           "summary": [{"type": "summary_text", "text": "SUMMARY_419_VISIBLE"}],
+                           "signature": None, "extensions": {"nested": [None, "中", 419]}}]
+                self.wfile.write(("data: " + json.dumps({"type": "response.output_item.done", "output_index": 0, "item": output[0]}) + "\n\n").encode())
+                for call in message.get("tool_calls", []):
+                    output.append({"type": "function_call", "id": "fc_" + call["id"], "call_id": call["id"],
+                                   "name": call["function"]["name"], "arguments": call["function"]["arguments"]})
+                if message.get("content"):
+                    output.append({"type": "message", "id": "msg_731", "role": "assistant", "status": "completed",
+                                   "content": [{"type": "output_text", "text": message["content"], "annotations": []}]})
+                stats = {"input_tokens": 731, "output_tokens": 419, "total_tokens": 1150,
+                         "input_tokens_details": {"cached_tokens": 73}, "output_tokens_details": {"reasoning_tokens": 19}}
+                # Tool rounds omit the reasoning item from final output. The
+                # next HTTP request must replay the stream item's exact state.
+                final_output = output[1:] if message.get("tool_calls") else output
+                value = {"type": "response.completed", "response": {"status": "completed", "output": final_output, "usage": stats}}
+                self.wfile.write(("data: " + json.dumps(value) + "\n\n").encode())
+            else:
+                self.wfile.write(("data: " + json.dumps({"choices": [], "usage": usage}) + "\n\n").encode())
+                self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             if messages[-1]["content"] != "Delay until cancelled":
@@ -162,8 +238,10 @@ def main():
     parser.add_argument("--launcher", type=Path, required=True)
     parser.add_argument("--accel", choices=["kvm", "whpx"], required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--api-format", choices=["chat_completions", "responses"], default="chat_completions")
     parser.add_argument("--idle-seconds", type=int, default=0)
     args = parser.parse_args()
+    Provider.api_format = args.api_format
     args.output.mkdir(parents=True, exist_ok=True)
 
     provider = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
@@ -180,6 +258,7 @@ def main():
             "EFI_AGENT_API_BASE": f"http://127.0.0.1:{provider.server_port}/v1",
             "EFI_AGENT_API_KEY": "smoke-key",
             "EFI_AGENT_MODEL": "smoke-model",
+            "EFI_AGENT_API_FORMAT": args.api_format,
         })
         rpc_port = unused_port()
         bridge = subprocess.Popen(
@@ -225,9 +304,34 @@ def main():
                         terminal_stream.feed(data)
                     except TimeoutError:
                         pass
-                    visible = "\n".join(screen.display)
+                    try:
+                        visible = "\n".join(screen.display)
+                    except IndexError:
+                        # pyte cannot render an intermediate wide-cell update.
+                        # Consume the remaining terminal bytes before assertions.
+                        continue
                     if state == "boot" and "What would you like to build?" in visible:
                         print("PASS serial TUI render", flush=True)
+                        connection.sendall(b"/caps\r")
+                        state = "caps"
+                    elif state == "caps" and "Cryptographic RNG:" in visible and "TCP4 interfaces:" in visible:
+                        connection.sendall(b"/capabilities\r")
+                        state = "removed-caps"
+                    elif state == "removed-caps" and "Unknown command. Use /help." in visible:
+                        connection.sendall(b"/effort future-budget\r")
+                        state = "effort"
+                    elif state == "effort" and "Reasoning effort: future-budget" in visible:
+                        connection.sendall(b"\x1b[8;50;110t/status\r")
+                        screen.resize(lines=50, columns=110)
+                        state = "initial-status"
+                    elif state == "initial-status" and "Last cached input / input: unavailable" in visible:
+                        assert "Reasoning effort: future-budget" in visible
+                        assert "API attempts: 0; usage reports: 0" in visible
+                        assert "Current history tokens / model context window: unavailable" in visible
+                        print("PASS /caps rename, open effort values, and truthful initial /status", flush=True)
+                        connection.sendall(b"/effort medium\r")
+                        state = "reset-effort"
+                    elif state == "reset-effort" and "Reasoning effort: medium." in visible:
                         connection.sendall(b"\x1b[8;29;103t/read needle.txt\r")
                         screen.resize(lines=29, columns=103)
                         state = "commands"
@@ -254,15 +358,32 @@ def main():
                     elif state == "model" and "STALE_RESPONSE_MUST_NOT_APPEAR" in visible:
                         raise AssertionError("Cancelled response leaked into the new request")
                     elif state == "model" and "STREAM_PREFIX_中_VISIBLE" in visible and not Provider.finish_stream.is_set():
-                        Provider.finish_stream.set()
                         print("PASS Unicode stream text displayed before completion", flush=True)
+                        connection.sendall("\x1b[200~DRAFT 中\nsecondX\x1b[201~\x7f".encode())
+                        state = "editing_stream"
+                    elif state == "editing_stream" and "DRAFT 中" in visible and "second▏" in visible:
+                        if Provider.finish_stream.is_set() or MODEL_MARKER in visible:
+                            raise AssertionError("Draft editing only appeared after model completion")
+                        print("PASS multiline draft paste and Backspace render before model completion", flush=True)
+                        connection.sendall(b"\x1b[A\x1b[HZ\x1b[B\x1b[FY")
+                        state = "moving_draft"
+                    elif state == "moving_draft" and "ZDRAFT 中" in visible and "secondY▏" in visible:
+                        if Provider.finish_stream.is_set() or MODEL_MARKER in visible:
+                            raise AssertionError("Arrow editing only appeared after model completion")
+                        print("PASS Up/Down move the draft cursor during model output", flush=True)
+                        # Remove the draft without submitting or cancelling.
+                        connection.sendall(b"\x7f" * len("ZDRAFT 中\nsecondY"))
+                        state = "clearing_draft"
+                    elif state == "clearing_draft" and "DRAFT 中" not in visible and "second▏" not in visible:
+                        Provider.finish_stream.set()
+                        state = "model"
                     elif state == "model" and MODEL_MARKER in visible:
                         if not Provider.received:
                             raise AssertionError("Provider request format was incorrect")
                         if time.monotonic() - cancelled_at > 3:
                             raise AssertionError("New request waited for the cancelled provider response")
                         Provider.release.set()
-                        print("PASS Chat Completions request and guest response", flush=True)
+                        print(f"PASS {args.api_format} request and guest response", flush=True)
                         connection.sendall(b"Quota error\r")
                         state = "quota"
                     elif state == "quota" and "Provider HTTP 402" in visible and "Insufficient quota" in visible:
@@ -273,7 +394,8 @@ def main():
                         if (workspace / "must-not-exist.txt").exists():
                             raise AssertionError("Truncated tool call was executed")
                         print("PASS truncated streamed tool call did not write a file", flush=True)
-                        connection.sendall(b"/clear\rExercise the file tools\r")
+                        Provider.expected_effort = "future-budget"
+                        connection.sendall(b"/effort future-budget\r/clear\rExercise the file tools\r")
                         state = "agent"
                     elif state == "agent" and "STALE_RESPONSE_MUST_NOT_APPEAR" in visible:
                         raise AssertionError("Cancelled stream leaked into the tool turn")
@@ -287,6 +409,55 @@ def main():
                         if (workspace / "ambiguous.txt").read_text(encoding="utf-8") != "aaa":
                             raise AssertionError("Ambiguous edit changed the file")
                         print("PASS guest-driven read/edit/write loop and failed edit recovery", flush=True)
+                        connection.sendall(b"\x1b[8;50;110t")
+                        screen.resize(lines=50, columns=110)
+                        state = "details"
+                    elif (state == "details" and "Tool result: edit (failed)" in visible
+                          and "Ready" in screen.display[-1]):
+                        label = "Reasoning summary" if args.api_format == "responses" else "Reasoning (provider text)"
+                        hidden = "SUMMARY_419_VISIBLE" if args.api_format == "responses" else "reason 中 retained"
+                        assert "[+] " + label in visible
+                        assert hidden not in visible
+                        assert "multiple matches" not in visible
+                        rows = [i for i, line in enumerate(screen.display) if "[+] " + label in line]
+                        connection.sendall(f"\x1b[<0;5;{rows[-1]+1}M\x1b[<0;5;{rows[-1]+1}m".encode())
+                        state = "reason-open"
+                    elif state == "reason-open" and hidden in visible and "[-] " + label in visible:
+                        row = next(i for i, line in enumerate(screen.display) if "[-] " + label in line)
+                        connection.sendall(f"\x1b[<0;5;{row+1}M".encode())
+                        state = "reason-closed"
+                    elif state == "reason-closed" and hidden not in visible and "[-] " + label not in visible:
+                        row = next(i for i, line in enumerate(screen.display) if "[+] Tool result: edit (failed)" in line)
+                        connection.sendall(f"\x1b[<0;5;{row+1}M".encode())
+                        state = "tool-open"
+                    elif state == "tool-open" and "multiple matches" in visible and "[-] Tool result: edit (failed)" in visible:
+                        row = next(i for i, line in enumerate(screen.display) if "[-] Tool result: edit (failed)" in line)
+                        connection.sendall(f"\x1b[<0;5;{row+1}M".encode())
+                        state = "tool-closed"
+                    elif state == "tool-closed" and "multiple matches" not in visible and "[-] Tool result: edit (failed)" not in visible:
+                        print("PASS reasoning and tool results collapsed by default, click expand/collapse", flush=True)
+                        connection.sendall(b"\x1b[8;50;110t/status\r")
+                        screen.resize(lines=50, columns=110)
+                        state = "usage-status"
+                    elif state == "usage-status" and "Last cached input / input: 9.99%" in visible:
+                        assert "Input tokens: 731;" in visible
+                        assert "Output (includes reasoning) tokens: 419;" in visible
+                        assert "Total tokens: 1150;" in visible
+                        assert "Cached input tokens: 73;" in visible
+                        assert "Reasoning tokens: 19;" in visible
+                        assert "Reasoning effort: future-budget" in visible
+                        assert "API attempts: 9; usage reports: 7" in visible
+                        assert "reported subtotal: 5117 (7 requests)" in visible
+                        assert "reported subtotal: 2933 (7 requests)" in visible
+                        assert "reported subtotal: 8050 (7 requests)" in visible
+                        print("PASS real SSE usage, reasoning tokens, and cache ratio in /status", flush=True)
+                        connection.sendall(b"/clear\r/status\r")
+                        state = "cleared-status"
+                    elif (state == "cleared-status" and "History: 1 messages," in visible
+                          and "Last cached input / input: 9.99%" in visible):
+                        assert "API attempts: 9; usage reports: 7" in visible
+                        assert "Reasoning effort: future-budget" in visible
+                        print("PASS effort forwarded to API and /clear preserves usage totals", flush=True)
                         if args.idle_seconds:
                             idle_until = time.monotonic() + args.idle_seconds
                             deadline = idle_until + 30
