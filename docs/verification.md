@@ -788,3 +788,44 @@ UEFI-target Clippy passed with warnings denied. The UEFI build and VM images
 were updated. Both Chat Completions and Responses QEMU smoke tests moved up
 from a pasted draft, edited the first line, moved down, and edited the second
 line while the provider was paused mid-response. Both full smoke tests passed.
+
+## 2026-10-05: Keep the Linux clipboard owner alive
+
+Copy previously created a temporary arboard handle and dropped it immediately
+after writing text. On X11, this discarded the selection owner and could print
+an arboard warning directly into the active terminal. Copy, paste, and Windows
+injected-paste detection now share a lazily initialized clipboard handle owned
+by the VM session. The handle is released after terminal restoration.
+
+Linux and Windows launcher tests and all-target Clippy passed. An explicit
+Linux/X11 integration test wrote multiline Unicode text, returned from the
+clipboard helper, and launched a separate process that read the exact text
+from the still-running owner. The test passed using the WSLg X11 display.
+The Windows launcher build also passed. The Linux regression is ignored by
+default because it needs an X11 display and temporarily changes the clipboard:
+
+```sh
+cargo test -p efi-agent -- --exact \
+  vm::tests::clipboard_contents_survive_copy_until_another_process_reads --ignored
+```
+
+## 2026-10-05: XWayland and native Wayland clipboard paths
+
+Enabled arboard's Wayland data-control feature. A Linux clipboard wrapper keeps
+the desktop owner alive and uses wl-clipboard when desktop initialization fails
+in a Wayland session. This covers compositors without data-control even when
+DISPLAY is absent. The helper write uses UTF-8 text and the read requests text
+without an added newline. Helper diagnostics cannot write into the active TUI.
+The wl-copy daemon owns the copied selection after its parent exits; waiting
+for a captured daemon pipe to close would block, so the launcher waits only for
+the initialization process.
+
+WSLg clipboard integration passed with WAYLAND_DISPLAY removed (XWayland),
+DISPLAY removed (native Wayland via wl-clipboard), and both variables present
+(automatic selection). Each case checked exact multiline Unicode text through
+a separate launcher test process and the independent wl-paste utility. XWayland
+to Wayland clipboard bridging passed. WSLg does not expose the data-control
+protocol required by arboard, so the native arboard path itself was not exercised
+on a data-control compositor. Standalone Xorg was not available in this session;
+the X11 protocol path was tested through XWayland. Linux and Windows launcher
+tests and all-target Clippy passed, and the Windows launcher build passed.

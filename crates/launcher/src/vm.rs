@@ -66,6 +66,8 @@ struct Session {
     child: Child,
     raw: bool,
     diagnostics: bridge::Diagnostics,
+    // X11 serves clipboard contents from their owner while this handle lives.
+    clipboard: Option<crate::clipboard::Clipboard>,
 }
 impl Drop for Session {
     fn drop(&mut self) {
@@ -207,6 +209,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         child: child.spawn()?,
         raw: false,
         diagnostics: diagnostics.clone(),
+        clipboard: None,
     };
     let _service = bridge::serve(rpc, root, diagnostics);
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -267,7 +270,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             clipboard_notice("Press Ctrl+C again within 1 second to exit")?;
         }
         if copy_requested.swap(false, Ordering::Relaxed) {
-            copy_selection(&selection)?;
+            copy_selection(&selection, &mut session.clipboard)?;
         }
         if interrupted.load(Ordering::Relaxed) {
             break;
@@ -385,9 +388,9 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                         }
                         MouseEventKind::Down(MouseButton::Right) => {
                             if selection.active() {
-                                copy_selection(&selection)?;
+                                copy_selection(&selection, &mut session.clipboard)?;
                             } else {
-                                paste_clipboard(&mut socket)?;
+                                paste_clipboard(&mut socket, &mut session.clipboard)?;
                             }
                         }
                         _ => {}
@@ -432,7 +435,9 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                                 Instant::now(),
                             );
                         match action {
-                            InterruptAction::Copy => copy_selection(&selection)?,
+                            InterruptAction::Copy => {
+                                copy_selection(&selection, &mut session.clipboard)?
+                            }
                             InterruptAction::Hint => {
                                 clipboard_notice("Press Ctrl+C again within 1 second to exit")?
                             }
@@ -448,7 +453,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                     if key.modifiers.contains(KeyModifiers::CONTROL) {
                         match key.code {
                             KeyCode::Char('c' | 'C') if selection.active() => {
-                                copy_selection(&selection)?;
+                                copy_selection(&selection, &mut session.clipboard)?;
                                 continue;
                             }
                             KeyCode::Char('c' | 'C')
@@ -459,7 +464,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('v' | 'V') if ready => {
                                 selection.clear()?;
                                 selection_active.store(false, Ordering::Relaxed);
-                                paste_clipboard(&mut socket)?;
+                                paste_clipboard(&mut socket, &mut session.clipboard)?;
                                 continue;
                             }
                             _ => {}
@@ -501,8 +506,8 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                             && !bytes.is_empty()
                             && !key.modifiers.contains(KeyModifiers::CONTROL)
                         {
-                            arboard::Clipboard::new()
-                                .and_then(|mut clipboard| clipboard.get_text())
+                            session_clipboard(&mut session.clipboard)
+                                .and_then(|clipboard| clipboard.get_text())
                                 .ok()
                         } else {
                             None
@@ -537,12 +542,24 @@ fn clipboard_notice(message: &str) -> std::io::Result<()> {
     out.flush()
 }
 
-fn copy_selection(selection: &crate::selection::Selection) -> std::io::Result<()> {
+fn session_clipboard(
+    clipboard: &mut Option<crate::clipboard::Clipboard>,
+) -> Result<&mut crate::clipboard::Clipboard, String> {
+    if clipboard.is_none() {
+        *clipboard = Some(crate::clipboard::Clipboard::new()?);
+    }
+    Ok(clipboard.as_mut().expect("Clipboard initialized"))
+}
+
+fn copy_selection(
+    selection: &crate::selection::Selection,
+    clipboard: &mut Option<crate::clipboard::Clipboard>,
+) -> std::io::Result<()> {
     if !selection.active() {
         return Ok(());
     }
     let result =
-        arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(selection.text()));
+        session_clipboard(clipboard).and_then(|clipboard| clipboard.set_text(selection.text()));
     clipboard_notice(if result.is_ok() {
         "Copied selection"
     } else {
@@ -550,8 +567,11 @@ fn copy_selection(selection: &crate::selection::Selection) -> std::io::Result<()
     })
 }
 
-fn paste_clipboard(socket: &mut TcpStream) -> std::io::Result<()> {
-    match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()) {
+fn paste_clipboard(
+    socket: &mut TcpStream,
+    clipboard: &mut Option<crate::clipboard::Clipboard>,
+) -> std::io::Result<()> {
+    match session_clipboard(clipboard).and_then(|clipboard| clipboard.get_text()) {
         Ok(text) => crate::selection::paste(socket, &text),
         Err(_) => clipboard_notice("Clipboard has no readable text"),
     }
@@ -569,6 +589,66 @@ fn qemu_path(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "Requires a desktop clipboard and temporarily changes its contents"]
+    fn clipboard_contents_survive_copy_until_another_process_reads() {
+        const CONTENTS: &str = "clipboard owner 中\nsecond line";
+        let mut clipboard = None;
+        if std::env::var_os("EFI_AGENT_CLIPBOARD_TEST_READER").is_some() {
+            assert_eq!(
+                session_clipboard(&mut clipboard)
+                    .unwrap()
+                    .get_text()
+                    .unwrap(),
+                CONTENTS
+            );
+            return;
+        }
+        let original = session_clipboard(&mut clipboard).unwrap().get_text().ok();
+        session_clipboard(&mut clipboard)
+            .unwrap()
+            .set_text(CONTENTS)
+            .unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "vm::tests::clipboard_contents_survive_copy_until_another_process_reads",
+                "--ignored",
+            ])
+            .env("EFI_AGENT_CLIPBOARD_TEST_READER", "1")
+            .output()
+            .unwrap();
+        // Read through a different Wayland implementation as well as arboard.
+        let wayland_output =
+            std::env::var_os("EFI_AGENT_CLIPBOARD_TEST_WAYLAND_READER").map(|_| {
+                Command::new("wl-paste")
+                    .args(["--no-newline", "--type", "text/plain;charset=utf-8"])
+                    .output()
+                    .unwrap()
+            });
+        if let Some(original) = original {
+            session_clipboard(&mut clipboard)
+                .unwrap()
+                .set_text(original)
+                .unwrap();
+        }
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if let Some(output) = wayland_output {
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(String::from_utf8(output.stdout).unwrap(), CONTENTS);
+        }
+    }
 
     #[test]
     fn exit_requires_two_presses_and_duplicate_delivery_counts_once() {

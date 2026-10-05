@@ -254,6 +254,17 @@ Dragging can start in the blank space before or after a body line, or on an
 empty transcript row. Blank coordinates remain selection anchors; copied text
 still excludes terminal padding and controls.
 Clipboard failures appear in the terminal footer and do not end the session.
+The launcher keeps its clipboard handle alive for the VM session. On Linux/X11,
+this lets other applications read copied text while the launcher owns the
+selection. Retaining that text after exit depends on a clipboard manager.
+Linux builds enable native Wayland data-control support. When the compositor
+does not provide data-control, XWayland can supply the desktop clipboard.
+If no desktop backend can connect and `WAYLAND_DISPLAY` is set, the launcher
+uses `wl-copy` and `wl-paste` instead. Install `wl-clipboard` for this native
+Wayland path (`sudo apt install wl-clipboard` on Ubuntu/Debian). The helper owns
+copied text independently of the launcher. Access through the core Wayland
+protocol depends on the compositor's focus policy. No helper output is written
+into the active terminal, and paste retains the exact text and line endings.
 
 ## Boot image packaging
 

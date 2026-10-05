@@ -1,4 +1,5 @@
 mod bridge;
+mod clipboard;
 mod model;
 mod pack;
 mod paste;

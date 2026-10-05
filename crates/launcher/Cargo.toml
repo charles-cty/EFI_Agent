@@ -17,4 +17,4 @@ fatfs = { path = "../../vendor/fatfs" }
 fscommon = "0.1"
 gpt = "4.1"
 vt100 = "0.16.2"
-arboard = { version = "3.6.1", default-features = false }
+arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
