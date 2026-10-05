@@ -412,7 +412,7 @@ def main():
                         connection.sendall(b"\x1b[8;50;110t")
                         screen.resize(lines=50, columns=110)
                         state = "details"
-                    elif (state == "details" and "Tool result: edit (failed)" in visible
+                    elif (state == "details" and "Tool: edit (failed)" in visible
                           and "Ready" in screen.display[-1]):
                         label = "Reasoning summary" if args.api_format == "responses" else "Reasoning (provider text)"
                         hidden = "SUMMARY_419_VISIBLE" if args.api_format == "responses" else "reason 中 retained"
@@ -427,15 +427,19 @@ def main():
                         connection.sendall(f"\x1b[<0;5;{row+1}M".encode())
                         state = "reason-closed"
                     elif state == "reason-closed" and hidden not in visible and "[-] " + label not in visible:
-                        row = next(i for i, line in enumerate(screen.display) if "[+] Tool result: edit (failed)" in line)
+                        row = next(i for i, line in enumerate(screen.display) if "[+] Tool: edit (failed)" in line)
                         connection.sendall(f"\x1b[<0;5;{row+1}M".encode())
                         state = "tool-open"
-                    elif state == "tool-open" and "multiple matches" in visible and "[-] Tool result: edit (failed)" in visible:
-                        row = next(i for i, line in enumerate(screen.display) if "[-] Tool result: edit (failed)" in line)
+                    elif state == "tool-open" and "multiple matches" in visible and "[-] Tool: edit (failed)" in visible:
+                        assert "Arguments:" in visible and "Result:" in visible
+                        assert "ambiguous.txt" in visible and '"old_text": "aa"' in visible
+                        row = next(i for i, line in enumerate(screen.display) if "[-] Tool: edit (failed)" in line)
                         connection.sendall(f"\x1b[<0;5;{row+1}M".encode())
                         state = "tool-closed"
-                    elif state == "tool-closed" and "multiple matches" not in visible and "[-] Tool result: edit (failed)" not in visible:
-                        print("PASS reasoning and tool results collapsed by default, click expand/collapse", flush=True)
+                    elif state == "tool-closed" and "multiple matches" not in visible and "[-] Tool: edit (failed)" not in visible:
+                        assert "ambiguous.txt" not in visible
+                        assert "Tool call:" not in visible and "Tool result:" not in visible
+                        print("PASS reasoning and combined tool arguments/results expand and collapse together", flush=True)
                         connection.sendall(b"\x1b[8;50;110t/status\r")
                         screen.resize(lines=50, columns=110)
                         state = "usage-status"

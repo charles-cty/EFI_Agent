@@ -403,11 +403,14 @@ Reasoning text received without an item/part index is added only when its target
 is unambiguous. An unresolved association reports an error instead of silently
 dropping state while continuing tool execution.
 
-Reasoning, reasoning summaries, tool calls, and tool results are separate panels
-with `[+]` headers. All detail panels start collapsed. Click a header to expand
-it and click it again to collapse it. Expanded tool arguments and results show
-their full stored text, with no preview truncation. Tool calls are yellow;
-successful results are green and failed results are red. Reasoning is magenta.
+Reasoning and reasoning summaries use their own panels. Each tool execution
+uses one panel with arguments and its corresponding result. All detail panels
+start collapsed with `[+]` headers. Click a header to expand it and click it
+again to collapse it. Tool results update the existing panel and preserve its
+expanded state. Expanded arguments and results show their full stored text,
+with no preview truncation. Running tools are yellow; completed tools are green
+and failed tools are red. The header shows running, done, or failed. Reasoning
+is magenta.
 The VM launcher enables terminal mouse reporting and forwards clicks and wheel
 scrolls to the guest. Native mode uses optional firmware pointer protocols and
 marks the pointer cell. Relative firmware pointers use eight movement units per

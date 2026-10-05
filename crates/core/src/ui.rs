@@ -116,6 +116,23 @@ impl App {
         self.scroll = 0;
     }
 
+    pub fn start_tool(&mut self, name: &str, arguments: &str) -> usize {
+        self.detail(
+            "tool_call",
+            format!("Tool: {name} (running)"),
+            format!("Arguments:\n{arguments}"),
+        );
+        self.messages.len() - 1
+    }
+
+    pub fn finish_tool(&mut self, index: usize, name: &str, result: &str, failed: bool) {
+        let message = &mut self.messages[index];
+        message.role = String::from(if failed { "tool_error" } else { "tool_result" });
+        message.title = format!("Tool: {name} ({})", if failed { "failed" } else { "done" });
+        message.content.push_str("\n\nResult:\n");
+        message.content.push_str(result);
+    }
+
     fn toggle(&mut self, index: usize) {
         self.disclosure_anchor = self
             .disclosure_hits
@@ -462,6 +479,33 @@ mod tests {
     }
 
     #[test]
+    fn tool_result_updates_its_call_and_preserves_disclosure_state() {
+        let mut app = App::default();
+        let first = app.start_tool("read", "FIRST_ARGUMENTS");
+        let area = Rect::new(0, 0, 83, 30);
+        assert!(!draw(&mut app, area).contains("FIRST_ARGUMENTS"));
+        app.toggle(first);
+        assert!(draw(&mut app, area).contains("FIRST_ARGUMENTS"));
+        app.finish_tool(first, "read", "FIRST_RESULT", false);
+        assert_eq!(app.messages.len(), 1);
+        let visible = draw(&mut app, area);
+        assert!(visible.contains("FIRST_ARGUMENTS") && visible.contains("FIRST_RESULT"));
+        assert!(visible.contains("Tool: read (done)"));
+        app.toggle(first);
+        let second = app.start_tool("read", "SECOND_ARGUMENTS");
+        app.finish_tool(second, "read", "SECOND_ERROR", true);
+        let visible = draw(&mut app, area);
+        assert!(!visible.contains("FIRST_ARGUMENTS") && !visible.contains("FIRST_RESULT"));
+        assert!(!visible.contains("SECOND_ARGUMENTS") && !visible.contains("SECOND_ERROR"));
+        assert_eq!(app.messages.len(), 2);
+        assert!(app.messages[first].content.contains("FIRST_RESULT"));
+        app.toggle(second);
+        let visible = draw(&mut app, area);
+        assert!(visible.contains("SECOND_ARGUMENTS") && visible.contains("SECOND_ERROR"));
+        assert!(visible.contains("Tool: read (failed)"));
+    }
+
+    #[test]
     fn disclosures_follow_wrapping_resize_and_toggle_without_changing_content() {
         let mut app = App::default();
         app.message(
@@ -473,11 +517,8 @@ mod tests {
             "Reasoning (provider text)".into(),
             "HIDDEN_REASON_731\n中 detail".into(),
         );
-        app.detail(
-            "tool_result",
-            "Tool result: read (done)".into(),
-            "HIDDEN_RESULT_419".into(),
-        );
+        let tool = app.start_tool("read", "{}");
+        app.finish_tool(tool, "read", "HIDDEN_RESULT_419", false);
         let area = Rect::new(3, 5, 26, 24);
         assert!(!draw(&mut app, area).contains("HIDDEN_REASON"));
         let (header, _) = app

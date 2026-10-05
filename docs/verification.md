@@ -829,3 +829,20 @@ protocol required by arboard, so the native arboard path itself was not exercise
 on a data-control compositor. Standalone Xorg was not available in this session;
 the X11 protocol path was tested through XWayland. Linux and Windows launcher
 tests and all-target Clippy passed, and the Windows launcher build passed.
+
+## 2026-10-05: Combine tool calls and results in one disclosure
+
+Each tool start now creates one collapsed panel containing its arguments. The
+corresponding finish updates that same panel with the result and completion
+status, preserving its expanded state. Arguments and Result labels distinguish
+the two sections when expanded. Running, successful, and failed executions use
+yellow, green, and red headers. Separate calls with the same tool name retain
+their own panels.
+
+All 26 core tests, UEFI-target Clippy with warnings denied, and the UEFI build
+passed. The regression verifies completion while expanded, both sections hidden
+when collapsed, and two calls with the same name and distinct results. Both
+Chat Completions and Responses QEMU smoke tests expanded the failed edit panel,
+asserted that its actual arguments and error appeared together, then collapsed
+it and checked that both disappeared. Both full smoke tests passed. The firmware
+and VM images were updated.

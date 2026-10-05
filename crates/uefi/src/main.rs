@@ -129,6 +129,7 @@ fn submit(
                 cancelled: false,
             };
             let mut streaming_row = None;
+            let mut tool_row = None;
             agent.turn(text, &mut environment, |event| {
                 let mut ui = ui.borrow_mut();
                 let (app, refresh) = &mut *ui;
@@ -161,11 +162,7 @@ fn submit(
                     ),
                     Event::ToolStarted { name, arguments } => {
                         app.status = alloc::format!("Running {name}");
-                        app.detail(
-                            "tool_call",
-                            alloc::format!("Tool call: {name}"),
-                            arguments.into(),
-                        )
+                        tool_row = Some(app.start_tool(name, arguments));
                     }
                     Event::ToolFinished {
                         name,
@@ -173,13 +170,11 @@ fn submit(
                         failed,
                     } => {
                         app.status = String::from("Waiting for model");
-                        app.detail(
-                            if failed { "tool_error" } else { "tool_result" },
-                            alloc::format!(
-                                "Tool result: {name} ({})",
-                                if failed { "failed" } else { "done" }
-                            ),
-                            result.into(),
+                        app.finish_tool(
+                            tool_row.take().expect("Tool result follows its call"),
+                            name,
+                            result,
+                            failed,
                         );
                     }
                 }
