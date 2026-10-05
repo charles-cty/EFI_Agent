@@ -8,6 +8,8 @@ pub enum Key {
     Escape,
     Up,
     Down,
+    ScrollUp,
+    ScrollDown,
     Left,
     Right,
     Home,
@@ -16,6 +18,9 @@ pub enum Key {
     Newline,
     Quit,
     Resize(u16, u16),
+    Click(u16, u16),
+    PointerMove(u16, u16),
+    Tab,
 }
 
 /// Keeps partial UTF-8 and CSI input across serial reads.
@@ -51,6 +56,25 @@ impl Decoder {
                 return None;
             }
             let result = match byte {
+                b'M' | b'm' if self.pending[2] == b'<' => {
+                    let text = core::str::from_utf8(&self.pending[3..self.pending.len() - 1]).ok();
+                    let click = text.and_then(|text| {
+                        let mut parts = text.split(';');
+                        let button = parts.next()?.parse::<u16>().ok()?;
+                        let x = parts.next()?.parse::<u16>().ok()?.checked_sub(1)?;
+                        let y = parts.next()?.parse::<u16>().ok()?.checked_sub(1)?;
+                        if parts.next().is_some() {
+                            return None;
+                        }
+                        match (byte, button) {
+                            (b'M', 0 | 4 | 8 | 16) => Some(Key::Click(x, y)),
+                            (b'M', 64) => Some(Key::ScrollUp),
+                            (b'M', 65) => Some(Key::ScrollDown),
+                            _ => None,
+                        }
+                    });
+                    if self.paste { None } else { click }
+                }
                 b'A' => Some(Key::Up),
                 b'B' => Some(Key::Down),
                 b'C' => Some(Key::Right),
@@ -99,6 +123,7 @@ impl Decoder {
             13 if self.paste => Some(Key::Newline),
             13 => Some(Key::Enter),
             9 if self.paste => Some(Key::Character('\t')),
+            9 => Some(Key::Tab),
             8 | 127 => Some(Key::Backspace),
             _ => match core::str::from_utf8(&self.pending) {
                 Ok(text) => text
@@ -136,6 +161,19 @@ impl Decoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mouse_press_release_wheel_and_paste_boundaries() {
+        let mut decoder = Decoder::default();
+        let input = b"\x1b[<0;83;14M\x1b[<0;83;14m\x1b[<32;83;14M\x1b[<0;0;14M\x1b[<64;1;1M\x1b[<65;1;1M\x1b[200~\x1b[<0;3;4M\x1b[201~\t";
+        let keys: Vec<_> = input
+            .iter()
+            .filter_map(|byte| decoder.push(*byte))
+            .collect();
+        assert_eq!(
+            keys,
+            [Key::Click(82, 13), Key::ScrollUp, Key::ScrollDown, Key::Tab]
+        );
+    }
 
     #[test]
     fn fragmented_unicode_and_resize() {

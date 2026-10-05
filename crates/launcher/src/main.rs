@@ -1,6 +1,10 @@
 mod bridge;
 mod model;
 mod pack;
+mod paste;
+mod reasoning_stream;
+mod responses;
+mod selection;
 mod vm;
 
 fn main() {
@@ -25,7 +29,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let address = args.next().unwrap_or_else(|| "127.0.0.1:7420".into());
             let listener = std::net::TcpListener::bind(&address)?;
             eprintln!("HostBridge listening on {}", listener.local_addr()?);
-            bridge::serve(listener, root)
+            bridge::serve(listener, root, bridge::Diagnostics::stderr())
                 .join()
                 .map_err(|_| "HostBridge thread failed")?;
             Ok(())

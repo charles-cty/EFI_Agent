@@ -77,6 +77,12 @@ impl<S: Sink> Backend for Ansi<S> {
             if cell.modifier.contains(Modifier::BOLD) {
                 output.push_str("\x1b[1m");
             }
+            if cell.modifier.contains(Modifier::UNDERLINED) {
+                output.push_str("\x1b[4m");
+            }
+            if cell.modifier.contains(Modifier::REVERSED) {
+                output.push_str("\x1b[7m");
+            }
             output.push_str(cell.symbol());
             if output.len() >= 4096 {
                 self.sink.write(output.as_bytes())?;

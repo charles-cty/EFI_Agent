@@ -10,7 +10,7 @@ use serde::Deserialize;
 
 pub const MAX_TOOL_ROUNDS: usize = 12;
 pub const MAX_FILE_BYTES: usize = 512 * 1024;
-const MAX_HISTORY_BYTES: usize = 640 * 1024;
+pub const MAX_HISTORY_BYTES: usize = 640 * 1024;
 
 pub trait Environment {
     fn complete(
@@ -29,6 +29,10 @@ pub enum Event<'a> {
     ModelStarted,
     AssistantDelta(&'a str),
     Assistant(&'a str),
+    Reasoning {
+        text: &'a str,
+        summary: bool,
+    },
     ToolStarted {
         name: &'a str,
         arguments: &'a str,
@@ -58,6 +62,16 @@ impl Default for Agent {
 }
 
 impl Agent {
+    pub fn history_status(&self) -> Result<String, String> {
+        let bytes = serde_json::to_vec(&self.messages)
+            .map_err(|e| e.to_string())?
+            .len();
+        Ok(format!(
+            "History: {} messages, {bytes}/{MAX_HISTORY_BYTES} JSON bytes\nCurrent history tokens / model context window: unavailable (no tokenizer or provider limit)",
+            self.messages.len()
+        ))
+    }
+
     pub fn clear(&mut self) {
         *self = Self::default();
     }
@@ -91,6 +105,39 @@ impl Agent {
                 return Err(String::from("Request cancelled"));
             }
             validate_reply(&reply)?;
+            for text in [
+                reply.reasoning_content.as_deref(),
+                reply.reasoning.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .filter(|text| !text.is_empty())
+            {
+                observe(Event::Reasoning {
+                    text,
+                    summary: false,
+                });
+            }
+            if let Some(text) = reply
+                .reasoning_summary
+                .as_deref()
+                .filter(|text| !text.is_empty())
+            {
+                observe(Event::Reasoning {
+                    text,
+                    summary: true,
+                });
+            }
+            for detail in &reply.reasoning_details {
+                let (field, summary) = match detail["type"].as_str() {
+                    Some("reasoning.text") => ("text", false),
+                    Some("reasoning.summary") => ("summary", true),
+                    _ => continue,
+                };
+                if let Some(text) = detail[field].as_str().filter(|text| !text.is_empty()) {
+                    observe(Event::Reasoning { text, summary });
+                }
+            }
             if !streamed && let Some(content) = reply.content.as_deref().filter(|s| !s.is_empty()) {
                 observe(Event::Assistant(content));
             }

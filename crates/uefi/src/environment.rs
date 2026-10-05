@@ -12,6 +12,12 @@ pub enum Runtime {
 }
 
 impl Runtime {
+    pub fn control(&mut self, operation: Operation) -> Result<String, String> {
+        match self {
+            Self::Vm(bridge) => bridge.call(operation, &mut || false),
+            Self::Native { relay, .. } => relay.call(operation, &mut || false),
+        }
+    }
     pub fn keep_alive(&mut self, poll: &mut dyn FnMut() -> bool) -> Result<bool, String> {
         match self {
             Self::Vm(bridge) => bridge.keep_alive(poll),
@@ -97,7 +103,10 @@ impl Environment for Interactive<'_> {
                     files::write(&path, &edited)?;
                     Ok("File edited".into())
                 }
-                Operation::Complete { .. } | Operation::Ping => {
+                Operation::Complete { .. }
+                | Operation::Ping
+                | Operation::Status
+                | Operation::Effort { .. } => {
                     Err(String::from("Model requests are not file tools"))
                 }
             },

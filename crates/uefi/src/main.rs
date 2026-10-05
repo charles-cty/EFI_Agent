@@ -61,20 +61,44 @@ fn submit(
     app.message("user", text.clone());
     if text == "/clear" {
         agent.clear();
-        app.messages.clear();
+        app.clear_messages();
         app.scroll = 0;
         app.status = String::from("Conversation cleared");
         return Ok(());
     }
+    let previous_status = app.status.clone();
     app.status = String::from("Working");
     refresh(app, false)?;
-    let response = if text == "/capabilities" {
+    let response = if text == "/caps" {
         app.capabilities = capabilities::detect();
         app.capabilities.clone()
     } else if text == "/help" {
         String::from(
-            "/help  Show commands\n/capabilities  Probe firmware network and cryptographic RNG capabilities\n/clear  Start a new conversation\n/quit, /exit  Exit\nSend a prompt to run the coding agent (read, write, edit tools).",
+            "/help  Show commands\n/caps  Probe firmware network and cryptographic RNG capabilities\n/effort [value]  Show or set reasoning effort (provider validates values)\n/status  Show actual API, history, token and cache data\n/clear  Start a new conversation\n/quit, /exit  Exit\nSend a prompt to run the coding agent (read, write, edit tools).",
         )
+    } else if text == "/status" {
+        let history = agent.history_status().unwrap_or_else(|error| error);
+        let host = bridge.as_mut().map_or_else(
+            || String::from("API: unavailable (model environment not configured)"),
+            |runtime| {
+                runtime
+                    .control(efi_agent_core::protocol::Operation::Status)
+                    .unwrap_or_else(|error| alloc::format!("API status unavailable: {error}"))
+            },
+        );
+        alloc::format!("State before command: {previous_status}\n{history}\n{host}")
+    } else if text.split_whitespace().next() == Some("/effort") {
+        let mut arguments = text.split_whitespace().skip(1);
+        let value = arguments.next().map(String::from);
+        if arguments.next().is_some() {
+            String::from("Usage: /effort [value]")
+        } else if let Some(runtime) = bridge.as_mut() {
+            runtime
+                .control(efi_agent_core::protocol::Operation::Effort { value })
+                .unwrap_or_else(|error| error)
+        } else {
+            String::from("Reasoning effort unavailable: model environment not configured")
+        }
     } else if text.starts_with('/') {
         String::from("Unknown command. Use /help.")
     } else if let Some(bridge) = bridge.as_mut() {
@@ -122,9 +146,26 @@ fn submit(
                         app.status = String::from("Receiving model response");
                     }
                     Event::Assistant(content) => app.message("assistant", content.into()),
+                    Event::Reasoning { text, summary } => app.detail(
+                        if summary {
+                            "reasoning_summary"
+                        } else {
+                            "reasoning"
+                        },
+                        String::from(if summary {
+                            "Reasoning summary"
+                        } else {
+                            "Reasoning (provider text)"
+                        }),
+                        text.into(),
+                    ),
                     Event::ToolStarted { name, arguments } => {
                         app.status = alloc::format!("Running {name}");
-                        app.message("tool", alloc::format!("{name} {}", preview(arguments)))
+                        app.detail(
+                            "tool_call",
+                            alloc::format!("Tool call: {name}"),
+                            arguments.into(),
+                        )
                     }
                     Event::ToolFinished {
                         name,
@@ -132,13 +173,13 @@ fn submit(
                         failed,
                     } => {
                         app.status = String::from("Waiting for model");
-                        app.message(
-                            "tool",
+                        app.detail(
+                            if failed { "tool_error" } else { "tool_result" },
                             alloc::format!(
-                                "{name}: {}\n{}",
-                                if failed { "failed" } else { "done" },
-                                preview(result)
+                                "Tool result: {name} ({})",
+                                if failed { "failed" } else { "done" }
                             ),
+                            result.into(),
                         );
                     }
                 }
@@ -169,7 +210,7 @@ fn submit(
     Ok(())
 }
 
-/// Apply request controls now; retain other input for the normal editor loop.
+/// Keep editing responsive during requests; defer only submission.
 fn request_key(app: &mut App, deferred: &mut VecDeque<Key>, key: Key) -> bool {
     match key {
         Key::Escape => true,
@@ -177,25 +218,36 @@ fn request_key(app: &mut App, deferred: &mut VecDeque<Key>, key: Key) -> bool {
             app.quit = true;
             true
         }
-        Key::Up | Key::Down => {
-            app.key(key);
+        Key::Enter if app.editor.text.is_empty() => {
+            // An empty editor uses Enter to toggle focused disclosure panels.
+            app.key(Key::Enter);
             false
         }
-        _ => {
+        Key::Enter => {
             // Bound buffered input to the same order of size as a prompt.
             if deferred.len() < 65536 {
                 deferred.push_back(key);
             }
             false
         }
+        key => {
+            app.key(key);
+            false
+        }
     }
 }
 
-fn preview(text: &str) -> String {
-    match text.char_indices().nth(1500) {
-        Some((index, _)) => alloc::format!("{}\n[Preview truncated]", &text[..index]),
-        None => text.into(),
-    }
+fn draw_serial(
+    terminal: &mut Terminal<Ansi<terminal::SerialSink>>,
+    app: &mut App,
+) -> Result<(), terminal::Error> {
+    terminal.draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
+    let view = serde_json::to_vec(&app.selection_view)
+        .map_err(|_| terminal::Error(Status::OUT_OF_RESOURCES))?;
+    let sink = &mut terminal.backend_mut().sink;
+    sink.write(efi_agent_core::serial::VIEW_PREFIX)?;
+    sink.write(&view)?;
+    sink.write(b"\x07")
 }
 
 fn run() -> Result<(), terminal::Error> {
@@ -256,7 +308,7 @@ fn run() -> Result<(), terminal::Error> {
                     .map_err(|_| terminal::Error(Status::DEVICE_ERROR))?;
             }
             while !app.quit {
-                terminal.draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
+                draw_serial(&mut terminal, &mut app)?;
                 let mut bytes = [0; 128];
                 let count = terminal.backend_mut().sink.read(&mut bytes)?;
                 if count == 0
@@ -302,8 +354,7 @@ fn run() -> Result<(), terminal::Error> {
                                 }
                             }
                             if changed {
-                                terminal
-                                    .draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
+                                draw_serial(&mut terminal, app)?;
                             }
                             Ok(stop)
                         })?;
@@ -357,12 +408,16 @@ fn run() -> Result<(), terminal::Error> {
         }
     }
     let mut terminal = Terminal::new(terminal::SimpleText)?;
+    let mut pointer = terminal::ConsolePointer::new();
     let mut deferred = VecDeque::new();
     terminal.clear()?;
     terminal.hide_cursor()?;
     while !app.quit {
         terminal.draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
         if let Some(key) = terminal::console_key() {
+            deferred.push_back(key);
+        }
+        if let Some(key) = pointer.poll(terminal.size()?) {
             deferred.push_back(key);
         }
         while !app.quit
@@ -374,6 +429,10 @@ fn run() -> Result<(), terminal::Error> {
                     let mut changed = !poll;
                     if poll && let Some(key) = terminal::console_key() {
                         stop = request_key(app, &mut deferred, key);
+                        changed = true;
+                    }
+                    if poll && let Some(key) = pointer.poll(terminal.size()?) {
+                        stop |= request_key(app, &mut deferred, key);
                         changed = true;
                     }
                     if changed {

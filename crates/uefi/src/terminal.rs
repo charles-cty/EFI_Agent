@@ -80,6 +80,99 @@ impl Sink for SerialSink {
 }
 
 pub struct SimpleText;
+
+/// Firmware pointing is optional. Tab/Enter remains available without it.
+pub struct ConsolePointer {
+    absolute: Option<ScopedProtocol<uefi::proto::console::pointer::AbsolutePointer>>,
+    relative: Option<ScopedProtocol<uefi::proto::console::pointer::Pointer>>,
+    position: (i64, i64),
+    down: bool,
+}
+
+impl ConsolePointer {
+    pub fn new() -> Self {
+        use uefi::{
+            boot,
+            proto::console::pointer::{AbsolutePointer, Pointer},
+        };
+        let absolute = boot::find_handles::<AbsolutePointer>()
+            .ok()
+            .and_then(|handles| {
+                handles.into_iter().find_map(|handle| {
+                    boot::open_protocol_exclusive::<AbsolutePointer>(handle).ok()
+                })
+            });
+        let relative = if absolute.is_none() {
+            boot::find_handles::<Pointer>().ok().and_then(|handles| {
+                handles
+                    .into_iter()
+                    .find_map(|handle| boot::open_protocol_exclusive::<Pointer>(handle).ok())
+            })
+        } else {
+            None
+        };
+        Self {
+            absolute,
+            relative,
+            position: (0, 0),
+            down: false,
+        }
+    }
+
+    pub fn poll(&mut self, size: Size) -> Option<Key> {
+        let (x, y, down) = if let Some(pointer) = &mut self.absolute {
+            let state = pointer.read_state().ok().flatten()?;
+            let mode = pointer.mode();
+            let map = |value: u64, minimum: u64, maximum: u64, cells: u16| {
+                if maximum <= minimum || cells == 0 {
+                    return 0;
+                }
+                ((u128::from(value.saturating_sub(minimum).min(maximum - minimum))
+                    * u128::from(cells))
+                    / (u128::from(maximum - minimum) + 1))
+                    .min(u128::from(cells - 1)) as u16
+            };
+            (
+                map(
+                    state.current_x,
+                    mode.absolute_min_x,
+                    mode.absolute_max_x,
+                    size.width,
+                ),
+                map(
+                    state.current_y,
+                    mode.absolute_min_y,
+                    mode.absolute_max_y,
+                    size.height,
+                ),
+                state.active_buttons & 1 != 0,
+            )
+        } else if let Some(pointer) = &mut self.relative {
+            let state = pointer.read_state().ok().flatten()?;
+            // Relative pointer units vary by firmware. Keep fractional movement
+            // to avoid losing small deltas and use eight units per text cell.
+            self.position.0 = (self.position.0 + i64::from(state.relative_movement_x))
+                .clamp(0, i64::from(size.width.saturating_sub(1)) * 8);
+            self.position.1 = (self.position.1 + i64::from(state.relative_movement_y))
+                .clamp(0, i64::from(size.height.saturating_sub(1)) * 8);
+            (
+                (self.position.0 / 8) as u16,
+                (self.position.1 / 8) as u16,
+                bool::from(state.left_button),
+            )
+        } else {
+            return None;
+        };
+        let pressed = down && !self.down;
+        self.down = down;
+        Some(if pressed {
+            Key::Click(x, y)
+        } else {
+            Key::PointerMove(x, y)
+        })
+    }
+}
+
 impl Backend for SimpleText {
     type Error = Error;
     fn draw<'a, I>(&mut self, mut content: I) -> Result<(), Error>
@@ -101,10 +194,24 @@ impl Backend for SimpleText {
                 let fg = match cell.fg {
                     ratatui::style::Color::Cyan => Color::LightCyan,
                     ratatui::style::Color::DarkGray => Color::LightGray,
+                    ratatui::style::Color::Yellow => Color::Yellow,
+                    ratatui::style::Color::Green => Color::LightGreen,
+                    ratatui::style::Color::LightRed => Color::LightRed,
+                    ratatui::style::Color::Magenta => Color::LightMagenta,
                     _ => Color::White,
                 };
-                out.set_color(fg, Color::Black)
-                    .map_err(|e| Error(e.status()))?;
+                let highlighted = cell.modifier.intersects(
+                    ratatui::style::Modifier::REVERSED | ratatui::style::Modifier::UNDERLINED,
+                );
+                out.set_color(
+                    if highlighted { Color::Black } else { fg },
+                    if highlighted {
+                        Color::LightGray
+                    } else {
+                        Color::Black
+                    },
+                )
+                .map_err(|e| Error(e.status()))?;
                 // SimpleText is UCS-2. Substitute characters outside its repertoire.
                 let text: String = cell
                     .symbol()
@@ -163,6 +270,7 @@ pub fn console_key() -> Option<Key> {
             13 => Some(Key::Enter),
             8 => Some(Key::Backspace),
             10 => Some(Key::Newline),
+            9 => Some(Key::Tab),
             _ => Some(Key::Character(char::from(c))),
         },
         FirmwareKey::Special(code) => match code {

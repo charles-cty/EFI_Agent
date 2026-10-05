@@ -2,6 +2,23 @@
 use alloc::vec::Vec;
 
 pub const READY: &[u8] = b"\x1b]777;efi-agent;ready\x07";
+pub const VIEW_PREFIX: &[u8] = b"\x1b]778;efi-agent;view;";
+
+/// Guest-owned transcript coordinates, sent after a complete screen frame.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct SelectionView {
+    pub dimensions: (u16, u16),
+    pub revision: u64,
+    pub top: u16,
+    pub height: u16,
+    pub offset: usize,
+    pub max_offset: usize,
+    /// (screen row, first text column, exclusive last text column).
+    pub rows: Vec<(u16, u16, u16)>,
+    pub input_revision: u64,
+    pub input_rows: Vec<(u16, u16, u16)>,
+    pub input_cursor: Option<(u16, u16)>,
+}
 
 #[derive(Default)]
 pub struct Decoder {

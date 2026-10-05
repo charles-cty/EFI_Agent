@@ -1,6 +1,6 @@
 use crate::bridge;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind},
     terminal,
 };
 use efi_agent_core::serial;
@@ -10,27 +10,80 @@ use std::{
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InterruptSource {
+    Signal,
+    Keyboard,
+}
+
+enum InterruptAction {
+    Ignore,
+    Copy,
+    Hint,
+    Exit,
+}
+
+#[derive(Default)]
+struct InterruptGuard {
+    last: Option<(Instant, InterruptSource)>,
+    armed: Option<Instant>,
+}
+
+impl InterruptGuard {
+    fn press(&mut self, source: InterruptSource, selected: bool, now: Instant) -> InterruptAction {
+        // Some Windows hosts deliver one press as both a console signal and
+        // an input record. Count that pair once; same-source presses stay distinct.
+        if self.last.is_some_and(|(time, previous)| {
+            previous != source && now.duration_since(time) <= Duration::from_millis(100)
+        }) {
+            self.last = None;
+            return InterruptAction::Ignore;
+        }
+        self.last = Some((now, source));
+        if selected {
+            self.armed = None;
+            InterruptAction::Copy
+        } else if self
+            .armed
+            .take()
+            .is_some_and(|time| now.duration_since(time) <= Duration::from_secs(1))
+        {
+            InterruptAction::Exit
+        } else {
+            self.armed = Some(now);
+            InterruptAction::Hint
+        }
+    }
+}
+
 struct Session {
     child: Child,
     raw: bool,
+    diagnostics: bridge::Diagnostics,
 }
 impl Drop for Session {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        #[cfg(windows)]
+        if self.raw {
+            use crossterm::Command;
+            let _ = event::DisableMouseCapture.execute_winapi();
+        }
         if self.raw {
             let _ = terminal::disable_raw_mode();
         }
         if self.raw {
-            print!("\x1b[?2004l\x1b[0m\x1b[?25h\x1b[?1049l");
+            print!("\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?2004l\x1b[0m\x1b[?25h\x1b[?1049l");
             let _ = std::io::stdout().flush();
         }
+        self.diagnostics.resume_stderr();
     }
 }
 
@@ -58,8 +111,29 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let memory = memory_mib.to_string();
     crate::model::validate_configuration()?;
     let interrupted = Arc::new(AtomicBool::new(false));
+    let selection_active = Arc::new(AtomicBool::new(false));
+    let copy_requested = Arc::new(AtomicBool::new(false));
+    let hint_requested = Arc::new(AtomicBool::new(false));
+    let interrupt_guard = Arc::new(Mutex::new(InterruptGuard::default()));
     let signal = Arc::clone(&interrupted);
-    ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed))?;
+    let selected = Arc::clone(&selection_active);
+    let copy_signal = Arc::clone(&copy_requested);
+    let hint_signal = Arc::clone(&hint_requested);
+    let guard_signal = Arc::clone(&interrupt_guard);
+    ctrlc::set_handler(move || {
+        if let Ok(mut guard) = guard_signal.lock() {
+            match guard.press(
+                InterruptSource::Signal,
+                selected.load(Ordering::Relaxed),
+                Instant::now(),
+            ) {
+                InterruptAction::Copy => copy_signal.store(true, Ordering::Relaxed),
+                InterruptAction::Hint => hint_signal.store(true, Ordering::Relaxed),
+                InterruptAction::Exit => signal.store(true, Ordering::Relaxed),
+                InterruptAction::Ignore => {}
+            }
+        }
+    })?;
     let firmware = PathBuf::from(&args[1]).canonicalize()?;
     let variables = PathBuf::from(&args[2]).canonicalize()?;
     let esp = PathBuf::from(&args[3]).canonicalize()?;
@@ -80,7 +154,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     console.set_nonblocking(true)?;
     let rpc = TcpListener::bind("127.0.0.1:0")?;
     let rpc_port = rpc.local_addr()?.port();
-    let _service = bridge::serve(rpc, root);
+    let diagnostics = bridge::Diagnostics::buffered();
     let accelerator = if cfg!(windows) { "whpx" } else { "kvm" };
     let mut child = Command::new(&args[0]);
     child
@@ -132,9 +206,14 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let mut session = Session {
         child: child.spawn()?,
         raw: false,
+        diagnostics: diagnostics.clone(),
     };
+    let _service = bridge::serve(rpc, root, diagnostics);
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut socket: TcpStream = loop {
+        if hint_requested.swap(false, Ordering::Relaxed) {
+            eprintln!("Press Ctrl+C again within 1 second to exit");
+        }
         if interrupted.load(Ordering::Relaxed) {
             return Ok(());
         }
@@ -155,8 +234,19 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     socket.set_write_timeout(Some(Duration::from_secs(2)))?;
     terminal::enable_raw_mode()?;
     session.raw = true;
-    print!("\x1b[?1049h\x1b[?2004h\x1b[2J\x1b[H");
+    #[cfg(windows)]
+    {
+        use crossterm::Command;
+        event::EnableMouseCapture.execute_winapi()?;
+    }
+    print!("\x1b[?1049h\x1b[?2004h\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[2J\x1b[H");
     std::io::stdout().flush()?;
+    let (width, height) = terminal::size()?;
+    let mut selection = crate::selection::Selection::new(width, height);
+    let mut mouse_down = None;
+    let mut mouse_dragged = false;
+    let mut scroll_tick = Instant::now();
+    let mut clipboard_input = crate::paste::ClipboardInput::default();
     // Firmware consumes serial input before the application boots. Do not
     // send any terminal input until the guest identifies itself as ready.
     let mut ready = false;
@@ -166,6 +256,19 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let boot_deadline = Instant::now() + Duration::from_secs(60);
     let mut buffer = [0; 8192];
     loop {
+        if let Some(input) = clipboard_input.expired(Instant::now()) {
+            match input {
+                crate::paste::Input::Keys(bytes) => socket.write_all(&bytes)?,
+                crate::paste::Input::Paste(text) => crate::selection::paste(&mut socket, &text)?,
+                crate::paste::Input::Pending => {}
+            }
+        }
+        if hint_requested.swap(false, Ordering::Relaxed) {
+            clipboard_notice("Press Ctrl+C again within 1 second to exit")?;
+        }
+        if copy_requested.swap(false, Ordering::Relaxed) {
+            copy_selection(&selection)?;
+        }
         if interrupted.load(Ordering::Relaxed) {
             break;
         }
@@ -184,8 +287,14 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                     let (w, h) = terminal::size()?;
                     socket.write_all(format!("\x1b[8;{h};{w}t").as_bytes())?;
                     dimensions = Some((w, h));
+                    selection.resize(w, h)?;
                 }
-                std::io::stdout().write_all(&output)?;
+                let (changed, rendered) = selection.output(&output)?;
+                selection_active.store(selection.active(), Ordering::Relaxed);
+                if changed {
+                    mouse_down = None;
+                }
+                std::io::stdout().write_all(&rendered)?;
                 std::io::stdout().flush()?;
             }
             Err(e)
@@ -215,6 +324,12 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => return Err(e.into()),
         }
+        if ready && scroll_tick.elapsed() >= Duration::from_millis(90) {
+            if let Some(button) = selection.scroll_direction() {
+                socket.write_all(format!("\x1b[<{button};1;1M").as_bytes())?;
+            }
+            scroll_tick = Instant::now();
+        }
         if !ready && Instant::now() > boot_deadline {
             return Err("UEFI application did not become ready within 60 seconds".into());
         }
@@ -223,6 +338,9 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         if ready && size_check.elapsed() >= Duration::from_millis(250) {
             let (w, h) = terminal::size()?;
             if dimensions != Some((w, h)) {
+                selection.resize(w, h)?;
+                selection_active.store(false, Ordering::Relaxed);
+                mouse_down = None;
                 socket.write_all(format!("\x1b[8;{h};{w}t").as_bytes())?;
                 dimensions = Some((w, h));
             }
@@ -240,15 +358,119 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 Err(error) => return Err(error.into()),
             };
             match input {
-                Event::Resize(w, h) if ready => {
+                Event::Mouse(mouse) if ready => {
+                    match mouse.kind {
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            selection.begin(mouse.column, mouse.row)?;
+                            selection_active.store(false, Ordering::Relaxed);
+                            mouse_down = Some((mouse.column, mouse.row));
+                            mouse_dragged = false;
+                        }
+                        MouseEventKind::Drag(MouseButton::Left) if mouse_down.is_some() => {
+                            mouse_dragged = true;
+                            selection.drag(mouse.column, mouse.row)?;
+                            selection_active.store(selection.active(), Ordering::Relaxed);
+                        }
+                        MouseEventKind::Up(MouseButton::Left) => {
+                            if selection.active() {
+                                selection.drag(mouse.column, mouse.row)?;
+                            } else if !mouse_dragged && let Some((x, y)) = mouse_down {
+                                socket.write_all(
+                                    format!("\x1b[<0;{};{}M", u32::from(x) + 1, u32::from(y) + 1)
+                                        .as_bytes(),
+                                )?;
+                            }
+                            selection.release();
+                            mouse_down = None;
+                        }
+                        MouseEventKind::Down(MouseButton::Right) => {
+                            if selection.active() {
+                                copy_selection(&selection)?;
+                            } else {
+                                paste_clipboard(&mut socket)?;
+                            }
+                        }
+                        _ => {}
+                    }
+                    let button = match mouse.kind {
+                        MouseEventKind::ScrollUp => Some(64),
+                        MouseEventKind::ScrollDown => Some(65),
+                        _ => None,
+                    };
+                    if let Some(button) = button {
+                        socket.write_all(
+                            format!(
+                                "\x1b[<{button};{};{}M",
+                                u32::from(mouse.column) + 1,
+                                u32::from(mouse.row) + 1
+                            )
+                            .as_bytes(),
+                        )?;
+                    }
+                }
+                Event::Resize(w, h) if ready && dimensions != Some((w, h)) => {
+                    selection.resize(w, h)?;
+                    selection_active.store(false, Ordering::Relaxed);
+                    mouse_down = None;
                     socket.write_all(format!("\x1b[8;{h};{w}t").as_bytes())?;
                     dimensions = Some((w, h));
                 }
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
-                    let bytes = match key.code {
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            vec![3]
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        && matches!(key.code, KeyCode::Char('c' | 'C'))
+                        && !key.modifiers.contains(KeyModifiers::SHIFT)
+                    {
+                        if key.kind == KeyEventKind::Repeat {
+                            continue;
                         }
+                        let action = interrupt_guard
+                            .lock()
+                            .map_err(|_| "Interrupt state lock failed")?
+                            .press(
+                                InterruptSource::Keyboard,
+                                selection.active(),
+                                Instant::now(),
+                            );
+                        match action {
+                            InterruptAction::Copy => copy_selection(&selection)?,
+                            InterruptAction::Hint => {
+                                clipboard_notice("Press Ctrl+C again within 1 second to exit")?
+                            }
+                            InterruptAction::Exit => break,
+                            InterruptAction::Ignore => {}
+                        }
+                        continue;
+                    }
+                    interrupt_guard
+                        .lock()
+                        .map_err(|_| "Interrupt state lock failed")?
+                        .armed = None;
+                    if key.modifiers.contains(KeyModifiers::CONTROL) {
+                        match key.code {
+                            KeyCode::Char('c' | 'C') if selection.active() => {
+                                copy_selection(&selection)?;
+                                continue;
+                            }
+                            KeyCode::Char('c' | 'C')
+                                if key.modifiers.contains(KeyModifiers::SHIFT) =>
+                            {
+                                continue;
+                            }
+                            KeyCode::Char('v' | 'V') if ready => {
+                                selection.clear()?;
+                                selection_active.store(false, Ordering::Relaxed);
+                                paste_clipboard(&mut socket)?;
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+                    if selection.active() && key.code == KeyCode::Esc {
+                        selection.clear()?;
+                        selection_active.store(false, Ordering::Relaxed);
+                        continue;
+                    }
+                    let bytes = match key.code {
                         KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             vec![10]
                         }
@@ -270,34 +492,69 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                         KeyCode::Home => b"\x1b[H".to_vec(),
                         KeyCode::End => b"\x1b[F".to_vec(),
                         KeyCode::Delete => b"\x1b[3~".to_vec(),
+                        KeyCode::Tab => vec![9],
                         _ => Vec::new(),
                     };
                     if ready {
-                        socket.write_all(&bytes)?;
-                    }
-                    // Ctrl+C is also an immediate escape hatch if the guest is stuck.
-                    if bytes == [3] {
-                        break;
+                        let clipboard = if cfg!(windows)
+                            && !clipboard_input.pending()
+                            && !bytes.is_empty()
+                            && !key.modifiers.contains(KeyModifiers::CONTROL)
+                        {
+                            arboard::Clipboard::new()
+                                .and_then(|mut clipboard| clipboard.get_text())
+                                .ok()
+                        } else {
+                            None
+                        };
+                        match clipboard_input.push(&bytes, clipboard, Instant::now()) {
+                            crate::paste::Input::Pending => {}
+                            crate::paste::Input::Keys(bytes) => socket.write_all(&bytes)?,
+                            crate::paste::Input::Paste(text) => {
+                                selection.clear()?;
+                                selection_active.store(false, Ordering::Relaxed);
+                                crate::selection::paste(&mut socket, &text)?;
+                            }
+                        }
                     }
                 }
                 Event::Paste(text) if ready => {
-                    // Filter terminal controls. Preserve only printable text,
-                    // line breaks and tabs; pasted escapes must never become
-                    // resize, quit, or editor control sequences in the guest.
-                    let text = text.replace("\r\n", "\n").replace('\r', "\n");
-                    let text: String = text
-                        .chars()
-                        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
-                        .collect();
-                    socket.write_all(b"\x1b[200~")?;
-                    socket.write_all(text.as_bytes())?;
-                    socket.write_all(b"\x1b[201~")?;
+                    selection.clear()?;
+                    selection_active.store(false, Ordering::Relaxed);
+                    crate::selection::paste(&mut socket, &text)?;
                 }
                 _ => {}
             }
         }
     }
     Ok(())
+}
+
+fn clipboard_notice(message: &str) -> std::io::Result<()> {
+    let (_, height) = terminal::size()?;
+    let mut out = std::io::stdout().lock();
+    write!(out, "\x1b7\x1b[{};1H\x1b[0m\x1b[2K{message}\x1b8", height)?;
+    out.flush()
+}
+
+fn copy_selection(selection: &crate::selection::Selection) -> std::io::Result<()> {
+    if !selection.active() {
+        return Ok(());
+    }
+    let result =
+        arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(selection.text()));
+    clipboard_notice(if result.is_ok() {
+        "Copied selection"
+    } else {
+        "Clipboard unavailable; selection retained"
+    })
+}
+
+fn paste_clipboard(socket: &mut TcpStream) -> std::io::Result<()> {
+    match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()) {
+        Ok(text) => crate::selection::paste(socket, &text),
+        Err(_) => clipboard_notice("Clipboard has no readable text"),
+    }
 }
 
 fn qemu_path(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
@@ -307,4 +564,75 @@ fn qemu_path(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error
         return Err("QEMU firmware and ESP paths must not contain commas".into());
     }
     Ok(text.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exit_requires_two_presses_and_duplicate_delivery_counts_once() {
+        let now = Instant::now();
+        for first in [InterruptSource::Signal, InterruptSource::Keyboard] {
+            let second = if first == InterruptSource::Signal {
+                InterruptSource::Keyboard
+            } else {
+                InterruptSource::Signal
+            };
+            let mut guard = InterruptGuard::default();
+            assert!(matches!(
+                guard.press(first, false, now),
+                InterruptAction::Hint
+            ));
+            assert!(matches!(
+                guard.press(second, false, now + Duration::from_millis(20)),
+                InterruptAction::Ignore
+            ));
+            assert!(matches!(
+                guard.press(first, false, now + Duration::from_millis(300)),
+                InterruptAction::Exit
+            ));
+        }
+        for (delay, exit) in [(999, true), (1000, true), (1001, false)] {
+            let mut guard = InterruptGuard::default();
+            guard.press(InterruptSource::Keyboard, false, now);
+            assert_eq!(
+                matches!(
+                    guard.press(
+                        InterruptSource::Keyboard,
+                        false,
+                        now + Duration::from_millis(delay)
+                    ),
+                    InterruptAction::Exit
+                ),
+                exit
+            );
+        }
+        let mut guard = InterruptGuard::default();
+        guard.press(InterruptSource::Keyboard, false, now);
+        assert!(matches!(
+            guard.press(
+                InterruptSource::Keyboard,
+                true,
+                now + Duration::from_millis(300)
+            ),
+            InterruptAction::Copy
+        ));
+        assert!(matches!(
+            guard.press(
+                InterruptSource::Keyboard,
+                true,
+                now + Duration::from_millis(500)
+            ),
+            InterruptAction::Copy
+        ));
+        assert!(matches!(
+            guard.press(
+                InterruptSource::Keyboard,
+                false,
+                now + Duration::from_millis(700)
+            ),
+            InterruptAction::Hint
+        ));
+    }
 }

@@ -19,6 +19,127 @@ pub struct Bridge {
     root: PathBuf,
     client: reqwest::blocking::Client,
     models: Arc<AtomicUsize>,
+    session: Arc<Mutex<Session>>,
+    diagnostics: Diagnostics,
+}
+
+enum DiagnosticDestination {
+    Buffered(Vec<String>),
+    Stderr,
+}
+
+/// VM diagnostics must wait until the host terminal leaves raw/alternate mode.
+#[derive(Clone)]
+pub struct Diagnostics(Arc<Mutex<DiagnosticDestination>>);
+
+impl Diagnostics {
+    pub fn buffered() -> Self {
+        Self(Arc::new(Mutex::new(DiagnosticDestination::Buffered(
+            Vec::new(),
+        ))))
+    }
+
+    pub fn stderr() -> Self {
+        Self(Arc::new(Mutex::new(DiagnosticDestination::Stderr)))
+    }
+
+    fn report(&self, message: String) {
+        if let Ok(mut destination) = self.0.lock() {
+            match &mut *destination {
+                DiagnosticDestination::Buffered(messages) => messages.push(message),
+                DiagnosticDestination::Stderr => eprintln!("{message}"),
+            }
+        }
+    }
+
+    pub fn resume_stderr(&self) {
+        if let Ok(mut destination) = self.0.lock() {
+            if let DiagnosticDestination::Buffered(messages) = &mut *destination {
+                for message in messages.drain(..) {
+                    eprintln!("{message}");
+                }
+            }
+            *destination = DiagnosticDestination::Stderr;
+        }
+    }
+}
+
+/// A closed peer retires its connection; it is not a bridge service failure.
+fn peer_disconnected(error: &(dyn std::error::Error + 'static)) -> bool {
+    error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+        matches!(
+            error.kind(),
+            std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::NotConnected
+        )
+    })
+}
+
+#[derive(Default)]
+struct Session {
+    effort: Option<String>,
+    requests: u64,
+    usage_reports: u64,
+    last_usage: Option<serde_json::Value>,
+    totals: [u64; 5],
+    reports: [u64; 5],
+}
+
+const USAGE_FIELDS: [(&str, &str); 5] = [
+    ("Input", "/prompt_tokens"),
+    ("Output (includes reasoning)", "/completion_tokens"),
+    ("Total", "/total_tokens"),
+    ("Cached input", "/prompt_tokens_details/cached_tokens"),
+    ("Reasoning", "/completion_tokens_details/reasoning_tokens"),
+];
+
+impl Session {
+    fn record(&mut self, usage: Option<serde_json::Value>) {
+        if let Some(value) = &usage {
+            self.usage_reports += 1;
+            for (index, (_, path)) in USAGE_FIELDS.iter().enumerate() {
+                if let Some(tokens) = value.pointer(path).and_then(|v| v.as_u64()) {
+                    self.totals[index] += tokens;
+                    self.reports[index] += 1;
+                }
+            }
+        }
+        self.last_usage = usage;
+    }
+
+    fn usage_status(&self) -> String {
+        let mut text = format!(
+            "Statistics scope: this bridge connection (includes tool rounds and cancelled host requests)\nAPI attempts: {}; usage reports: {}\nLast finished host request:\n",
+            self.requests, self.usage_reports
+        );
+        for (index, (label, path)) in USAGE_FIELDS.iter().enumerate() {
+            let last = self
+                .last_usage
+                .as_ref()
+                .and_then(|v| v.pointer(path))
+                .and_then(|v| v.as_u64());
+            let last = last.map_or_else(|| "unavailable".into(), |n| n.to_string());
+            let total = if self.reports[index] == 0 {
+                "unavailable".into()
+            } else {
+                self.totals[index].to_string()
+            };
+            text.push_str(&format!(
+                "{label} tokens: {last}; reported subtotal: {total} ({} requests)\n",
+                self.reports[index]
+            ));
+        }
+        let ratio = self.last_usage.as_ref().and_then(|v| {
+            let input = v["prompt_tokens"].as_u64()?;
+            let cached = v["prompt_tokens_details"]["cached_tokens"].as_u64()?;
+            (input > 0 && cached <= input)
+                .then(|| format!("{:.2}%", cached as f64 * 100.0 / input as f64))
+        });
+        text.push_str(&format!("Last cached input / input: {}\nLast prompt tokens describe the submitted prompt, not the current history.\n", ratio.unwrap_or_else(|| "unavailable".into())));
+        text
+    }
 }
 
 impl Bridge {
@@ -26,6 +147,8 @@ impl Bridge {
         Ok(Self {
             root: root.canonicalize()?,
             models: Arc::new(AtomicUsize::new(0)),
+            session: Arc::new(Mutex::new(Session::default())),
+            diagnostics: Diagnostics::stderr(),
             client: reqwest::blocking::Client::builder()
                 .timeout(Duration::from_secs(120))
                 .build()?,
@@ -63,6 +186,51 @@ impl Bridge {
     pub fn execute(&self, operation: Operation) -> Result<String, String> {
         match operation {
             Operation::Ping => Ok("pong".into()),
+            Operation::Effort { value } => {
+                let mut session = self.session.lock().map_err(|_| "Session lock failed")?;
+                if let Some(value) = value {
+                    crate::model::reasoning_effort(Some(&value))?;
+                    session.effort = Some(value);
+                }
+                let configured = std::env::var("EFI_AGENT_REASONING_EFFORT").ok();
+                let effort = crate::model::reasoning_effort(
+                    session.effort.as_deref().or(configured.as_deref()),
+                )?;
+                Ok(format!(
+                    "Reasoning effort: {effort}. Applies to future requests; provider support is not yet verified."
+                ))
+            }
+            Operation::Status => {
+                let base = std::env::var("EFI_AGENT_API_BASE").unwrap_or_default();
+                let api = crate::model::api_format(
+                    std::env::var("EFI_AGENT_API_FORMAT").ok().as_deref(),
+                )?;
+                let mut url = reqwest::Url::parse(&format!(
+                    "{}/{}",
+                    base.trim_end_matches('/'),
+                    api.endpoint()
+                ))
+                .map_err(|_| "API endpoint unavailable: invalid configuration")?;
+                let _ = url.set_username("");
+                let _ = url.set_password(None);
+                url.set_query(None);
+                url.set_fragment(None);
+                let model =
+                    std::env::var("EFI_AGENT_MODEL").unwrap_or_else(|_| "unavailable".into());
+                let configured = std::env::var("EFI_AGENT_REASONING_EFFORT").ok();
+                let session = self.session.lock().map_err(|_| "Session lock failed")?;
+                let effort = crate::model::reasoning_effort(
+                    session.effort.as_deref().or(configured.as_deref()),
+                )?;
+                let key_set =
+                    std::env::var("EFI_AGENT_API_KEY").is_ok_and(|key| !key.trim().is_empty());
+                Ok(format!(
+                    "API: {} / SSE\nEndpoint (credentials/query omitted): {url}\nConfigured model: {model}\nAPI key configured: {key_set}\nReasoning effort: {effort}\nHost model requests in flight: {}\n{}",
+                    api.label(),
+                    self.models.load(Ordering::Acquire),
+                    session.usage_status()
+                ))
+            }
             Operation::Read { path } => {
                 let path = self.resolve(&path, false)?;
                 if path.is_dir() {
@@ -122,22 +290,53 @@ impl Bridge {
         messages: Vec<ChatMessage>,
         progress: &mut dyn FnMut(&str) -> Result<(), String>,
     ) -> Result<String, String> {
+        let mut usage = None;
+        let result = self.complete_request(messages, progress, &mut usage);
+        self.session
+            .lock()
+            .map_err(|_| "Session lock failed")?
+            .record(usage);
+        result
+    }
+
+    fn complete_request(
+        &self,
+        messages: Vec<ChatMessage>,
+        progress: &mut dyn FnMut(&str) -> Result<(), String>,
+        usage: &mut Option<serde_json::Value>,
+    ) -> Result<String, String> {
         crate::model::validate_configuration()?;
         let base = std::env::var("EFI_AGENT_API_BASE")
             .map_err(|_| "Set EFI_AGENT_API_BASE to the provider base URL")?;
         let key = std::env::var("EFI_AGENT_API_KEY").map_err(|_| "Set EFI_AGENT_API_KEY")?;
         let model = std::env::var("EFI_AGENT_MODEL").map_err(|_| "Set EFI_AGENT_MODEL")?;
         let configured = std::env::var("EFI_AGENT_REASONING_EFFORT").ok();
-        let effort = crate::model::reasoning_effort(configured.as_deref())?;
+        let api = crate::model::api_format(std::env::var("EFI_AGENT_API_FORMAT").ok().as_deref())?;
+        let effort = {
+            let mut session = self.session.lock().map_err(|_| "Session lock failed")?;
+            session.requests += 1;
+            crate::model::reasoning_effort(session.effort.as_deref().or(configured.as_deref()))?
+                .to_owned()
+        };
+        let body = if api == crate::model::ApiFormat::Responses {
+            crate::responses::request(&model, &messages, &effort)?
+        } else {
+            let mut messages = serde_json::to_value(messages).map_err(|e| e.to_string())?;
+            for message in messages.as_array_mut().ok_or("Invalid message list")? {
+                message
+                    .as_object_mut()
+                    .ok_or("Invalid message")?
+                    .remove("response_items");
+            }
+            serde_json::json!({"model":model,"messages":messages,"stream":true,
+                "reasoning_effort":effort,"stream_options":{"include_usage":true},"tools":agent::tool_definitions(),"tool_choice":"auto"})
+        };
         let response = self
             .client
-            .post(format!("{}/chat/completions", base.trim_end_matches('/')))
+            .post(format!("{}/{}", base.trim_end_matches('/'), api.endpoint()))
             .bearer_auth(key)
             .header(reqwest::header::ACCEPT, "text/event-stream")
-            .json(
-                &serde_json::json!({"model":model,"messages":messages,"stream":true,
-                "reasoning_effort":effort,"tools":agent::tool_definitions(),"tool_choice":"auto"}),
-            )
+            .json(&body)
             .send()
             .map_err(|e| e.to_string())?;
         if !response.status().is_success() {
@@ -171,11 +370,29 @@ impl Bridge {
         {
             return Err("Provider must return text/event-stream".into());
         }
-        let message = crate::model::read_stream(response, progress)?;
+        let mut report = |value: &serde_json::Value| *usage = Some(value.clone());
+        let result = match api {
+            crate::model::ApiFormat::ChatCompletions => {
+                crate::model::read_stream_with_usage(response, progress, &mut report)
+            }
+            crate::model::ApiFormat::Responses => {
+                crate::responses::read_stream(response, progress, &mut report)
+            }
+        };
+        let message = result?;
         serde_json::to_string(&message).map_err(|e| e.to_string())
     }
 
     pub fn connection(&self, mut stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
+        let mut connection_bridge = self.clone();
+        connection_bridge.session = Arc::new(Mutex::new(Session::default()));
+        match connection_bridge.connection_loop(&mut stream) {
+            Err(error) if peer_disconnected(error.as_ref()) => Ok(()),
+            result => result,
+        }
+    }
+
+    fn connection_loop(&self, stream: &mut TcpStream) -> Result<(), Box<dyn std::error::Error>> {
         stream.set_read_timeout(Some(Duration::from_secs(180)))?;
         stream.set_write_timeout(Some(Duration::from_secs(30)))?;
         let writer = Arc::new(Mutex::new(stream.try_clone()?));
@@ -242,8 +459,11 @@ impl Bridge {
                             result,
                             delta: None,
                         },
-                    ) {
-                        eprintln!("HostBridge model reply: {error}");
+                    ) && !peer_disconnected(error.as_ref())
+                    {
+                        bridge
+                            .diagnostics
+                            .report(format!("HostBridge model reply: {error}"));
                     }
                 });
             } else {
@@ -281,12 +501,19 @@ fn write_response(
     Ok(())
 }
 
-pub fn serve(listener: TcpListener, root: PathBuf) -> std::thread::JoinHandle<()> {
+pub fn serve(
+    listener: TcpListener,
+    root: PathBuf,
+    diagnostics: Diagnostics,
+) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let bridge = match Bridge::new(&root) {
-            Ok(b) => b,
+            Ok(mut bridge) => {
+                bridge.diagnostics = diagnostics.clone();
+                bridge
+            }
             Err(e) => {
-                eprintln!("HostBridge: {e}");
+                diagnostics.report(format!("HostBridge: {e}"));
                 return;
             }
         };
@@ -294,11 +521,11 @@ pub fn serve(listener: TcpListener, root: PathBuf) -> std::thread::JoinHandle<()
             match stream {
                 Ok(stream) => {
                     if let Err(e) = bridge.connection(stream) {
-                        eprintln!("HostBridge: {e}");
+                        diagnostics.report(format!("HostBridge: {e}"));
                     }
                 }
                 Err(e) => {
-                    eprintln!("HostBridge accept: {e}");
+                    diagnostics.report(format!("HostBridge accept: {e}"));
                     break;
                 }
             }
@@ -309,6 +536,68 @@ pub fn serve(listener: TcpListener, root: PathBuf) -> std::thread::JoinHandle<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn disconnect_errors_are_distinct_from_timeouts_and_bad_frames() {
+        for kind in [
+            std::io::ErrorKind::ConnectionReset,
+            std::io::ErrorKind::ConnectionAborted,
+            std::io::ErrorKind::BrokenPipe,
+            std::io::ErrorKind::NotConnected,
+        ] {
+            assert!(peer_disconnected(&std::io::Error::from(kind)));
+        }
+        for kind in [
+            std::io::ErrorKind::TimedOut,
+            std::io::ErrorKind::UnexpectedEof,
+            std::io::ErrorKind::InvalidData,
+            std::io::ErrorKind::PermissionDenied,
+        ] {
+            assert!(!peer_disconnected(&std::io::Error::from(kind)));
+        }
+        let diagnostics = Diagnostics::buffered();
+        let other = diagnostics.clone();
+        other.report("HostBridge: malformed frame".into());
+        let destination = diagnostics.0.lock().unwrap();
+        assert!(
+            matches!(&*destination, DiagnosticDestination::Buffered(messages) if messages == &["HostBridge: malformed frame"])
+        );
+    }
+    #[test]
+    fn usage_preserves_missing_fields_zero_cache_and_report_coverage() {
+        let mut session = Session::default();
+        assert!(
+            session
+                .usage_status()
+                .contains("Cached input tokens: unavailable; reported subtotal: unavailable")
+        );
+        session.record(Some(serde_json::json!({
+            "prompt_tokens": 731, "completion_tokens": 419, "total_tokens": 1150,
+            "prompt_tokens_details": {"cached_tokens": 0},
+            "completion_tokens_details": {"reasoning_tokens": 19}
+        })));
+        assert!(
+            session
+                .usage_status()
+                .contains("Last cached input / input: 0.00%")
+        );
+        session.record(Some(
+            serde_json::json!({"prompt_tokens": 83, "completion_tokens": 7}),
+        ));
+        let status = session.usage_status();
+        assert!(status.contains("Input tokens: 83; reported subtotal: 814 (2 requests)"));
+        assert!(status.contains("Total tokens: unavailable; reported subtotal: 1150 (1 requests)"));
+        assert!(
+            status.contains("Cached input tokens: unavailable; reported subtotal: 0 (1 requests)")
+        );
+        assert!(status.contains("Last cached input / input: unavailable"));
+        session.record(None);
+        assert!(
+            session
+                .usage_status()
+                .contains("Input tokens: unavailable; reported subtotal: 814")
+        );
+    }
+
     #[test]
     fn real_socket_fragmentation_and_files() {
         let root = std::env::temp_dir().join(format!("efi-bridge-test-{}", std::process::id()));

@@ -1,5 +1,6 @@
 //! UTF-8 prompt editing at extended grapheme boundaries.
 use alloc::string::String;
+use ratatui::text::Line;
 use unicode_segmentation::UnicodeSegmentation;
 
 pub const MAX_PROMPT_BYTES: usize = 64 * 1024;
@@ -8,6 +9,7 @@ pub const MAX_PROMPT_BYTES: usize = 64 * 1024;
 pub struct Editor {
     pub text: String,
     cursor: usize,
+    preferred_column: Option<usize>,
 }
 
 impl Editor {
@@ -30,6 +32,7 @@ impl Editor {
     }
 
     pub fn insert(&mut self, character: char) {
+        self.preferred_column = None;
         if self.text.len() + character.len_utf8() > MAX_PROMPT_BYTES {
             return;
         }
@@ -53,41 +56,122 @@ impl Editor {
     }
 
     pub fn left(&mut self) {
+        self.preferred_column = None;
         self.cursor = self.previous();
     }
     pub fn right(&mut self) {
+        self.preferred_column = None;
         self.cursor = self.next();
     }
     pub fn home(&mut self) {
+        self.preferred_column = None;
         self.cursor = self.text[..self.cursor]
             .rfind('\n')
             .map_or(0, |index| index + 1);
     }
     pub fn end(&mut self) {
+        self.preferred_column = None;
         self.cursor = self.text[self.cursor..]
             .find('\n')
             .map_or(self.text.len(), |index| self.cursor + index);
     }
     pub fn backspace(&mut self) {
+        self.preferred_column = None;
         let start = self.previous();
         self.text.replace_range(start..self.cursor, "");
         self.cursor = start;
         self.normalize_cursor();
     }
     pub fn delete(&mut self) {
+        self.preferred_column = None;
         let end = self.next();
         self.text.replace_range(self.cursor..end, "");
         self.normalize_cursor();
     }
     pub fn take(&mut self) -> String {
+        self.preferred_column = None;
         self.cursor = 0;
         core::mem::take(&mut self.text)
+    }
+
+    /// Move between logical lines, retaining the display column across short lines.
+    pub fn vertical(&mut self, down: bool) {
+        let start = self.text[..self.cursor].rfind('\n').map_or(0, |i| i + 1);
+        let column = *self
+            .preferred_column
+            .get_or_insert_with(|| Line::from(&self.text[start..self.cursor]).width());
+        let target = if down {
+            let Some(end) = self.text[self.cursor..].find('\n') else {
+                return;
+            };
+            self.cursor + end + 1
+        } else {
+            if start == 0 {
+                return;
+            }
+            self.text[..start - 1].rfind('\n').map_or(0, |i| i + 1)
+        };
+        let end = self.text[target..]
+            .find('\n')
+            .map_or(self.text.len(), |i| target + i);
+        let mut width = 0;
+        self.cursor = target;
+        for (index, grapheme) in self.text[target..end].grapheme_indices(true) {
+            let next_width = width + Line::from(grapheme).width();
+            if next_width > column {
+                break;
+            }
+            width = next_width;
+            self.cursor = target + index + grapheme.len();
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn vertical_navigation_retains_columns_and_resets_after_horizontal_edits() {
+        let mut editor = Editor::default();
+        for c in "ab中e\u{301}z\nx\n\nab中e\u{301}z".chars() {
+            editor.insert(c);
+        }
+        editor.left();
+        editor.vertical(false);
+        assert_eq!(editor.cursor(), "ab中e\u{301}z\nx\n".len());
+        editor.vertical(false);
+        assert_eq!(editor.cursor(), "ab中e\u{301}z\nx".len());
+        editor.vertical(false);
+        assert_eq!(editor.cursor(), "ab中e\u{301}".len());
+        editor.vertical(false);
+        assert_eq!(editor.cursor(), "ab中e\u{301}".len());
+        editor.vertical(true);
+        editor.vertical(true);
+        editor.vertical(true);
+        assert_eq!(editor.cursor(), editor.text.len() - 1);
+        editor.home();
+        editor.right();
+        editor.vertical(false);
+        editor.vertical(false);
+        editor.vertical(false);
+        assert_eq!(editor.cursor(), 1);
+        editor.right();
+        editor.vertical(true);
+        editor.vertical(true);
+        editor.vertical(true);
+        assert_eq!(editor.cursor(), "ab中e\u{301}z\nx\n\nab".len());
+    }
+    #[test]
+    fn vertical_navigation_does_not_land_inside_a_wide_grapheme() {
+        let mut editor = Editor::default();
+        for c in "中x\na".chars() {
+            editor.insert(c);
+        }
+        editor.vertical(false);
+        assert_eq!(editor.cursor(), 0);
+        editor.vertical(true);
+        assert_eq!(editor.cursor(), editor.text.len());
+    }
     #[test]
     fn edits_graphemes_and_lines_without_splitting_utf8() {
         let mut editor = Editor::default();
@@ -131,13 +215,15 @@ mod tests {
         let mut editor = Editor::default();
         for _ in 0..12000 {
             seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
-            match seed % 12 {
+            match seed % 14 {
                 0 => editor.left(),
                 1 => editor.right(),
                 2 => editor.home(),
                 3 => editor.end(),
                 4 => editor.delete(),
                 5 => editor.backspace(),
+                6 => editor.vertical(false),
+                7 => editor.vertical(true),
                 _ => editor.insert(alphabet[(seed as usize / 12) % alphabet.len()]),
             }
             let cursor = editor.cursor();
