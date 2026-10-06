@@ -2,3 +2,6 @@
 	path = vendor/uefi-shell
 	url = https://github.com/pbatard/UEFI-Shell.git
 	shallow = true
+[submodule "vendor/ipxe"]
+	path = vendor/ipxe
+	url = https://github.com/ipxe/ipxe.git
