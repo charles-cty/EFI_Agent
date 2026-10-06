@@ -1,5 +1,14 @@
 # Verification record
 
+## 2026-10-06: Network error stage context
+
+Provider failures now identify the DNS server and API IPv4 endpoint, and label
+DNS connect/send/read, API connection, request send, response header, error
+response, and response stream stages. This preserves the underlying UEFI TCP4
+error while distinguishing DNS TCP timeouts from API TCP or TLS/request
+failures. `cargo fmt --all -- --check`, 45 core tests, and the x86_64 UEFI
+target check pass.
+
 ## 2026-10-05: One environment configuration for VM and native packages
 
 VM launch and native packaging use the same EFI_AGENT_* variables and host

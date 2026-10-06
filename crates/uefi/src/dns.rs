@@ -1,6 +1,6 @@
 //! DNS A queries over TCP, independent of optional firmware DNS drivers.
 use crate::tcp::{Deadline, Tcp};
-use alloc::{string::String, vec, vec::Vec};
+use alloc::{format, string::String, vec, vec::Vec};
 use core::time::Duration;
 use efi_agent_core::config::StaticIpv4;
 
@@ -24,16 +24,24 @@ pub fn resolve(
         query.extend_from_slice(label.as_bytes());
     }
     query.extend_from_slice(&[0, 0, 1, 0, 1]);
-    let mut tcp = Tcp::connect(server, port, static_ipv4, poll)?;
+    let mut tcp = Tcp::connect(server, port, static_ipv4, poll).map_err(|error| {
+        format!(
+            "DNS TCP connection to {}.{}.{}.{}:{} failed: {error}",
+            server[0], server[1], server[2], server[3], port,
+        )
+    })?;
     let mut frame = Vec::new();
     frame.extend_from_slice(&(query.len() as u16).to_be_bytes());
     frame.extend(query);
-    tcp.send(&frame, poll)?;
+    tcp.send(&frame, poll)
+        .map_err(|error| format!("DNS query send failed: {error}"))?;
     let deadline = Deadline::new(Duration::from_secs(10))?;
     let mut length = [0; 2];
-    read_exact(&mut tcp, &mut length, &deadline, poll)?;
+    read_exact(&mut tcp, &mut length, &deadline, poll)
+        .map_err(|error| format!("DNS response length read failed: {error}"))?;
     let mut response = vec![0; u16::from_be_bytes(length) as usize];
-    read_exact(&mut tcp, &mut response, &deadline, poll)?;
+    read_exact(&mut tcp, &mut response, &deadline, poll)
+        .map_err(|error| format!("DNS response body read failed: {error}"))?;
     answer(&response)
 }
 fn read_exact(

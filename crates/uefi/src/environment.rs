@@ -28,6 +28,14 @@ const USAGE_FIELDS: [(&str, &str); 5] = [
     ("Cached input", "/prompt_tokens_details/cached_tokens"),
     ("Reasoning", "/completion_tokens_details/reasoning_tokens"),
 ];
+
+fn ipv4(address: [u8; 4]) -> String {
+    format!(
+        "{}.{}.{}.{}",
+        address[0], address[1], address[2], address[3]
+    )
+}
+
 impl Runtime {
     pub fn load(_vm: bool) -> Result<Self, String> {
         let text = files::read("\\EFI\\AGENT\\CONFIG.JSON")?;
@@ -130,7 +138,15 @@ impl Runtime {
             self.config.dns_port,
             self.config.ipv4.as_ref(),
             poll,
-        )?;
+        )
+        .map_err(|error| {
+            format!(
+                "DNS A query for {} via {}:{} failed: {error}",
+                url.host,
+                ipv4(self.config.dns_address),
+                self.config.dns_port,
+            )
+        })?;
         let ca = self
             .config
             .ca_certificate
@@ -139,7 +155,12 @@ impl Runtime {
             .transpose()?;
         self.attempts += 1;
         self.last_usage = None;
-        let mut socket = tls::Socket::connect(&url, address, ca, self.config.ipv4.as_ref(), poll)?;
+        let endpoint = format!(
+            "API TCP {}.{}.{}.{}:{}",
+            address[0], address[1], address[2], address[3], url.port,
+        );
+        let mut socket = tls::Socket::connect(&url, address, ca, self.config.ipv4.as_ref(), poll)
+            .map_err(|error| format!("{endpoint} connection failed: {error}"))?;
         let header = format!(
             "POST {} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nAccept: text/event-stream\r\nAccept-Encoding: identity\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
             url.endpoint(api.endpoint()),
@@ -147,14 +168,21 @@ impl Runtime {
             self.config.api_key,
             body.len()
         );
-        socket.send(header.as_bytes())?;
-        socket.send(&body)?;
-        let mut response = Body::new(socket)?;
+        socket
+            .send(header.as_bytes())
+            .map_err(|error| format!("{endpoint} request handshake failed: {error}"))?;
+        socket
+            .send(&body)
+            .map_err(|error| format!("{endpoint} request send failed: {error}"))?;
+        let mut response = Body::new(socket)
+            .map_err(|error| format!("{endpoint} response read failed: {error}"))?;
         if !(200..300).contains(&response.status) {
             let mut detail = Vec::new();
             let mut bytes = [0; 1024];
             while detail.len() < 64 * 1024 {
-                let count = response.read(&mut bytes)?;
+                let count = response
+                    .read(&mut bytes)
+                    .map_err(|error| format!("{endpoint} error response read failed: {error}"))?;
                 if count == 0 {
                     break;
                 }
@@ -207,7 +235,7 @@ impl Runtime {
             }
         }
         self.last_usage = usage;
-        result
+        result.map_err(|error| format!("{endpoint} response stream failed: {error}"))
     }
 }
 pub struct Interactive<'a> {
