@@ -145,12 +145,6 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         fs::remove_file(output)?;
         return Err(error);
     }
-    println!(
-        "GPT/FAT32 image: {} ({} bytes, {} entries)",
-        output.display(),
-        DISK_BYTES,
-        entries.len()
-    );
     Ok(())
 }
 
