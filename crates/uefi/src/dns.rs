@@ -2,11 +2,13 @@
 use crate::tcp::{Deadline, Tcp};
 use alloc::{string::String, vec, vec::Vec};
 use core::time::Duration;
+use efi_agent_core::config::StaticIpv4;
 
 pub fn resolve(
     host: &str,
     server: [u8; 4],
     port: u16,
+    static_ipv4: Option<&StaticIpv4>,
     poll: &mut dyn FnMut() -> bool,
 ) -> Result<[u8; 4], String> {
     let parts: Vec<_> = host.split('.').collect();
@@ -22,7 +24,7 @@ pub fn resolve(
         query.extend_from_slice(label.as_bytes());
     }
     query.extend_from_slice(&[0, 0, 1, 0, 1]);
-    let mut tcp = Tcp::connect(server, port, poll)?;
+    let mut tcp = Tcp::connect(server, port, static_ipv4, poll)?;
     let mut frame = Vec::new();
     frame.extend_from_slice(&(query.len() as u16).to_be_bytes());
     frame.extend(query);

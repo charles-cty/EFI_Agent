@@ -16,11 +16,20 @@ pub struct AgentConfig {
     pub dns_address: [u8; 4],
     #[serde(default = "default_dns_port")]
     pub dns_port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ipv4: Option<StaticIpv4>,
     #[serde(default = "default_workspace")]
     pub workspace: String,
     /// Optional additional DER certificate on the boot volume for a private CA.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ca_certificate: Option<String>,
+}
+
+#[derive(Clone, Deserialize, serde::Serialize)]
+pub struct StaticIpv4 {
+    pub address: [u8; 4],
+    pub subnet_mask: [u8; 4],
+    pub gateway: [u8; 4],
 }
 fn default_format() -> String {
     "chat_completions".into()
@@ -51,6 +60,24 @@ impl AgentConfig {
         crate::model::reasoning_effort(Some(&self.reasoning_effort))?;
         if self.dns_port == 0 || self.dns_address == [0; 4] || self.dns_address[0] >= 224 {
             return Err("DNS requires a nonzero unicast IPv4 address".into());
+        }
+        if let Some(ipv4) = &self.ipv4 {
+            let address = u32::from_be_bytes(ipv4.address);
+            let mask = u32::from_be_bytes(ipv4.subnet_mask);
+            let gateway = u32::from_be_bytes(ipv4.gateway);
+            let host_mask = !mask;
+            if ipv4.address == [0; 4]
+                || ipv4.address[0] >= 224
+                || ipv4.gateway == [0; 4]
+                || ipv4.gateway[0] >= 224
+                || mask == 0
+                || host_mask & host_mask.wrapping_add(1) != 0
+                || (address & mask) != (gateway & mask)
+                || (address & host_mask == 0)
+                || (address & host_mask == host_mask)
+            {
+                return Err("Static IPv4 address, subnet mask, or gateway is invalid".into());
+            }
         }
         let workspace_components = components(&self.workspace)?;
         if !self.workspace.starts_with('\\') || workspace_components.is_empty() {
@@ -114,6 +141,7 @@ mod tests {
             reasoning_effort: default_effort(),
             dns_address: default_dns(),
             dns_port: default_dns_port(),
+            ipv4: None,
             ca_certificate: None,
             workspace: "\\work\\project".into(),
         };

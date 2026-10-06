@@ -39,11 +39,37 @@ pub fn configuration() -> Result<AgentConfig, Error> {
         dns_port: std::env::var("EFI_AGENT_DNS_PORT")
             .unwrap_or_else(|_| "53".into())
             .parse()?,
+        ipv4: static_ipv4()?,
         workspace: "\\work".into(),
         ca_certificate: None,
     };
     config.validate()?;
     Ok(config)
+}
+
+fn static_ipv4() -> Result<Option<efi_agent_core::config::StaticIpv4>, Error> {
+    let values = [
+        std::env::var("EFI_AGENT_IPV4_ADDRESS").ok(),
+        std::env::var("EFI_AGENT_IPV4_NETMASK").ok(),
+        std::env::var("EFI_AGENT_IPV4_GATEWAY").ok(),
+    ];
+    if values.iter().all(Option::is_none) {
+        return Ok(None);
+    }
+    if values.iter().any(Option::is_none) {
+        return Err("Set EFI_AGENT_IPV4_ADDRESS, EFI_AGENT_IPV4_NETMASK, and EFI_AGENT_IPV4_GATEWAY together".into());
+    }
+    let parse = |name: &str, value: &str| -> Result<[u8; 4], Error> {
+        Ok(value
+            .parse::<std::net::Ipv4Addr>()
+            .map_err(|_| format!("Invalid {name}"))?
+            .octets())
+    };
+    Ok(Some(efi_agent_core::config::StaticIpv4 {
+        address: parse("EFI_AGENT_IPV4_ADDRESS", values[0].as_deref().unwrap())?,
+        subnet_mask: parse("EFI_AGENT_IPV4_NETMASK", values[1].as_deref().unwrap())?,
+        gateway: parse("EFI_AGENT_IPV4_GATEWAY", values[2].as_deref().unwrap())?,
+    }))
 }
 
 /// Generate the firmware config from the same host settings for both modes.

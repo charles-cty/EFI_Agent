@@ -70,6 +70,23 @@ or connectivity to the provider. Agent already preserves an existing address
 or requests DHCP through IPv4 Config2 before creating a TCP child. It does not
 manually reset or initialize SNP while upper network drivers may own it.
 
+If the firmware exposes IP4/TCP4 but not IPv4 Config2, configure a static
+address in `CONFIG.JSON`:
+
+```json
+"ipv4": {
+  "address": [192, 168, 1, 20],
+  "subnet_mask": [255, 255, 255, 0],
+  "gateway": [192, 168, 1, 1]
+}
+```
+
+The launcher writes this object when all of
+`EFI_AGENT_IPV4_ADDRESS`, `EFI_AGENT_IPV4_NETMASK`, and
+`EFI_AGENT_IPV4_GATEWAY` are set. Agent applies the station address and mask
+to each TCP4 child and adds its default route. Without the object, the existing
+firmware address or IPv4 Config2 DHCP path is used.
+
 ## UEFI standard findings
 
 The following UEFI 2.11 sections define the services used here:

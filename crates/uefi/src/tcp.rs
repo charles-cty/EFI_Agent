@@ -8,6 +8,7 @@ use core::{
     ptr::{self, NonNull},
     time::Duration,
 };
+use efi_agent_core::config::StaticIpv4;
 use uefi::{
     Event, Handle, Status,
     boot::{self, EventType, ScopedProtocol, TimerTrigger, Tpl},
@@ -134,6 +135,7 @@ impl Tcp {
     pub fn connect(
         address: [u8; 4],
         port: u16,
+        static_ipv4: Option<&StaticIpv4>,
         poll: &mut dyn FnMut() -> bool,
     ) -> Result<Self, String> {
         let handles = boot::find_handles::<TcpBinding>().map_err(|e| {
@@ -145,7 +147,7 @@ impl Tcp {
         })?;
         let mut last = String::from("No TCP4-capable network interface");
         for handle in handles {
-            match Self::on_interface(handle, address, port, poll) {
+            match Self::on_interface(handle, address, port, static_ipv4, poll) {
                 Ok(connection) => return Ok(connection),
                 Err(error) if error == "Request cancelled" => return Err(error),
                 Err(error) => last = error,
@@ -158,6 +160,7 @@ impl Tcp {
         handle: Handle,
         address: [u8; 4],
         port: u16,
+        static_ipv4: Option<&StaticIpv4>,
         poll: &mut dyn FnMut() -> bool,
     ) -> Result<Self, String> {
         if poll() {
@@ -166,7 +169,7 @@ impl Tcp {
         // Configure an available IPv4 policy before creating a TCP child. Some
         // firmware retains an unresolved default mapping once a child exists.
         // Absence of Config2 is allowed when TCP4 supplies a configured address.
-        let address_configurable = Self::configure_address(handle, poll)?;
+        let address_configurable = Self::configure_address(handle, static_ipv4, poll)?;
         let mut binding = boot::open_protocol_exclusive::<TcpBinding>(handle)
             .map_err(|e| format!("TCP4 binding: {e}"))?;
         let mut raw_child = ptr::null_mut();
@@ -190,13 +193,27 @@ impl Tcp {
             binding,
             child,
         };
+        let (use_default_address, station_address, subnet_mask) = static_ipv4.map_or(
+            (
+                true.into(),
+                Ipv4Address::from([0; 4]),
+                Ipv4Address::from([0; 4]),
+            ),
+            |ip| {
+                (
+                    false.into(),
+                    Ipv4Address::from(ip.address),
+                    Ipv4Address::from(ip.subnet_mask),
+                )
+            },
+        );
         let config = Tcp4ConfigData {
             type_of_service: 0,
             time_to_live: 64,
             access_point: Tcp4AccessPoint {
-                use_default_address: true.into(),
-                station_address: Ipv4Address::from([0; 4]),
-                subnet_mask: Ipv4Address::from([0; 4]),
+                use_default_address,
+                station_address,
+                subnet_mask,
                 station_port: 0,
                 remote_address: Ipv4Address::from(address),
                 remote_port: port,
@@ -233,6 +250,15 @@ impl Tcp {
         } else {
             status(configured, "configure")?;
         }
+        if let Some(ipv4) = static_ipv4 {
+            let gateway = Ipv4Address::from(ipv4.gateway);
+            let zero = Ipv4Address::from([0; 4]);
+            // SAFETY: route values remain live for this synchronous call.
+            status(
+                unsafe { ((*protocol).routes)(protocol, false.into(), &zero, &zero, &gateway) },
+                "add default route",
+            )?;
+        }
 
         let completion = Completion::new()?;
         // Allocate the deadline before queuing the token so an allocation
@@ -250,7 +276,14 @@ impl Tcp {
         Ok(connection)
     }
 
-    fn configure_address(handle: Handle, poll: &mut dyn FnMut() -> bool) -> Result<bool, String> {
+    fn configure_address(
+        handle: Handle,
+        static_ipv4: Option<&StaticIpv4>,
+        poll: &mut dyn FnMut() -> bool,
+    ) -> Result<bool, String> {
+        if static_ipv4.is_some() {
+            return Ok(true);
+        }
         let mut ip = match Ip4Config2::new(handle) {
             Ok(ip) => ip,
             Err(error) if matches!(error.status(), Status::UNSUPPORTED | Status::NOT_FOUND) => {

@@ -3,6 +3,7 @@ use crate::tcp::{Deadline, Tcp};
 use alloc::string::ToString;
 use alloc::{format, string::String, sync::Arc, vec, vec::Vec};
 use core::time::Duration;
+use efi_agent_core::config::StaticIpv4;
 use rustls::{
     ClientConfig, RootCertStore,
     client::UnbufferedClientConnection,
@@ -67,6 +68,7 @@ impl<'a> Socket<'a> {
         url: &efi_agent_core::http::Url,
         address: [u8; 4],
         ca: Option<Vec<u8>>,
+        static_ipv4: Option<&StaticIpv4>,
         poll: &'a mut dyn FnMut() -> bool,
     ) -> Result<Self, String> {
         let tls = if url.tls {
@@ -94,7 +96,7 @@ impl<'a> Socket<'a> {
         } else {
             None
         };
-        let tcp = Tcp::connect(address, url.port, poll)?;
+        let tcp = Tcp::connect(address, url.port, static_ipv4, poll)?;
         Ok(Self {
             tcp,
             tls,

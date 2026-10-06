@@ -109,6 +109,13 @@ or a directly accessed DHCP protocol. DNS A queries use TCP to the configured
 IPv4 DNS server. Rustls with RustCrypto performs HTTPS in the firmware
 application. HTTP framing and provider SSE parsing use bounded buffers.
 
+For firmware with IP4/TCP4 but no IPv4 Config2, an optional `ipv4` object in
+`CONFIG.JSON` supplies a static address, mask, and gateway. Agent puts these
+values in each TCP4 child configuration and adds its default route. The launcher
+maps `EFI_AGENT_IPV4_ADDRESS`, `EFI_AGENT_IPV4_NETMASK`, and
+`EFI_AGENT_IPV4_GATEWAY` into that object. DHCP remains the default when the
+object is absent.
+
 Cryptographic random capability detection opens each available EFI RNG protocol,
 reads a bounded algorithm list, and tries a 32-byte request with an explicitly
 advertised SP800-90 CTR-256, HMAC-256, or HASH-256 algorithm. Unsupported

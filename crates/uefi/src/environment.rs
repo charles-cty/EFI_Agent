@@ -128,6 +128,7 @@ impl Runtime {
             &url.host,
             self.config.dns_address,
             self.config.dns_port,
+            self.config.ipv4.as_ref(),
             poll,
         )?;
         let ca = self
@@ -138,7 +139,7 @@ impl Runtime {
             .transpose()?;
         self.attempts += 1;
         self.last_usage = None;
-        let mut socket = tls::Socket::connect(&url, address, ca, poll)?;
+        let mut socket = tls::Socket::connect(&url, address, ca, self.config.ipv4.as_ref(), poll)?;
         let header = format!(
             "POST {} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nAccept: text/event-stream\r\nAccept-Encoding: identity\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
             url.endpoint(api.endpoint()),
