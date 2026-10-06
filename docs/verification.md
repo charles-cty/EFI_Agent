@@ -1155,3 +1155,36 @@ cargo.exe rustc --manifest-path scripts/fixtures/driver-probe/Cargo.toml --targe
 
 Then supply its generated .efi with --driver to scripts/smoke_shell.py. Select
 --case reject-application to check stop-on-error, or omit --case for all cases.
+
+Static IPv4 configuration was added for physical firmware that exposes IP4 and
+TCP4 but has no IPv4 Config2 protocol. `CONFIG.JSON` accepts `ipv4.address`,
+`ipv4.subnet_mask`, and `ipv4.gateway`; the launcher populates them from
+`EFI_AGENT_IPV4_ADDRESS`, `EFI_AGENT_IPV4_NETMASK`, and
+`EFI_AGENT_IPV4_GATEWAY`. TCP4 children use the configured station address and
+add a default route. Omitting all three variables keeps the existing DHCP and
+firmware-address behavior. Host core tests and UEFI target checks passed after
+the change; physical static-address validation remains required.
+
+Packaging scripts now discover the existing x64 Shell output under the pinned
+EDK2 submodule, matching the selected DEBUG or RELEASE profile. An explicit
+EFI_AGENT_SHELL still overrides discovery. They do not compile EDK2 themselves.
+Windows Release build and packaging passed without EFI_AGENT_SHELL using test
+provider settings. The generated artifact configuration contains those test
+settings and needs a new package operation with real provider settings before
+physical use. Bash syntax validation passed; Linux packaging was not run.
+
+## iPXE SNP diagnostic build
+
+Added `vendor/ipxe` as a Git submodule at
+6262f1081fe185564e8ec8365a1d23597ec6e6f5. No commit was made. Exported
+that revision into an isolated WSL `/tmp` workspace and built with GCC and
+GNU Make using `make -j4 bin-x86_64-efi/snp.efi`. No Secure Boot target or
+signing step was used. Copied the output to `artifacts/ipxe/snp.efi`.
+
+PE inspection confirms x86-64, EFI application subsystem 10, and an empty
+Security Directory. The linked ELF contains `snp_driver` and no
+`snponly_driver`. SHA256:
+`b45bc2a17b91e4c2de8f6c3ca5364f7aa3493f7a0d942ed963a4c73eba011e65`.
+Make reported clock skew; the link and EFI conversion completed successfully.
+Physical boot and network traffic have not yet been tested. This application
+uses its own network stack over SNP and does not install TCP4 for Agent.

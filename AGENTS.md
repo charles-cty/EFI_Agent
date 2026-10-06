@@ -19,9 +19,12 @@ volume's configured workspace through EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.
 
 The firmware reads EFI/AGENT/CONFIG.JSON. Fields: api_base, api_key, model,
 api_format (chat_completions by default), reasoning_effort (medium), dns_address
-([1,1,1,1]), dns_port (53), workspace (\work), and optional ca_certificate
+([1,1,1,1]), dns_port (53), optional static ipv4 address/mask/gateway,
+workspace (\work), and optional ca_certificate
 (absolute UEFI path to an additional DER CA). HTTPS uses no_std Rustls with
-RustCrypto, bundled public CA roots, firmware RNG, and firmware wall time.
+RustCrypto, bundled public CA roots, firmware RNG, and firmware wall time. When
+static ipv4 is configured, TCP4 children use that address and add the default
+route without requiring IPv4 Config2.
 Certificate-chain, hostname and expiry checks are mandatory. No format retry,
 reduced reasoning retry, or automatic model replay is performed.
 
@@ -74,8 +77,9 @@ runs connect -r, selects the common 80x25 console mode, then starts
 EFI/AGENT/AGENT.EFI using homefilesystem (not an assumed fs0:). Esc skips the
 startup script. Both trees include EFI/TOOLS/SHELLX64.EFI and its license/source
 record. Agent remains the VM boot entry; the launcher selects AGENT.EFI when
-preparing a private disk from a generated native package. The Shell binary is a
-local build input selected with `EFI_AGENT_SHELL`; it is not stored in Git.
+preparing a private disk from a generated native package. The Shell binary is
+selected automatically from the submodule's `edk2/Build/Shell/*/X64` output;
+`EFI_AGENT_SHELL` overrides that path. It is not stored in Git.
 Both scripts and VM launch use the same EFI_AGENT_* environment settings and
 configuration parser. CONFIG.JSON is generated in the boot tree; no user config
 file is needed. EFI_AGENT_CA_CERTIFICATE is a host DER path copied into the
@@ -163,6 +167,13 @@ Windows ConPTY checks use scripts/smoke_windows.ps1; select the launcher path
 explicitly when using Release. See docs/verification.md for tested limits.
 
 # Work remaining
+
+The `vendor/ipxe` submodule pins iPXE at
+6262f1081fe185564e8ec8365a1d23597ec6e6f5. An unsigned x64 SNP application
+was built in an isolated Linux workspace as `artifacts/ipxe/snp.efi` for
+physical network diagnosis. It uses iPXE's own stack over existing SNP
+interfaces; it does not provide Agent's TCP4 protocol. It is not packaged
+into the Agent boot trees. See docs/verification.md.
 
 - Physical bare-metal and third-party provider verification.
 - Arbitrary command execution.
