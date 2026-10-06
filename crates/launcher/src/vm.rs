@@ -174,7 +174,13 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             "-machine",
             &format!("q35,accel={accelerator}"),
             "-cpu",
-            if cfg!(windows) { "max" } else { "host" },
+            if cfg!(windows) {
+                "qemu64,+rdrand"
+            } else {
+                "host"
+            },
+            "-smp",
+            "1",
             "-m",
             &memory,
             "-display",

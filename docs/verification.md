@@ -1,5 +1,20 @@
 # Verification record
 
+## 2026-10-06: Single-vCPU VM CPU configuration
+
+The launcher explicitly selects one vCPU with `-smp 1`. Windows WHPX uses
+`qemu64,+rdrand` instead of `max`; Linux KVM retains `host`. RDRAND remains
+required for TLS. Windows Release launcher build and actual WHPX DNS/HTTPS
+smoke with `qemu64,+rdrand` passed streaming, file tools, cancellation, and
+the next request.
+
+## 2026-10-06: Static QEMU VM launch helpers
+
+Added `scripts/run-vm.sh` and `scripts/run-vm.ps1`. They do not build or
+package files. They set the QEMU user-network address `10.0.2.15/24`, gateway
+`10.0.2.2`, and DNS `10.0.2.3:53`, then launch the existing Release launcher
+with `artifacts/esp` and `workspace`.
+
 ## 2026-10-06: Network error stage context
 
 Provider failures now identify the DNS server and API IPv4 endpoint, and label
