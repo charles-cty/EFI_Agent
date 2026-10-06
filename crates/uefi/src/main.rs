@@ -15,13 +15,15 @@ use efi_agent_core::{
 use ratatui::{Terminal, layout::Size};
 use uefi::prelude::*;
 use uefi::{boot, proto::console::serial::Serial};
-mod bridge;
 mod capabilities;
+mod dns;
+mod drivers;
 mod environment;
 mod event_loop;
 mod files;
 mod tcp;
 mod terminal;
+mod tls;
 
 #[entry]
 fn main() -> Status {
@@ -32,8 +34,11 @@ fn main() -> Status {
         uefi::println!("Cannot disable UEFI watchdog: {error}");
         return error.status();
     }
+    // Firmware boot managers need not connect optional device drivers before
+    // starting an application. Do this before opening long-lived protocols.
+    let driver_report = drivers::initialize();
     let vm = files::read("\\EFI\\AGENT\\VM.TXT").is_ok();
-    match run() {
+    match run(&driver_report) {
         Ok(()) => {
             if vm {
                 uefi::runtime::reset(uefi::runtime::ResetType::SHUTDOWN, Status::SUCCESS, None);
@@ -50,8 +55,9 @@ fn main() -> Status {
 fn submit(
     app: &mut App,
     agent: &mut Agent,
-    bridge: &mut Option<environment::Runtime>,
+    runtime_state: &mut Option<environment::Runtime>,
     text: String,
+    driver_report: &str,
     mut refresh: impl FnMut(&mut App, bool) -> Result<bool, terminal::Error>,
 ) -> Result<(), terminal::Error> {
     if matches!(text.as_str(), "/quit" | "/exit") {
@@ -70,7 +76,7 @@ fn submit(
     app.status = String::from("Working");
     refresh(app, false)?;
     let response = if text == "/caps" {
-        app.capabilities = capabilities::detect();
+        app.capabilities = capabilities::detect(driver_report);
         app.capabilities.clone()
     } else if text == "/help" {
         String::from(
@@ -78,7 +84,7 @@ fn submit(
         )
     } else if text == "/status" {
         let history = agent.history_status().unwrap_or_else(|error| error);
-        let host = bridge.as_mut().map_or_else(
+        let provider = runtime_state.as_mut().map_or_else(
             || String::from("API: unavailable (model environment not configured)"),
             |runtime| {
                 runtime
@@ -86,13 +92,13 @@ fn submit(
                     .unwrap_or_else(|error| alloc::format!("API status unavailable: {error}"))
             },
         );
-        alloc::format!("State before command: {previous_status}\n{history}\n{host}")
+        alloc::format!("State before command: {previous_status}\n{history}\n{provider}")
     } else if text.split_whitespace().next() == Some("/effort") {
         let mut arguments = text.split_whitespace().skip(1);
         let value = arguments.next().map(String::from);
         if arguments.next().is_some() {
             String::from("Usage: /effort [value]")
-        } else if let Some(runtime) = bridge.as_mut() {
+        } else if let Some(runtime) = runtime_state.as_mut() {
             runtime
                 .control(efi_agent_core::protocol::Operation::Effort { value })
                 .unwrap_or_else(|error| error)
@@ -101,7 +107,7 @@ fn submit(
         }
     } else if text.starts_with('/') {
         String::from("Unknown command. Use /help.")
-    } else if let Some(bridge) = bridge.as_mut() {
+    } else if let Some(runtime_state) = runtime_state.as_mut() {
         app.status = String::from("Requesting model");
         refresh(app, false)?;
         let render_error = RefCell::new(None);
@@ -124,7 +130,7 @@ fn submit(
                 cancelled.get()
             };
             let mut environment = environment::Interactive {
-                runtime: bridge,
+                runtime: runtime_state,
                 poll: &mut control,
                 cancelled: false,
             };
@@ -196,7 +202,7 @@ fn submit(
         return Ok(());
     } else {
         String::from(
-            "Model environment is not configured. On hardware, provide EFI/AGENT/NATIVE.JSON with a model relay and native workspace.",
+            "Model environment is not configured. Provide EFI/AGENT/CONFIG.JSON with API credentials and a boot-volume workspace.",
         )
     };
     app.message("assistant", response);
@@ -245,20 +251,20 @@ fn draw_serial(
     sink.write(b"\x07")
 }
 
-fn run() -> Result<(), terminal::Error> {
+fn run(driver_report: &str) -> Result<(), terminal::Error> {
     let mut app = App::default();
     let mut agent = Agent::default();
-    app.capabilities = capabilities::detect();
+    app.capabilities = capabilities::detect(driver_report);
     let vm = files::read("\\EFI\\AGENT\\VM.TXT").is_ok();
-    let mut bridge = match environment::Runtime::load(vm) {
+    let mut runtime_state = match environment::Runtime::load(vm) {
         Ok(environment) => Some(environment),
         Err(error) => {
             app.status = alloc::format!("Configuration: {error}");
             None
         }
     };
-    if let Some(environment::Runtime::Native { config, .. }) = &bridge {
-        app.workspace = config.workspace.clone();
+    if let Some(runtime) = &runtime_state {
+        app.workspace = runtime.config.workspace.clone();
     }
     // VM mode is explicit. The launcher ESP has no motherboard UART enabled.
     if vm && let Ok(handles) = boot::find_handles::<Serial>() {
@@ -323,76 +329,43 @@ fn run() -> Result<(), terminal::Error> {
                         terminal.backend_mut().dimensions = Size::new(w.min(300), h.min(120));
                         terminal.autoresize()?;
                     } else if let Some(text) = app.key(key) {
-                        submit(&mut app, &mut agent, &mut bridge, text, |app, poll| {
-                            let mut stop = false;
-                            let mut changed = !poll;
-                            if poll {
-                                let mut bytes = [0; 128];
-                                let count = terminal.backend_mut().sink.read(&mut bytes)?;
-                                if count == 0
-                                    && let Some(key) = decoder.idle()
-                                {
-                                    stop |= request_key(app, &mut deferred, key);
-                                    changed = true;
-                                }
-                                for byte in &bytes[..count] {
-                                    if let Some(key) = decoder.push(*byte) {
-                                        if let Key::Resize(w, h) = key {
-                                            terminal.backend_mut().dimensions =
-                                                Size::new(w.min(300), h.min(120));
-                                            terminal.autoresize()?;
-                                        } else {
-                                            stop |= request_key(app, &mut deferred, key);
-                                        }
+                        submit(
+                            &mut app,
+                            &mut agent,
+                            &mut runtime_state,
+                            text,
+                            driver_report,
+                            |app, poll| {
+                                let mut stop = false;
+                                let mut changed = !poll;
+                                if poll {
+                                    let mut bytes = [0; 128];
+                                    let count = terminal.backend_mut().sink.read(&mut bytes)?;
+                                    if count == 0
+                                        && let Some(key) = decoder.idle()
+                                    {
+                                        stop |= request_key(app, &mut deferred, key);
                                         changed = true;
                                     }
-                                }
-                            }
-                            if changed {
-                                draw_serial(&mut terminal, app)?;
-                            }
-                            Ok(stop)
-                        })?;
-                    }
-                }
-                if !app.quit
-                    && let Some(runtime) = bridge.as_mut()
-                {
-                    let mut cancelled = false;
-                    let result = runtime.keep_alive(&mut || {
-                        let mut bytes = [0; 128];
-                        match terminal.backend_mut().sink.read(&mut bytes) {
-                            Ok(count) => {
-                                if count == 0
-                                    && let Some(key) = decoder.idle()
-                                {
-                                    cancelled |= request_key(&mut app, &mut deferred, key);
-                                }
-                                for byte in &bytes[..count] {
-                                    if let Some(key) = decoder.push(*byte) {
-                                        if let Key::Resize(w, h) = key {
-                                            terminal.backend_mut().dimensions =
-                                                Size::new(w.min(300), h.min(120));
-                                            if terminal.autoresize().is_err() {
-                                                cancelled = true;
+                                    for byte in &bytes[..count] {
+                                        if let Some(key) = decoder.push(*byte) {
+                                            if let Key::Resize(w, h) = key {
+                                                terminal.backend_mut().dimensions =
+                                                    Size::new(w.min(300), h.min(120));
+                                                terminal.autoresize()?;
+                                            } else {
+                                                stop |= request_key(app, &mut deferred, key);
                                             }
-                                        } else {
-                                            cancelled |= request_key(&mut app, &mut deferred, key);
+                                            changed = true;
                                         }
                                     }
                                 }
-                            }
-                            Err(_) => cancelled = true,
-                        }
-                        cancelled
-                    });
-                    if matches!(result, Ok(true)) && app.status.starts_with("Connection:") {
-                        app.status = String::from("Ready");
-                    }
-                    if let Err(error) = result
-                        && error != "Request cancelled"
-                    {
-                        app.status = alloc::format!("Connection: {error}; retrying automatically");
+                                if changed {
+                                    draw_serial(&mut terminal, app)?;
+                                }
+                                Ok(stop)
+                            },
+                        )?;
                     }
                 }
                 event_loop::idle(core::time::Duration::from_millis(10))
@@ -402,14 +375,14 @@ fn run() -> Result<(), terminal::Error> {
             return Ok(());
         }
     }
-    let mut terminal = Terminal::new(terminal::SimpleText)?;
+    let mut terminal = Terminal::new(terminal::SimpleText::new()?)?;
     let mut pointer = terminal::ConsolePointer::new();
     let mut deferred = VecDeque::new();
     terminal.clear()?;
     terminal.hide_cursor()?;
     while !app.quit {
         terminal.draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
-        if let Some(key) = terminal::console_key() {
+        if let Some(key) = terminal.backend().read_key() {
             deferred.push_back(key);
         }
         if let Some(key) = pointer.poll(terminal.size()?) {
@@ -419,41 +392,29 @@ fn run() -> Result<(), terminal::Error> {
             && let Some(key) = deferred.pop_front()
         {
             if let Some(text) = app.key(key) {
-                submit(&mut app, &mut agent, &mut bridge, text, |app, poll| {
-                    let mut stop = false;
-                    let mut changed = !poll;
-                    if poll && let Some(key) = terminal::console_key() {
-                        stop = request_key(app, &mut deferred, key);
-                        changed = true;
-                    }
-                    if poll && let Some(key) = pointer.poll(terminal.size()?) {
-                        stop |= request_key(app, &mut deferred, key);
-                        changed = true;
-                    }
-                    if changed {
-                        terminal.draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
-                    }
-                    Ok(stop)
-                })?;
-            }
-        }
-        if !app.quit
-            && let Some(runtime) = bridge.as_mut()
-        {
-            let mut cancelled = false;
-            let result = runtime.keep_alive(&mut || {
-                if let Some(key) = terminal::console_key() {
-                    cancelled |= request_key(&mut app, &mut deferred, key);
-                }
-                cancelled
-            });
-            if matches!(result, Ok(true)) && app.status.starts_with("Connection:") {
-                app.status = String::from("Ready");
-            }
-            if let Err(error) = result
-                && error != "Request cancelled"
-            {
-                app.status = alloc::format!("Connection: {error}; retrying automatically");
+                submit(
+                    &mut app,
+                    &mut agent,
+                    &mut runtime_state,
+                    text,
+                    driver_report,
+                    |app, poll| {
+                        let mut stop = false;
+                        let mut changed = !poll;
+                        if poll && let Some(key) = terminal.backend().read_key() {
+                            stop = request_key(app, &mut deferred, key);
+                            changed = true;
+                        }
+                        if poll && let Some(key) = pointer.poll(terminal.size()?) {
+                            stop |= request_key(app, &mut deferred, key);
+                            changed = true;
+                        }
+                        if changed {
+                            terminal.draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
+                        }
+                        Ok(stop)
+                    },
+                )?;
             }
         }
         event_loop::idle(core::time::Duration::from_millis(10))

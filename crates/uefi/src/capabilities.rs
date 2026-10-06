@@ -8,7 +8,12 @@ use uefi::{
     },
 };
 
-pub fn detect() -> String {
+#[derive(Debug)]
+#[repr(transparent)]
+#[uefi::proto::unsafe_protocol(uefi_raw::protocol::shell::ShellProtocol::GUID)]
+struct Shell(uefi_raw::protocol::shell::ShellProtocol);
+
+pub fn detect(startup: &str) -> String {
     let tcp4 = crate::tcp::interfaces();
     let ip4 = match boot::find_handles::<Ip4Config2>() {
         Ok(handles) => Ok(handles.len()),
@@ -20,7 +25,27 @@ pub fn detect() -> String {
         (Ok(tcp), Err(_)) => format!("TCP4 interfaces: {tcp}; IPv4 configuration: unavailable"),
         _ => String::from("TCP4 interface probe failed; local file tools remain available"),
     };
-    format!("{network}\n{}", probe_rng())
+    let shell = match boot::find_handles::<Shell>() {
+        Ok(handles) if !handles.is_empty() => {
+            "UEFI Shell: protocol available; command tools pending"
+        }
+        Ok(_) => "UEFI Shell: unavailable (direct application boot)",
+        Err(error) if error.status() == uefi::Status::NOT_FOUND => {
+            "UEFI Shell: unavailable (direct application boot)"
+        }
+        Err(_) => "UEFI Shell: protocol probe failed",
+    };
+    let binding =
+        crate::drivers::protocol_count(&uefi_raw::protocol::driver::DriverBindingProtocol::GUID);
+    let snp = crate::drivers::protocol_count(
+        &uefi_raw::protocol::network::snp::SimpleNetworkProtocol::GUID,
+    );
+    let mnp = crate::drivers::protocol_count(&uefi::guid!("f36ff770-a7e1-42cf-9ed2-56f0f271f44c"));
+    let ip = crate::drivers::protocol_count(&uefi::guid!("c51711e7-b4bf-404a-bfb8-0a048ef1ffe4"));
+    format!(
+        "{network}\n{}\n{shell}\nDriver bindings: {binding}; SNP interfaces: {snp}\nMNP service bindings: {mnp}; IP4 service bindings: {ip}\n{startup}",
+        probe_rng()
+    )
 }
 
 fn probe_rng() -> String {
@@ -28,21 +53,21 @@ fn probe_rng() -> String {
         Ok(handles) => handles,
         Err(error) if error.status() == uefi::Status::NOT_FOUND => {
             return String::from(
-                "Cryptographic RNG: no firmware RNG protocol; SSH randomness unavailable",
+                "Cryptographic RNG: no firmware RNG protocol; TLS randomness unavailable",
             );
         }
         Err(_) => {
             return String::from(
-                "Cryptographic RNG: protocol probe failed; SSH randomness unavailable",
+                "Cryptographic RNG: protocol probe failed; TLS randomness unavailable",
             );
         }
     };
     if handles.is_empty() {
         return String::from(
-            "Cryptographic RNG: no firmware RNG protocol; SSH randomness unavailable",
+            "Cryptographic RNG: no firmware RNG protocol; TLS randomness unavailable",
         );
     }
-    // Explicit cryptographic DRBG algorithms, not RAW entropy or an unknown default.
+    // Report an explicit DRBG when available, then test the protocol default.
     let accepted = [
         (
             RngAlgorithmType::ALGORITHM_SP800_90_CTR_256,
@@ -91,6 +116,12 @@ fn probe_rng() -> String {
                 );
             }
         }
+        let mut sample = [0; 32];
+        let result = rng.get_rng(None, &mut sample);
+        sample.fill(0);
+        if result.is_ok() {
+            return "Cryptographic RNG: firmware default succeeded; firmware trust required".into();
+        }
     }
-    String::from("Cryptographic RNG: no usable approved firmware DRBG; SSH randomness unavailable")
+    String::from("Cryptographic RNG: no usable firmware generator; TLS randomness unavailable")
 }

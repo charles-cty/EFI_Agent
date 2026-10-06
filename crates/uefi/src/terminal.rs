@@ -7,12 +7,12 @@ use ratatui::{
     layout::{Position, Size},
 };
 use uefi::{
-    boot::ScopedProtocol,
+    Handle,
+    boot::{self, OpenProtocolAttributes, OpenProtocolParams, ScopedProtocol},
     proto::console::{
         serial::Serial,
-        text::{Color, Key as FirmwareKey, ScanCode},
+        text::{Color, Input, Key as FirmwareKey, Output, ScanCode},
     },
-    system,
 };
 
 #[derive(Debug)]
@@ -79,7 +79,134 @@ impl Sink for SerialSink {
     }
 }
 
-pub struct SimpleText;
+pub struct SimpleText {
+    output: Handle,
+    input: Handle,
+}
+
+/// Open for one synchronous call without disconnecting console drivers.
+fn console_protocol<P: uefi::proto::ProtocolPointer + ?Sized>(
+    handle: Handle,
+) -> Result<ScopedProtocol<P>, Error> {
+    // SAFETY: no controller is disconnected or image unloaded during this
+    // application's console calls. No protocol reference escapes the call site.
+    unsafe {
+        boot::open_protocol::<P>(
+            OpenProtocolParams {
+                handle,
+                agent: boot::image_handle(),
+                controller: None,
+            },
+            OpenProtocolAttributes::GetProtocol,
+        )
+    }
+    .map_err(|error| Error(error.status()))
+}
+
+impl SimpleText {
+    pub fn new() -> Result<Self, Error> {
+        // Shell's file-backed console wrappers are for command output, not
+        // cursor-addressed interfaces. Select real firmware text protocols.
+        // Prefer the console splitter (no device path) over one physical sink.
+        let mut candidate: Option<(Handle, bool)> = None;
+        for handle in boot::find_handles::<Output>().map_err(|error| Error(error.status()))? {
+            let Ok(mut output) = console_protocol::<Output>(handle) else {
+                continue;
+            };
+            let Ok(Some(mode)) = output.current_mode() else {
+                continue;
+            };
+            if mode.columns() == 0 || mode.rows() == 0 {
+                continue;
+            }
+            // Empty stderr splitters and Shell wrappers may advertise modes
+            // without supporting cursor-addressed output.
+            let cursor = output.cursor_position();
+            // A Shell logger may advertise its saved mode while the underlying
+            // console has another size. Check the far edge, not just column 1.
+            if output
+                .set_cursor_position(mode.columns() - 1, mode.rows() - 1)
+                .is_err()
+            {
+                let _ = output.set_cursor_position(cursor.0, cursor.1);
+                continue;
+            }
+            let probe_column = if cursor.0 == 0 && mode.columns() > 1 {
+                1
+            } else {
+                0
+            };
+            if output.set_cursor_position(probe_column, cursor.1).is_err() {
+                continue;
+            }
+            let moved = output.cursor_position() == (probe_column, cursor.1);
+            output
+                .set_cursor_position(cursor.0, cursor.1)
+                .map_err(|e| Error(e.status()))?;
+            let visible = output.cursor_visible();
+            if !moved || output.enable_cursor(visible).is_err() {
+                continue;
+            }
+            let splitter = matches!(
+                boot::test_protocol::<uefi::proto::device_path::DevicePath>(OpenProtocolParams {
+                    handle,
+                    agent: boot::image_handle(),
+                    controller: None,
+                }),
+                Ok(false)
+            );
+            if candidate.is_none_or(|(_, best)| splitter && !best) {
+                candidate = Some((handle, splitter));
+            }
+        }
+        let output = candidate.ok_or(Error(uefi::Status::UNSUPPORTED))?.0;
+        let mut candidate: Option<(Handle, bool)> = None;
+        for handle in boot::find_handles::<Input>().map_err(|error| Error(error.status()))? {
+            let Ok(input) = console_protocol::<Input>(handle) else {
+                continue;
+            };
+            if input.wait_for_key_event().is_err() {
+                continue;
+            }
+            let splitter = matches!(
+                boot::test_protocol::<uefi::proto::device_path::DevicePath>(OpenProtocolParams {
+                    handle,
+                    agent: boot::image_handle(),
+                    controller: None
+                }),
+                Ok(false)
+            );
+            if candidate.is_none_or(|(_, best)| splitter && !best) {
+                candidate = Some((handle, splitter));
+            }
+        }
+        let input = candidate.ok_or(Error(uefi::Status::UNSUPPORTED))?.0;
+        Ok(Self { output, input })
+    }
+
+    fn with_output<R>(
+        &self,
+        action: impl FnOnce(&mut Output) -> Result<R, Error>,
+    ) -> Result<R, Error> {
+        let mut output = console_protocol::<Output>(self.output)?;
+        action(&mut output)
+    }
+
+    pub fn read_key(&self) -> Option<Key> {
+        let mut input = console_protocol::<Input>(self.input).ok()?;
+        decode_console_key(input.read_key().ok().flatten()?)
+    }
+
+    fn cursor_visible(&self, visible: bool) -> Result<(), Error> {
+        self.with_output(|out| match out.enable_cursor(visible) {
+            Ok(()) => Ok(()),
+            // UEFI explicitly makes cursor visibility optional. Shell's
+            // console logger permits showing the cursor but not hiding it.
+            Err(error) if error.status() == uefi::Status::UNSUPPORTED => Ok(()),
+            Err(error) => Err(Error(error.status())),
+        })
+    }
+}
 
 /// Firmware pointing is optional. Tab/Enter remains available without it.
 pub struct ConsolePointer {
@@ -179,7 +306,7 @@ impl Backend for SimpleText {
     where
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
-        system::with_stdout(|out| {
+        self.with_output(|out| {
             let mode = out
                 .current_mode()
                 .map_err(|e| Error(e.status()))?
@@ -224,27 +351,29 @@ impl Backend for SimpleText {
         })
     }
     fn hide_cursor(&mut self) -> Result<(), Error> {
-        system::with_stdout(|s| s.enable_cursor(false)).map_err(|e| Error(e.status()))
+        self.cursor_visible(false)
     }
     fn show_cursor(&mut self) -> Result<(), Error> {
-        system::with_stdout(|s| s.enable_cursor(true)).map_err(|e| Error(e.status()))
+        self.cursor_visible(true)
     }
     fn get_cursor_position(&mut self) -> Result<Position, Error> {
         Ok(Position::ORIGIN)
     }
     fn set_cursor_position<P: Into<Position>>(&mut self, p: P) -> Result<(), Error> {
         let p = p.into();
-        system::with_stdout(|s| s.set_cursor_position(p.x.into(), p.y.into()))
-            .map_err(|e| Error(e.status()))
+        self.with_output(|s| {
+            s.set_cursor_position(p.x.into(), p.y.into())
+                .map_err(|e| Error(e.status()))
+        })
     }
     fn clear(&mut self) -> Result<(), Error> {
-        system::with_stdout(|s| s.clear()).map_err(|e| Error(e.status()))
+        self.with_output(|s| s.clear().map_err(|e| Error(e.status())))
     }
     fn clear_region(&mut self, _: ClearType) -> Result<(), Error> {
         self.clear()
     }
     fn size(&self) -> Result<Size, Error> {
-        system::with_stdout(|s| {
+        self.with_output(|s| {
             let mode = s
                 .current_mode()
                 .map_err(|e| Error(e.status()))?
@@ -263,8 +392,8 @@ impl Backend for SimpleText {
     }
 }
 
-pub fn console_key() -> Option<Key> {
-    match system::with_stdin(|s| s.read_key()).ok().flatten()? {
+fn decode_console_key(key: FirmwareKey) -> Option<Key> {
+    match key {
         FirmwareKey::Printable(c) => match u16::from(c) {
             3 => Some(Key::Quit),
             13 => Some(Key::Enter),

@@ -136,8 +136,13 @@ impl Tcp {
         port: u16,
         poll: &mut dyn FnMut() -> bool,
     ) -> Result<Self, String> {
-        let handles =
-            boot::find_handles::<TcpBinding>().map_err(|e| format!("TCP4 service binding: {e}"))?;
+        let handles = boot::find_handles::<TcpBinding>().map_err(|e| {
+            if e.status() == Status::NOT_FOUND {
+                String::from("No firmware TCP4 interface after driver connection; enable the UEFI IPv4 network stack and check NIC driver support")
+            } else {
+                format!("TCP4 service binding: {e}")
+            }
+        })?;
         let mut last = String::from("No TCP4-capable network interface");
         for handle in handles {
             match Self::on_interface(handle, address, port, poll) {
@@ -406,7 +411,7 @@ impl Tcp {
         deadline: &Deadline,
         poll: &mut dyn FnMut() -> bool,
     ) -> Result<usize, String> {
-        // The bridge retains successfully received fragments across cancellation.
+        // A receive token must retire before returning or dropping its buffer.
         if bytes.is_empty() {
             return Ok(0);
         }
@@ -434,11 +439,21 @@ impl Tcp {
             let protocol = self.raw();
             // SAFETY: output buffer, descriptor, and token are live until wait
             // confirms completion, including cancellation on timeout.
-            status(
-                unsafe { ((*protocol).receive)(protocol, &mut token) },
-                "receive queue",
-            )?;
-            self.wait(&mut token.completion_token, &completion, deadline, poll)?;
+            let queue_status = unsafe { ((*protocol).receive)(protocol, &mut token) };
+            // A peer FIN can be reported before the token is queued or when
+            // the queued token completes. Both cases are a clean TCP EOF.
+            let connection_fin = Status(Status::ERROR_BIT | 104);
+            if queue_status == connection_fin {
+                return Ok(0);
+            }
+            status(queue_status, "receive queue")?;
+            let result = self.wait(&mut token.completion_token, &completion, deadline, poll);
+            // EFI_CONNECTION_FIN is TCP4's protocol-specific error 104,
+            // currently absent from uefi-raw's common Status constants.
+            if token.completion_token.status == connection_fin {
+                return Ok(0);
+            }
+            result?;
             let count = packet.header.data_length as usize;
             if count == 0 || count > capacity {
                 return Err(String::from("TCP4 invalid receive length"));

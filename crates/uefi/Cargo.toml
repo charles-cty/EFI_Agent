@@ -12,3 +12,7 @@ serde.workspace = true
 serde_json.workspace = true
 uefi-raw = "0.17"
 uefi = { version = "0.41", features = ["alloc", "global_allocator", "panic_handler"] }
+rustls = { version = "0.23", default-features = false, features = ["tls12"] }
+rustls-rustcrypto = { version = "=0.0.2-alpha", default-features = false, features = ["alloc", "tls12"] }
+webpki-roots = { version = "1", default-features = false }
+getrandom = { version = "0.2", features = ["custom"] }

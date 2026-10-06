@@ -10,17 +10,19 @@ fn volume() -> Result<FileSystem, String> {
         .map_err(|e| format!("Boot volume: {e}"))
 }
 
-pub fn read(path: &str) -> Result<String, String> {
+pub fn read_bytes(path: &str) -> Result<alloc::vec::Vec<u8>, String> {
     let path = CString16::try_from(path).map_err(|_| String::from("Invalid UEFI path"))?;
     let mut fs = volume()?;
     let metadata = fs
         .metadata(path.as_ref())
         .map_err(|e| format!("Metadata: {e}"))?;
     if metadata.file_size() > 512 * 1024 {
-        return Err(String::from("File exceeds 512 KiB"));
+        return Err("File exceeds 512 KiB".into());
     }
-    fs.read_to_string(path.as_ref())
-        .map_err(|e| format!("Read: {e}"))
+    fs.read(path.as_ref()).map_err(|e| format!("Read: {e}"))
+}
+pub fn read(path: &str) -> Result<String, String> {
+    String::from_utf8(read_bytes(path)?).map_err(|_| "File is not UTF-8".into())
 }
 
 pub fn write(path: &str, content: &str) -> Result<(), String> {
