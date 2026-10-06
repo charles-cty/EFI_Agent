@@ -9,10 +9,19 @@ use std::{
 };
 type Error = Box<dyn std::error::Error>;
 
-const SHELL_EFI: &[u8] = include_bytes!("../../../vendor/uefi-shell/shellx64.efi");
-const SHELL_LICENSE: &[u8] = include_bytes!("../../../vendor/uefi-shell/License.txt");
-const SHELL_SOURCE: &[u8] = include_bytes!("../../../vendor/uefi-shell/README.md");
 const SHELL_STARTUP: &[u8] = b"@echo -off\r\n# EDK II sets homefilesystem to the volume that loaded this Shell.\r\necho Connecting installed firmware drivers...\r\nconnect -r\r\n# Use the mandatory common text mode for display and serial console sinks.\r\nmode 80 25\r\necho Starting EFI Agent.\r\n\"%homefilesystem%\\EFI\\AGENT\\AGENT.EFI\"\r\necho EFI Agent returned. Shell commands are now available.\r\n";
+
+fn shell_assets() -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), Error> {
+    let shell = std::env::var_os("EFI_AGENT_SHELL")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("vendor/uefi-shell/shellx64.efi"));
+    let directory = shell.parent().ok_or("EFI_AGENT_SHELL has no parent directory")?;
+    Ok((
+        fs::read(shell)?,
+        fs::read(directory.join("License.txt"))?,
+        fs::read(directory.join("README.md"))?,
+    ))
+}
 
 pub fn configuration() -> Result<AgentConfig, Error> {
     let config = AgentConfig {
@@ -368,6 +377,7 @@ pub fn package(args: Vec<String>) -> Result<(), Error> {
     }
     let efi = Path::new(&args[0]);
     configuration()?;
+    let (shell, license, source) = shell_assets()?;
     let output = Path::new(&args[1]);
     for (mode, name) in [("vm", "esp"), ("native", "native-esp")] {
         let tree = output.join(name);
@@ -376,9 +386,9 @@ pub fn package(args: Vec<String>) -> Result<(), Error> {
         fs::create_dir_all(tree.join("EFI/AGENT/DRIVERS"))?;
         fs::create_dir_all(tree.join("EFI/TOOLS"))?;
         fs::copy(efi, tree.join("EFI/AGENT/AGENT.EFI"))?;
-        fs::write(tree.join("EFI/TOOLS/SHELLX64.EFI"), SHELL_EFI)?;
-        fs::write(tree.join("EFI/TOOLS/SHELL-LICENSE.TXT"), SHELL_LICENSE)?;
-        fs::write(tree.join("EFI/TOOLS/SHELL-SOURCE.TXT"), SHELL_SOURCE)?;
+        fs::write(tree.join("EFI/TOOLS/SHELLX64.EFI"), &shell)?;
+        fs::write(tree.join("EFI/TOOLS/SHELL-LICENSE.TXT"), &license)?;
+        fs::write(tree.join("EFI/TOOLS/SHELL-SOURCE.TXT"), &source)?;
         if mode == "vm" {
             fs::copy(efi, tree.join("EFI/BOOT/BOOTX64.EFI"))?;
             fs::write(tree.join("EFI/AGENT/VM.TXT"), b"serial\n")?;
@@ -388,7 +398,7 @@ pub fn package(args: Vec<String>) -> Result<(), Error> {
                 fs::remove_file(config_path)?;
             }
         } else {
-            fs::write(tree.join("EFI/BOOT/BOOTX64.EFI"), SHELL_EFI)?;
+            fs::write(tree.join("EFI/BOOT/BOOTX64.EFI"), &shell)?;
             fs::write(tree.join("EFI/BOOT/startup.nsh"), SHELL_STARTUP)?;
             let marker = tree.join("EFI/AGENT/VM.TXT");
             if marker.exists() {

@@ -68,13 +68,14 @@ or -Profile debug. They call the launcher's package command and produce
 artifacts/esp, artifacts/efi-agent-vm.img, artifacts/native-esp, and
 artifacts/efi-agent-native.img. The native tree/image includes CONFIG.JSON and
 the workspace, without VM.TXT. Existing native workspace files are retained.
-Native BOOTX64.EFI is the bundled EDK II Shell 2.2 (26H1); its adjacent startup.nsh
+Native BOOTX64.EFI is the EDK II Shell 2.2 (26H1) build supplied through the
+shallow `vendor/uefi-shell` submodule; its adjacent startup.nsh
 runs connect -r, selects the common 80x25 console mode, then starts
 EFI/AGENT/AGENT.EFI using homefilesystem (not an assumed fs0:). Esc skips the
 startup script. Both trees include EFI/TOOLS/SHELLX64.EFI and its license/source
 record. Agent remains the VM boot entry; the launcher selects AGENT.EFI when
-preparing a private disk from a generated native package. The fixed Shell
-binary and checksum record are in vendor/uefi-shell.
+preparing a private disk from a generated native package. The Shell binary is a
+local build input selected with `EFI_AGENT_SHELL`; it is not stored in Git.
 Both scripts and VM launch use the same EFI_AGENT_* environment settings and
 configuration parser. CONFIG.JSON is generated in the boot tree; no user config
 file is needed. EFI_AGENT_CA_CERTIFICATE is a host DER path copied into the

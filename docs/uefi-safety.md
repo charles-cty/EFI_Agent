@@ -69,7 +69,8 @@ driver entry point runs. Successful drivers stay resident. Matching full image
 device paths are not loaded again. Connection repeats when firmware handles or
 Driver Binding instances change. See firmware-drivers.md for bounds and errors.
 
-Native packages boot the bundled EDK II Shell. Its adjacent `startup.nsh` uses
+Native packages boot the EDK II Shell supplied as the `EFI_AGENT_SHELL` build
+input. Its adjacent `startup.nsh` uses
 `homefilesystem`, not an assumed `fs0:`, to start Agent on the Shell boot volume.
 The Shell remains resident while Agent runs. `/exit` returns to its prompt.
 VM disks boot Agent directly, including when a generated native package is

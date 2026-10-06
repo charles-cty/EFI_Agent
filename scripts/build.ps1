@@ -7,6 +7,9 @@ $PSNativeCommandArgumentPassing = 'Standard'
 $PSNativeCommandUseErrorActionPreference = $true
 Set-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
 $Profile = $Profile.ToLowerInvariant()
+if (-not $env:EFI_AGENT_SHELL) {
+    throw 'Set EFI_AGENT_SHELL to a locally built x64 Shell.efi from vendor/uefi-shell.'
+}
 $profileArgs = @()
 if ($Profile -eq 'release') { $profileArgs += '--release' }
 $targetDirectory = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }

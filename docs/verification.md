@@ -1019,9 +1019,10 @@ supply the missing protocols.
 
 ## 2026-10-05: Bundle UEFI Shell and connect installed drivers
 
-Native packaging now boots EDK II UEFI Shell 2.2 from pbatard/UEFI-Shell 26H1.
-The fixed x64 binary, upstream release URL, SHA-256, and BSD-2-Clause-Patent
-license are in vendor/uefi-shell. The release API digest matched the download.
+Native packaging now boots EDK II UEFI Shell 2.2 from the shallow
+`vendor/uefi-shell` submodule at 26H1. The x64 binary is a local
+`EFI_AGENT_SHELL` build input and is not stored in Git. The submodule carries
+the upstream source and BSD-2-Clause-Patent license.
 Both package trees carry the Shell license and source record. Native startup
 runs connect -r, selects the common 80x25 text mode, then starts AGENT.EFI using
 homefilesystem. Esc skips startup; /exit returns to the resident Shell.

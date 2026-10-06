@@ -7,9 +7,10 @@ and serial console sinks agree on the cursor bounds. Esc at the Shell countdown 
 can also be started directly. `/caps` reports whether the Shell protocol is
 installed. A model Shell command tool is not implemented in this stage.
 
-The fixed binary, source URL, digest, and license are in `vendor/uefi-shell`.
-Packaging includes the license and source record on each boot volume. The
-VM serial entry point remains Agent; its Shell binary is a separate tool.
+The Shell source is pinned by the shallow `vendor/uefi-shell` submodule. The
+build output is supplied through `EFI_AGENT_SHELL` and is not stored in Git.
+Packaging includes the submodule license and source record on each boot volume.
+The VM serial entry point remains Agent; its Shell binary is a separate tool.
 
 ## Command tool design constraints
 

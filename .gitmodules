@@ -1,0 +1,4 @@
+[submodule "vendor/uefi-shell"]
+	path = vendor/uefi-shell
+	url = https://github.com/pbatard/UEFI-Shell.git
+	shallow = true

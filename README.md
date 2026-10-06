@@ -231,8 +231,9 @@ specified in the config. Operating-system NIC support alone is not sufficient.
    this replaces the drive's contents.
 3. Firmware must permit the unsigned Shell and application to run. Disable
    Secure Boot for this run unless you sign both and enroll the signing key.
-4. Select the drive's UEFI entry in the firmware boot menu. The bundled EDK II
-   Shell runs `connect -r` and starts `EFI\AGENT\AGENT.EFI` on its own volume.
+4. Select the drive's UEFI entry in the firmware boot menu. The EDK II Shell
+   supplied as `EFI_AGENT_SHELL` runs `connect -r` and starts
+   `EFI\AGENT\AGENT.EFI` on its own volume.
    Press Esc during the Shell countdown to stay at the Shell prompt. Run
    `%homefilesystem%\EFI\AGENT\AGENT.EFI` to start Agent manually. Firmware can
    also launch that Agent path directly; Agent connects installed drivers itself.

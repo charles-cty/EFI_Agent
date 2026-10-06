@@ -21,6 +21,10 @@ if [[ "$profile" != release && "$profile" != debug ]]; then
     printf 'Profile must be release or debug.\n' >&2
     exit 2
 fi
+if [[ -z "${EFI_AGENT_SHELL:-}" ]]; then
+    printf 'Set EFI_AGENT_SHELL to a locally built x64 Shell.efi from vendor/uefi-shell.\n' >&2
+    exit 2
+fi
 build_args=()
 if [[ "$profile" == release ]]; then build_args+=(--release); fi
 target_dir=${CARGO_TARGET_DIR:-target}
