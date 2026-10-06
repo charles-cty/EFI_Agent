@@ -1,7 +1,11 @@
-//! Retain Responses reasoning items by output index, without interpreting state.
-use efi_agent_core::protocol::MAX_FRAME;
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
+// Retain Responses reasoning items by output index, without interpreting state.
+use crate::protocol::MAX_MESSAGE_BYTES;
+use alloc::collections::BTreeMap;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
 
 #[derive(Default)]
 pub struct ReasoningStream {
@@ -104,7 +108,7 @@ impl ReasoningStream {
             .into_iter()
             .sum();
         let part_bytes: usize = self.parts.values().map(String::len).sum();
-        if item_bytes + part_bytes > MAX_FRAME - 2048 {
+        if item_bytes + part_bytes > MAX_MESSAGE_BYTES - 2048 {
             return Err("Provider reasoning state exceeds limit".into());
         }
         Ok(())

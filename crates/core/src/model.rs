@@ -1,28 +1,12 @@
-//! Bounded Chat Completions SSE reader. Tool calls execute only after completion.
-use efi_agent_core::protocol::{ChatMessage, FunctionCall, MAX_FRAME, ToolCall};
+use alloc::{
+    borrow::ToOwned,
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
+// Bounded Chat Completions SSE reader. Tool calls execute only after completion.
+use crate::protocol::{ChatMessage, FunctionCall, MAX_MESSAGE_BYTES, ToolCall};
 use serde_json::Value;
-use std::io::{BufRead, BufReader, Read};
-
-pub fn validate_configuration() -> Result<(), String> {
-    let missing: Vec<_> = ["EFI_AGENT_API_BASE", "EFI_AGENT_API_KEY", "EFI_AGENT_MODEL"]
-        .into_iter()
-        .filter(|name| std::env::var(name).map_or(true, |value| value.trim().is_empty()))
-        .collect();
-    if !missing.is_empty() {
-        return Err(format!(
-            "Missing API configuration: {}. Set these variables on the launcher or relay host.",
-            missing.join(", ")
-        ));
-    }
-    let base = std::env::var("EFI_AGENT_API_BASE").map_err(|_| "Invalid API base URL")?;
-    let url = reqwest::Url::parse(&base).map_err(|_| "Invalid EFI_AGENT_API_BASE URL")?;
-    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-        return Err("EFI_AGENT_API_BASE must be an HTTP or HTTPS URL".into());
-    }
-    reasoning_effort(std::env::var("EFI_AGENT_REASONING_EFFORT").ok().as_deref())?;
-    api_format(std::env::var("EFI_AGENT_API_FORMAT").ok().as_deref())?;
-    Ok(())
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ApiFormat {
@@ -53,38 +37,72 @@ pub fn api_format(value: Option<&str>) -> Result<ApiFormat, String> {
     }
 }
 
-/// Both API formats use the same bounded SSE framing.
+/// Bounded byte source shared by the firmware transport and parser tests.
+pub trait Read {
+    fn read(&mut self, bytes: &mut [u8]) -> Result<usize, String>;
+}
+impl Read for &[u8] {
+    fn read(&mut self, bytes: &mut [u8]) -> Result<usize, String> {
+        let count = bytes.len().min(self.len());
+        bytes[..count].copy_from_slice(&self[..count]);
+        *self = &self[count..];
+        Ok(count)
+    }
+}
+/// Both API formats use bounded SSE framing; reads may split anywhere.
 pub struct SseReader<R: Read> {
-    reader: BufReader<std::io::Take<R>>,
+    reader: R,
+    buffer: [u8; 4096],
+    offset: usize,
+    length: usize,
     wire_bytes: usize,
 }
-
 impl<R: Read> SseReader<R> {
     pub fn new(reader: R) -> Self {
         Self {
-            reader: BufReader::new(reader.take((8 * MAX_FRAME + 1) as u64)),
+            reader,
+            buffer: [0; 4096],
+            offset: 0,
+            length: 0,
             wire_bytes: 0,
         }
     }
-
+    fn line(&mut self) -> Result<String, String> {
+        let mut line = Vec::new();
+        loop {
+            if self.offset == self.length {
+                self.length = self.reader.read(&mut self.buffer)?;
+                self.offset = 0;
+                if self.length == 0 {
+                    return Err("Provider stream ended before [DONE] or response.completed".into());
+                }
+                if self.length > self.buffer.len() {
+                    return Err("Invalid reader byte count".into());
+                }
+            }
+            let byte = self.buffer[self.offset];
+            self.offset += 1;
+            self.wire_bytes += 1;
+            if self.wire_bytes > 8 * MAX_MESSAGE_BYTES {
+                return Err("Provider stream exceeds wire limit".into());
+            }
+            if byte == b'\n' {
+                break;
+            }
+            line.push(byte);
+            if line.len() > MAX_MESSAGE_BYTES {
+                return Err("Provider event exceeds limit".into());
+            }
+        }
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+        String::from_utf8(line).map_err(|_| "Provider stream is not UTF-8".into())
+    }
     pub fn next_data(&mut self) -> Result<String, String> {
         let mut data = String::new();
         loop {
-            let mut line = Vec::new();
-            let count = self
-                .reader
-                .read_until(b'\n', &mut line)
-                .map_err(|e| e.to_string())?;
-            self.wire_bytes += count;
-            if self.wire_bytes > 8 * MAX_FRAME {
-                return Err("Provider stream exceeds wire limit".into());
-            }
-            if count == 0 {
-                return Err("Provider stream ended before [DONE] or response.completed".into());
-            }
-            let line = std::str::from_utf8(&line)
-                .map_err(|_| "Provider stream is not UTF-8")?
-                .trim_end_matches(['\r', '\n']);
+            let line = self.line()?;
             if line.is_empty() {
                 if !data.is_empty() {
                     return Ok(data);
@@ -94,7 +112,7 @@ impl<R: Read> SseReader<R> {
                     data.push('\n');
                 }
                 data.push_str(value.strip_prefix(' ').unwrap_or(value));
-                if data.len() > MAX_FRAME {
+                if data.len() > MAX_MESSAGE_BYTES {
                     return Err("Provider event exceeds limit".into());
                 }
             }
@@ -123,7 +141,7 @@ fn append_fragment(target: &mut String, value: &Value, bytes: &mut usize) -> Res
         .map_err(|e| e.to_string())?
         .len()
         - 2;
-    if *bytes > MAX_FRAME - 2048 {
+    if *bytes > MAX_MESSAGE_BYTES - 2048 {
         return Err("Provider message exceeds limit".into());
     }
     target.push_str(fragment);
@@ -163,7 +181,7 @@ fn retain_extensions(
         .filter(|(name, _)| !known.contains(&name.as_str()))
     {
         *bytes += name.len() + serde_json::to_vec(value).map_err(|e| e.to_string())?.len();
-        if *bytes > MAX_FRAME - 2048 {
+        if *bytes > MAX_MESSAGE_BYTES - 2048 {
             return Err("Provider message exceeds limit".into());
         }
         if let Some(previous) = target.get_mut(name) {
@@ -204,7 +222,7 @@ pub fn read_stream_with_usage(
             if serde_json::to_vec(&message)
                 .map_err(|e| e.to_string())?
                 .len()
-                > MAX_FRAME - 2048
+                > MAX_MESSAGE_BYTES - 2048
             {
                 return Err("Provider message exceeds limit".into());
             }
@@ -281,7 +299,7 @@ pub fn read_stream_with_usage(
                                     target.insert(name.clone(), value.clone());
                                     message_bytes +=
                                         serde_json::to_vec(value).map_err(|e| e.to_string())?.len();
-                                    if message_bytes > MAX_FRAME - 2048 {
+                                    if message_bytes > MAX_MESSAGE_BYTES - 2048 {
                                         return Err("Provider message exceeds limit".into());
                                     }
                                 }
@@ -302,7 +320,7 @@ pub fn read_stream_with_usage(
                         } else {
                             message_bytes +=
                                 serde_json::to_vec(value).map_err(|e| e.to_string())?.len();
-                            if message_bytes > MAX_FRAME - 2048 {
+                            if message_bytes > MAX_MESSAGE_BYTES - 2048 {
                                 return Err("Provider message exceeds limit".into());
                             }
                             target.insert(name.clone(), value.clone());
@@ -372,7 +390,7 @@ pub fn read_stream_with_usage(
 mod tests {
     use super::*;
     #[test]
-    fn tool_extensions_and_null_reasoning_survive_stream_and_rpc() {
+    fn tool_extensions_and_null_reasoning_survive_stream_and_serialization() {
         let details = serde_json::json!({"index":0,"type":"reasoning.encrypted","text":null,"summary":null,"data":"OPAQUE_419","extension":{"nested":[null,"中"]}});
         let wire = format!(
             "{}{}data: [DONE]\n\n",
@@ -496,8 +514,8 @@ mod tests {
     fn interleaved_tools_reasoning_and_text_survive_byte_reads() {
         struct Bytes(std::io::Cursor<Vec<u8>>);
         impl Read for Bytes {
-            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-                self.0.read(&mut buffer[..1])
+            fn read(&mut self, buffer: &mut [u8]) -> Result<usize, String> {
+                std::io::Read::read(&mut self.0, &mut buffer[..1]).map_err(|e| e.to_string())
             }
         }
         let wire = format!(
@@ -555,8 +573,8 @@ mod tests {
             ),
             "data: {\"error\":{\"message\":\"failed\"}}\n\n".into(),
             event(serde_json::json!({"tool_calls":[{"index":8}]}), Value::Null),
-            format!("data: {}\n\n", "x".repeat(MAX_FRAME + 1)),
-            ": heartbeat\n".repeat(MAX_FRAME),
+            format!("data: {}\n\n", "x".repeat(MAX_MESSAGE_BYTES + 1)),
+            ": heartbeat\n".repeat(MAX_MESSAGE_BYTES),
         ];
         for wire in cases {
             assert!(read_stream(wire.as_bytes(), &mut |_| Ok(())).is_err());

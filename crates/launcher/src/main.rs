@@ -1,10 +1,7 @@
-mod bridge;
+mod boot;
 mod clipboard;
-mod model;
 mod pack;
 mod paste;
-mod reasoning_stream;
-mod responses;
 mod selection;
 mod vm;
 
@@ -20,24 +17,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     match args.next().as_deref() {
         Some("vm") => vm::run(args.collect()),
         Some("pack") => pack::run(args.collect()),
-        Some("serve") => {
-            model::validate_configuration()?;
-            let root = std::path::PathBuf::from(
-                args.next()
-                    .ok_or("Usage: efi-agent serve <workspace> [address]")?,
-            )
-            .canonicalize()?;
-            let address = args.next().unwrap_or_else(|| "127.0.0.1:7420".into());
-            let listener = std::net::TcpListener::bind(&address)?;
-            eprintln!("HostBridge listening on {}", listener.local_addr()?);
-            bridge::serve(listener, root, bridge::Diagnostics::stderr())
-                .join()
-                .map_err(|_| "HostBridge thread failed")?;
-            Ok(())
-        }
+        Some("package") => boot::package(args.collect()),
         _ => {
             println!(
-                "EFI Agent\n  vm <qemu> <OVMF_CODE.fd> <OVMF_VARS.fd> <ESP-directory-or-image> <workspace> [--memory-mib <MiB>]\n  serve <workspace> [address]\n  pack <ESP-directory> <new-disk.img>"
+                "EFI Agent\n  vm <qemu> <OVMF_CODE.fd> <OVMF_VARS.fd> <EFI-file-or-ESP-directory-or-image> <workspace> [--memory-mib <MiB>]\n  pack <ESP-directory> <new-disk.img>\n  package <application.efi> <output-directory>"
             );
             Ok(())
         }

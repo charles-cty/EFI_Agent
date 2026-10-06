@@ -1,12 +1,16 @@
-//! Responses API adapter. Only a completed response can authorize tool calls.
-use crate::model::SseReader;
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
+// Responses API adapter. Only a completed response can authorize tool calls.
+use crate::model::{Read, SseReader};
 use crate::reasoning_stream::{ReasoningStream, retain_unindexed};
-use efi_agent_core::{
+use crate::{
     agent,
-    protocol::{ChatMessage, FunctionCall, MAX_FRAME, ToolCall},
+    protocol::{ChatMessage, FunctionCall, MAX_MESSAGE_BYTES, ToolCall},
 };
 use serde_json::{Value, json};
-use std::io::Read;
 
 pub fn request(model: &str, messages: &[ChatMessage], effort: &str) -> Result<Value, String> {
     let mut input = Vec::new();
@@ -133,7 +137,7 @@ fn completed(response: &Value) -> Result<ChatMessage, String> {
     if serde_json::to_vec(&message)
         .map_err(|e| e.to_string())?
         .len()
-        > MAX_FRAME - 2048
+        > MAX_MESSAGE_BYTES - 2048
     {
         return Err("Provider message exceeds limit".into());
     }
@@ -180,7 +184,7 @@ pub fn read_stream(
                     .as_str()
                     .ok_or("Response reasoning delta is not text")?;
                 streamed_bytes += text.len();
-                if streamed_bytes > MAX_FRAME - 2048 {
+                if streamed_bytes > MAX_MESSAGE_BYTES - 2048 {
                     return Err("Provider message exceeds limit".into());
                 }
                 let summary = event["type"] == "response.reasoning_summary_text.delta";
@@ -197,7 +201,7 @@ pub fn read_stream(
                     .as_str()
                     .ok_or("Response text delta is not text")?;
                 streamed_bytes += text.len();
-                if streamed_bytes > MAX_FRAME - 2048 {
+                if streamed_bytes > MAX_MESSAGE_BYTES - 2048 {
                     return Err("Provider message exceeds limit".into());
                 }
                 progress(text)?;
@@ -220,7 +224,7 @@ pub fn read_stream(
                 if serde_json::to_vec(&message)
                     .map_err(|e| e.to_string())?
                     .len()
-                    > MAX_FRAME - 2048
+                    > MAX_MESSAGE_BYTES - 2048
                 {
                     return Err("Provider message exceeds limit".into());
                 }
@@ -235,6 +239,7 @@ pub fn read_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
     fn streamed(events: &[Value]) -> Result<ChatMessage, String> {
         let wire: String = events
             .iter()
@@ -247,7 +252,7 @@ mod tests {
     fn stream_reasoning_reconstruction_matches_independent_subset_oracle() {
         // The expected sequence is fixed independently of the reconstruction.
         // Vary which reasoning items the final response omits and reverse the
-        // arrival order of full snapshots. RPC round trips must preserve it.
+        // arrival order of full snapshots. Serialization round trips must preserve it.
         let expected = json!([
             {"type":"reasoning","id":"rs_left","summary":[],"encrypted_content":"LEFT","signature":null},
             {"type":"function_call","id":"fc_a","call_id":"call_a","name":"read","arguments":"{}"},

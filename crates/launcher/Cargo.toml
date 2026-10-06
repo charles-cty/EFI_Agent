@@ -12,7 +12,6 @@ crossterm = "0.29"
 ctrlc = "3.5"
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 fatfs = { path = "../../vendor/fatfs" }
 fscommon = "0.1"
 gpt = "4.1"

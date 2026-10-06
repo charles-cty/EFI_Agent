@@ -1,4 +1,3 @@
-use crate::bridge;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind},
     terminal,
@@ -65,12 +64,12 @@ impl InterruptGuard {
 struct Session {
     child: Child,
     raw: bool,
-    diagnostics: bridge::Diagnostics,
+    disk: Option<crate::boot::Disk>,
     // X11 serves clipboard contents from their owner while this handle lives.
     clipboard: Option<crate::clipboard::Clipboard>,
 }
-impl Drop for Session {
-    fn drop(&mut self) {
+impl Session {
+    fn finish(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let _ = self.child.kill();
         let _ = self.child.wait();
         #[cfg(windows)]
@@ -85,14 +84,33 @@ impl Drop for Session {
             print!("\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?2004l\x1b[0m\x1b[?25h\x1b[?1049l");
             let _ = std::io::stdout().flush();
         }
-        self.diagnostics.resume_stderr();
+        self.raw = false;
+        if let Some(mut disk) = self.disk.take() {
+            if let Err(error) = disk.save() {
+                disk.preserve();
+                return Err(format!(
+                    "Workspace save failed: {error}; recover files from {}",
+                    disk.image.display()
+                )
+                .into());
+            }
+            disk.cleanup()?;
+        }
+        Ok(())
+    }
+}
+impl Drop for Session {
+    fn drop(&mut self) {
+        if let Err(error) = self.finish() {
+            eprintln!("{error}");
+        }
     }
 }
 
 pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     if args.len() != 5 && args.len() != 7 {
         return Err(
-            "Usage: efi-agent vm <qemu> <OVMF_CODE.fd> <OVMF_VARS.fd> <ESP-directory-or-image> <workspace> [--memory-mib <MiB>]"
+            "Usage: efi-agent vm <qemu> <OVMF_CODE.fd> <OVMF_VARS.fd> <EFI-file-or-ESP-directory-or-image> <workspace> [--memory-mib <MiB>]"
                 .into(),
         );
     }
@@ -111,7 +129,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         128
     };
     let memory = memory_mib.to_string();
-    crate::model::validate_configuration()?;
+    crate::boot::configuration()?;
     let interrupted = Arc::new(AtomicBool::new(false));
     let selection_active = Arc::new(AtomicBool::new(false));
     let copy_requested = Arc::new(AtomicBool::new(false));
@@ -139,14 +157,9 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let firmware = PathBuf::from(&args[1]).canonicalize()?;
     let variables = PathBuf::from(&args[2]).canonicalize()?;
     let esp = PathBuf::from(&args[3]).canonicalize()?;
-    let boot_drive = if esp.is_dir() {
-        format!("fat:ro:{}", qemu_path(&esp)?)
-    } else if esp.is_file() {
-        qemu_path(&esp)?
-    } else {
-        return Err("Boot input must be an ESP directory or a disk image".into());
-    };
     let root = PathBuf::from(&args[4]).canonicalize()?;
+    let disk = crate::boot::Disk::prepare(&esp, root)?;
+    let boot_drive = qemu_path(&disk.image)?;
     // QEMU parses drive arguments itself. Extended Win32 prefixes and commas
     // must not pass through this comma-delimited option syntax unchanged.
     let firmware = qemu_path(&firmware)?;
@@ -154,9 +167,6 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let console = TcpListener::bind("127.0.0.1:0")?;
     let console_port = console.local_addr()?.port();
     console.set_nonblocking(true)?;
-    let rpc = TcpListener::bind("127.0.0.1:0")?;
-    let rpc_port = rpc.local_addr()?.port();
-    let diagnostics = bridge::Diagnostics::buffered();
     let accelerator = if cfg!(windows) { "whpx" } else { "kvm" };
     let mut child = Command::new(&args[0]);
     child
@@ -183,7 +193,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         ])
         .args([
             "-drive",
-            &format!("if=none,id=esp,format=raw,readonly=on,file={boot_drive}"),
+            &format!("if=none,id=esp,format=raw,file={boot_drive}"),
         ])
         .args(["-device", "virtio-blk-pci,drive=esp"])
         .args([
@@ -195,12 +205,12 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             "virtconsole,chardev=terminal",
         ])
         .args([
-            "-chardev",
-            &format!("socket,id=bridge,host=127.0.0.1,port={rpc_port},reconnect-ms=1000"),
             "-netdev",
-            "user,id=network,guestfwd=tcp:10.0.2.100:7420-chardev:bridge",
+            "user,id=network",
             "-device",
             "virtio-net-pci,netdev=network",
+            "-device",
+            "virtio-rng-pci",
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -208,17 +218,16 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let mut session = Session {
         child: child.spawn()?,
         raw: false,
-        diagnostics: diagnostics.clone(),
+        disk: Some(disk),
         clipboard: None,
     };
-    let _service = bridge::serve(rpc, root, diagnostics);
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut socket: TcpStream = loop {
         if hint_requested.swap(false, Ordering::Relaxed) {
             eprintln!("Press Ctrl+C again within 1 second to exit");
         }
         if interrupted.load(Ordering::Relaxed) {
-            return Ok(());
+            return session.finish();
         }
         if let Some(status) = session.child.try_wait()? {
             return Err(format!("QEMU exited: {status}").into());
@@ -315,7 +324,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 loop {
                     if let Some(status) = session.child.try_wait()? {
                         if status.success() {
-                            return Ok(());
+                            return session.finish();
                         }
                         return Err(format!("QEMU exited: {status}").into());
                     }
@@ -532,7 +541,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    Ok(())
+    session.finish()
 }
 
 fn clipboard_notice(message: &str) -> std::io::Result<()> {
