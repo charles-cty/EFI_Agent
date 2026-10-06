@@ -38,8 +38,8 @@ tree. Create `EFI/AGENT/DRIVERS.JSON` as an ordered JSON array, for example:
 These names illustrate a driver set; the package does not include these
 binaries. Supply a coherent set for the actual NIC and firmware. Additional
 dependencies can be required. A public EDK II network driver does not replace
-the hardware-specific NIC driver. RNG needs its own driver and a supported
-cryptographic entropy source. The loader is not a dependency resolver.
+the hardware-specific NIC driver. TLS uses CPU RDRAND and ChaCha20, with no
+firmware RNG driver requirement. The loader is not a dependency resolver.
 
 The manifest is limited to 64 KiB and 32 distinct paths. Each image is limited
 to 8 MiB; their total is limited to 32 MiB. Paths must be absolute, stay under
@@ -63,7 +63,7 @@ run with full firmware privileges; only use drivers you intend to run.
 | IP4 service binding present | An IPv4 layer exists |
 | TCP4 service binding present | A TCP4 layer exists for Agent's transport |
 | IPv4 Config2 present | Firmware exposes IPv4 configuration, including DHCP policy |
-| RNG request succeeds | A firmware random source can supply TLS random bytes |
+| RNG request succeeds | The RDRAND-seeded ChaCha20 generator can supply bytes |
 
 Counts do not establish physical link, address assignment, routing, DNS access,
 or connectivity to the provider. Agent already preserves an existing address

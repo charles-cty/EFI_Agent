@@ -150,7 +150,7 @@ def run_case(args, output, package, decoy, network=True, driver_case=None):
             text = wait_text(serial, "UEFI Shell: protocol available", process)
             assert f"TCP4 interfaces: {int(network)}" in text, text
             if not network:
-                assert "no firmware RNG protocol" in text, text
+                assert "Unsupported; TLS randomness unavailable" in text, text
             if driver_case == "driver-resident":
                 assert "Extra drivers started: 1" in text, text
                 baseline = (output / "first-volume/caps.txt").read_text(encoding="utf-8")

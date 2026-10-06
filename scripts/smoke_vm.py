@@ -208,11 +208,12 @@ def certificates(directory, expired=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--qemu", default="qemu-system-x86_64")
-    parser.add_argument("--accel", default="kvm", choices=["kvm", "whpx"])
+    parser.add_argument("--accel", default="kvm", choices=["kvm", "whpx", "tcg"])
+    parser.add_argument("--cpu", default="max", help="Guest CPU; HTTPS requires RDRAND")
     for name in ("code", "vars", "esp", "launcher", "output"):
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--api-format", default="chat_completions", choices=["chat_completions", "responses"])
-    parser.add_argument("--tls-failure", choices=["untrusted", "hostname", "expired"])
+    parser.add_argument("--tls-failure", choices=["untrusted", "hostname", "expired", "random"])
     parser.add_argument("--http", action="store_true", help="Use plaintext HTTP to test local-only transport and clean TCP EOF")
     parser.add_argument("--driver", type=Path, help="Optional EFI boot-service driver fixture")
     args = parser.parse_args()
@@ -259,12 +260,12 @@ def main():
         console.bind(("127.0.0.1", 0))
         console.listen()
         console.settimeout(40)
-        qemu = subprocess.Popen([args.qemu, "-machine", f"q35,accel={args.accel}", "-m", "256", "-display", "none", "-serial", "none", "-monitor", "none", "-no-reboot",
+        qemu = subprocess.Popen([args.qemu, "-machine", f"q35,accel={args.accel}", "-cpu", args.cpu, "-m", "256", "-display", "none", "-serial", "none", "-monitor", "none", "-no-reboot",
                                  "-drive", f"if=pflash,format=raw,readonly=on,file={args.code.resolve()}",
                                  "-drive", f"if=pflash,format=raw,snapshot=on,file={args.vars.resolve()}",
                                  "-drive", f"if=none,id=esp,format=raw,file={image}", "-device", "virtio-blk-pci,drive=esp", "-device", "virtio-serial-pci",
                                  "-chardev", f"socket,id=terminal,host=127.0.0.1,port={console.getsockname()[1]}", "-device", "virtconsole,chardev=terminal",
-                                 "-netdev", "user,id=network", "-device", "virtio-net-pci,netdev=network", "-device", "virtio-rng-pci"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                                 "-netdev", "user,id=network", "-device", "virtio-net-pci,netdev=network"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         wire = bytearray()
         screen = pyte.Screen(110, 40)
         stream = pyte.ByteStream(screen)
@@ -304,7 +305,7 @@ def main():
                 wait("Conversation cleared")
             send("Stream text")
             if args.tls_failure:
-                wait("TLS:")
+                wait("TLS random generator: Unsupported" if args.tls_failure == "random" else "TLS:")
                 assert not Provider.requests
                 print(f"PASS firmware rejects TLS {args.tls_failure} before sending credentials", flush=True)
             else:

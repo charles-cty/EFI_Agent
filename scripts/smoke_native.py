@@ -81,7 +81,7 @@ def main():
                                  "-drive", f"if=pflash,format=raw,snapshot=on,file={args.vars.resolve()}",
                                  "-drive", f"if=none,id=esp,format=raw,file={image}", "-device", "virtio-blk-pci,drive=esp",
                                  "-qmp", f"unix:{qmp_path},server=on,wait=off",
-                                 "-netdev", "user,id=network", "-device", "virtio-net-pci,netdev=network", "-device", "virtio-rng-pci"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                                 "-netdev", "user,id=network", "-device", "virtio-net-pci,netdev=network", "-cpu", "max"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         qmp = None
         try:
             deadline = time.monotonic() + 30

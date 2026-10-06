@@ -70,7 +70,7 @@ images. Credentials are sent to the provider only after TLS verification.
 Use HTTPS for real provider access; HTTP is available for explicit local tests.
 
 TLS verifies the certificate chain, hostname, and expiry against bundled public
-CA roots. It requires a working UEFI RNG protocol and a correct firmware clock.
+CA roots. It uses RDRAND-seeded ChaCha20 and requires a correct firmware clock.
 An unspecified firmware timezone is treated as UTC. For a private CA, set
 `EFI_AGENT_CA_CERTIFICATE` to its host DER file path. VM launch and native
 packaging copy that file into `EFI/AGENT/CA.DER` and set the firmware path
@@ -244,7 +244,7 @@ specified in the config. Operating-system NIC support alone is not sufficient.
 
 Both trees include `EFI/TOOLS/SHELLX64.EFI` and its license. `/caps` reports
 whether the Shell protocol is available. Model-driven Shell command tools are
-not yet implemented. Shell cannot supply missing NIC drivers, TCP4, or RNG.
+not yet implemented. Shell cannot supply missing NIC drivers or TCP4.
 Agent can load explicitly listed boot-volume drivers at startup, then connect
 installed drivers until discovery is stable. See [firmware drivers](docs/firmware-drivers.md)
 for `DRIVERS.JSON`, supported images, and the network protocol counts.

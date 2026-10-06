@@ -173,6 +173,8 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         .args([
             "-machine",
             &format!("q35,accel={accelerator}"),
+            "-cpu",
+            if cfg!(windows) { "max" } else { "host" },
             "-m",
             &memory,
             "-display",
@@ -209,8 +211,6 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             "user,id=network",
             "-device",
             "virtio-net-pci,netdev=network",
-            "-device",
-            "virtio-rng-pci",
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())

@@ -22,7 +22,10 @@ api_format (chat_completions by default), reasoning_effort (medium), dns_address
 ([1,1,1,1]), dns_port (53), optional static ipv4 address/mask/gateway,
 workspace (\work), and optional ca_certificate
 (absolute UEFI path to an additional DER CA). HTTPS uses no_std Rustls with
-RustCrypto, bundled public CA roots, firmware RNG, and firmware wall time. When
+RustCrypto, bundled public CA roots, RDRAND-seeded ChaCha20, and firmware wall
+time. A session generator takes one 32-byte hardware seed on first use and
+does not reseed. Missing RDRAND or failed seed collection rejects TLS. EFI RNG
+is not used. When
 static ipv4 is configured, TCP4 children use that address and add the default
 route without requiring IPv4 Config2.
 Certificate-chain, hostname and expiry checks are mandatory. No format retry,

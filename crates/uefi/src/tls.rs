@@ -10,7 +10,6 @@ use rustls::{
     pki_types::{CertificateDer, ServerName, UnixTime},
     unbuffered::ConnectionState,
 };
-use uefi::{boot, proto::rng::Rng};
 
 fn random(bytes: &mut [u8]) -> Result<(), getrandom::Error> {
     let failure = || {
@@ -18,17 +17,7 @@ fn random(bytes: &mut [u8]) -> Result<(), getrandom::Error> {
             core::num::NonZeroU32::new(getrandom::Error::CUSTOM_START).expect("Nonzero"),
         )
     };
-    let handles = boot::find_handles::<Rng>().map_err(|_| failure())?;
-    for handle in handles {
-        if let Ok(mut rng) = boot::open_protocol_exclusive::<Rng>(handle) {
-            // The EFI RNG protocol defines its default as a cryptographic
-            // random generator. Some OVMF builds expose only that default.
-            if rng.get_rng(None, bytes).is_ok() {
-                return Ok(());
-            }
-        }
-    }
-    Err(failure())
+    crate::random::fill(bytes).map_err(|_| failure())
 }
 getrandom::register_custom_getrandom!(random);
 
@@ -72,6 +61,9 @@ impl<'a> Socket<'a> {
         poll: &'a mut dyn FnMut() -> bool,
     ) -> Result<Self, String> {
         let tls = if url.tls {
+            let mut probe = [0; 1];
+            crate::random::fill(&mut probe)
+                .map_err(|error| format!("TLS random generator: {error:?}"))?;
             let mut roots = RootCertStore::empty();
             roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
             if let Some(ca) = ca {

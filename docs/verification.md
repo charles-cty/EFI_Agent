@@ -1188,3 +1188,28 @@ Security Directory. The linked ELF contains `snp_driver` and no
 Make reported clock skew; the link and EFI conversion completed successfully.
 Physical boot and network traffic have not yet been tested. This application
 uses its own network stack over SNP and does not install TCP4 for Agent.
+
+## CPU random generator
+
+Replaced all Agent EFI RNG access with RDRAND and rand_chacha ChaCha20Rng.
+Each image session collects one 32-byte seed on first nonempty request, checking
+CPUID and the RDRAND success flag with ten attempts per 64-bit word. Failed
+partial seeds are cleared and do not publish state. Successful initialization
+is never repeated during that generator lifetime. The shared TLS/getrandom
+entry is guarded against reentry. /caps probes the same generator without
+displaying random bytes. Firmware certificate time remains required.
+
+Core tests check bounded retries, partial-seed failure, recovery, the successful
+tenth attempt, a ChaCha20 known vector, and more than 1 MiB of partitioned
+output without another hardware seed. rand_core can discard unused bytes in
+partial-word requests; the partition test uses word-aligned requests.
+Windows UEFI Release build and UEFI Clippy passed. Host all-target Clippy is
+blocked by the existing shell_assets tuple type_complexity warning in boot.rs.
+
+Actual Windows QEMU/TCG with CPU max and no virtio RNG passed direct verified
+HTTPS, DNS, streaming, tools, cancellation, and subsequent requests. Results
+are in artifacts/rdrand-smoke. CPU max,rdrand=off rejected TLS with an explicit
+Unsupported error and sent no provider credentials; results are in
+artifacts/rdrand-negative-smoke. No claim about physical CPU entropy quality
+is made by these tests. The VM launcher exposes CPU features and no longer
+adds a virtio RNG device. Native firmware still needs physical retesting.

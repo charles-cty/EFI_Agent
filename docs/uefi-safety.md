@@ -116,20 +116,17 @@ maps `EFI_AGENT_IPV4_ADDRESS`, `EFI_AGENT_IPV4_NETMASK`, and
 `EFI_AGENT_IPV4_GATEWAY` into that object. DHCP remains the default when the
 object is absent.
 
-Cryptographic random capability detection opens each available EFI RNG protocol,
-reads a bounded algorithm list, and tries a 32-byte request with an explicitly
-advertised SP800-90 CTR-256, HMAC-256, or HASH-256 algorithm. Unsupported
-algorithms and failed requests do not qualify that named algorithm. If a named
-algorithm is unavailable, detection also checks the EFI RNG protocol default.
-Generated sample bytes are not displayed.
-Success establishes that firmware advertises and serves that algorithm. It does
-not prove the source's entropy quality or certify the implementation.
+Random bytes use a session-level ChaCha20Rng from rand_chacha. On first use,
+CPUID must advertise RDRAND. Four successful 64-bit RDRAND results form the
+32-byte seed; each word allows ten attempts. A partial or failed seed is not
+published. The temporary seed is cleared with zeroize. After successful
+initialization, the same generator state serves all requests without reseeding.
+An atomic guard rejects reentrant access instead of waiting inside callbacks.
 
-TLS uses the EFI RNG protocol's default cryptographic generator, which also
-supports OVMF builds that lack named DRBG algorithms. It fails closed if no
-generator can fill the requested buffer. It never substitutes timestamps,
-counters, a deterministic generator, or an ordinary PRNG. Trust in firmware's
-random source remains a platform requirement.
+TLS and /caps use this same generator. No EFI RNG protocol is opened or probed.
+Unsupported CPUs and exhausted retries return errors; no timestamp or ordinary
+PRNG fallback exists. CPU randomness remains a trust requirement; a successful
+instruction does not prove entropy quality. Certificate time still uses UEFI.
 
 TLS verifies chains against bundled public roots and an optional configured DER
 CA, verifies the provider hostname, and checks certificate validity with the

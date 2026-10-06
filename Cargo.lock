@@ -557,10 +557,13 @@ dependencies = [
 name = "efi-agent-core"
 version = "0.1.0"
 dependencies = [
+ "rand_chacha",
+ "rand_core",
  "ratatui",
  "serde",
  "serde_json",
  "unicode-segmentation",
+ "zeroize",
 ]
 
 [[package]]

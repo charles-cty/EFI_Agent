@@ -21,6 +21,7 @@ mod drivers;
 mod environment;
 mod event_loop;
 mod files;
+mod random;
 mod tcp;
 mod terminal;
 mod tls;
@@ -80,7 +81,7 @@ fn submit(
         app.capabilities.clone()
     } else if text == "/help" {
         String::from(
-            "/help  Show commands\n/caps  Probe firmware network and cryptographic RNG capabilities\n/effort [value]  Show or set reasoning effort (provider validates values)\n/status  Show actual API, history, token and cache data\n/clear  Start a new conversation\n/quit, /exit  Exit\nSend a prompt to run the coding agent (read, write, edit tools).",
+            "/help  Show commands\n/caps  Probe network and CPU random generator capabilities\n/effort [value]  Show or set reasoning effort (provider validates values)\n/status  Show actual API, history, token and cache data\n/clear  Start a new conversation\n/quit, /exit  Exit\nSend a prompt to run the coding agent (read, write, edit tools).",
         )
     } else if text == "/status" {
         let history = agent.history_status().unwrap_or_else(|error| error);
