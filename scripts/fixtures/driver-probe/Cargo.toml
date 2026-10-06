@@ -1,0 +1,14 @@
+[package]
+name = "efi-driver-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+uefi = { version = "0.41", features = ["alloc", "global_allocator", "panic_handler"] }
+uefi-raw = "0.17"
+
+[profile.release]
+panic = "abort"

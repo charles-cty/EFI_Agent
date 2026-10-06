@@ -1,28 +1,23 @@
-param([switch]$Release)
+param(
+    [ValidateSet('release', 'debug')][string]$Profile = 'release'
+)
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
+$PSNativeCommandArgumentPassing = 'Standard'
 $PSNativeCommandUseErrorActionPreference = $true
 Set-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
-$buildArgs = @('build', '-p', 'efi-agent-uefi', '--target', 'x86_64-unknown-uefi')
-$profile = 'debug'
-if ($Release) {
-    $buildArgs += '--release'
-    $profile = 'release'
-}
-cargo.exe @buildArgs
-$boot = Join-Path $PWD 'artifacts\esp\EFI\BOOT'
-$config = Join-Path $PWD 'artifacts\esp\EFI\AGENT'
-New-Item -ItemType Directory -Force -Path $boot, $config | Out-Null
-Copy-Item -LiteralPath "target\x86_64-unknown-uefi\$profile\efi-agent-uefi.efi" -Destination (Join-Path $boot 'BOOTX64.EFI')
-Set-Content -LiteralPath (Join-Path $config 'VM.TXT') -Value 'serial' -Encoding utf8NoBOM
-cargo.exe build -p efi-agent
-$image = Join-Path $PWD 'artifacts\efi-agent-vm.img'
-$temporaryImage = "$image.$([guid]::NewGuid().ToString('N')).tmp"
-try {
-    & ./target/debug/efi-agent.exe pack ./artifacts/esp $temporaryImage
-    [IO.File]::Move($temporaryImage, $image, $true)
-} finally {
-    if (Test-Path -LiteralPath $temporaryImage) { Remove-Item -LiteralPath $temporaryImage }
-}
-Write-Output "ESP directory: $PWD\artifacts\esp"
-Write-Output "Boot image: $image"
+$Profile = $Profile.ToLowerInvariant()
+$profileArgs = @()
+if ($Profile -eq 'release') { $profileArgs += '--release' }
+$targetDirectory = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
+$targetDirectory = [IO.Path]::GetFullPath($targetDirectory, $PWD.Path)
+cargo.exe build -p efi-agent-uefi --target x86_64-unknown-uefi --target-dir $targetDirectory @profileArgs
+cargo.exe build -p efi-agent --target-dir $targetDirectory @profileArgs
+$launcher = Join-Path $targetDirectory "$Profile/efi-agent.exe"
+$efi = Join-Path $targetDirectory "x86_64-unknown-uefi/$Profile/efi-agent-uefi.efi"
+& $launcher package $efi artifacts
+Write-Output "Profile: $Profile"
+Write-Output "Launcher: $launcher"
+Write-Output 'VM tree: artifacts/esp'
+Write-Output 'Native tree: artifacts/native-esp'
+Write-Output 'Images: artifacts/efi-agent-vm.img, artifacts/efi-agent-native.img'

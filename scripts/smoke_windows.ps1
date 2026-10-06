@@ -101,7 +101,7 @@ try {
     $null = Wait-Screen 'Unknown command. Use /help.' -IgnoreWhitespace
     Write-Output 'PASS Windows Unicode cursor editing and multiline input'
     Send-Text '/status'
-    $null = Wait-Screen 'API attempts: 0; usage reports: 0' -IgnoreWhitespace
+    $null = Wait-Screen 'Direct firmware requests: 0' -IgnoreWhitespace
     Send-Text '/exit'
     $screen = Wait-Screen 'EFI_EXIT_0' 15
     Set-Content -LiteralPath (Join-Path $Output 'exit.txt') -Value $screen -Encoding utf8NoBOM
@@ -109,7 +109,7 @@ try {
     $null = Wait-Screen 'EFI_SHELL_RESTORED' -ExactLine
     Assert-MainScreen
     # QEMU can emit its own platform warnings; check the launcher diagnostics.
-    if ([IO.File]::ReadAllText($exitLog) -match 'HostBridge|EFI Agent:') {
+    if ([IO.File]::ReadAllText($exitLog) -match 'EFI Agent:') {
         throw 'Normal /exit wrote launcher errors to stderr'
     }
     Write-Output 'PASS /exit returns to the Windows shell'
@@ -118,7 +118,7 @@ try {
     Send-Text ($command + "; Write-Output ('EFI_INTERRUPT_' + `$LASTEXITCODE)")
     $null = Wait-Screen 'What would you like to build?' 60
     Send-Text '/status'
-    $null = Wait-Screen 'API attempts: 0; usage reports: 0' -IgnoreWhitespace
+    $null = Wait-Screen 'Direct firmware requests: 0' -IgnoreWhitespace
     & $Psmux send-keys -t $pane C-c
     $null = Wait-Screen 'Press Ctrl+C again within 1 second to exit' -IgnoreWhitespace
     & $Psmux send-keys -t $pane C-c
@@ -128,7 +128,7 @@ try {
     Send-Text "Write-Output ('EFI_' + 'INTERRUPT_RESTORED')"
     $screen = Wait-Screen 'EFI_INTERRUPT_RESTORED' -ExactLine
     Assert-MainScreen
-    if ($screen -match 'HostBridge|EFI Agent:') {
+    if ($screen -match 'EFI Agent:') {
         throw 'Ctrl+C displayed launcher errors'
     }
     Set-Content -LiteralPath (Join-Path $Output 'interrupt.txt') -Value $screen -Encoding utf8NoBOM
