@@ -7,9 +7,12 @@ and serial console sinks agree on the cursor bounds. Esc at the Shell countdown 
 can also be started directly. `/caps` reports whether the Shell protocol is
 installed. A model Shell command tool is not implemented in this stage.
 
-The Shell source is pinned by the shallow `vendor/uefi-shell` submodule. The
-build output is supplied through `EFI_AGENT_SHELL` and is not stored in Git.
-Packaging includes the submodule license and source record on each boot volume.
+The Shell source is pinned by the shallow `vendor/uefi-shell` submodule. Build
+the x64 Shell with EDK2; `scripts/build.ps1` and `scripts/build.sh` automatically
+find the generated `edk2/Build/Shell/*/X64/Shell_*.efi` output. Set
+`EFI_AGENT_SHELL` only when using a different local build. The binary is not
+stored in Git. Packaging includes the submodule license and source record on
+each boot volume.
 The VM serial entry point remains Agent; its Shell binary is a separate tool.
 
 ## Command tool design constraints

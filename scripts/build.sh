@@ -21,10 +21,21 @@ if [[ "$profile" != release && "$profile" != debug ]]; then
     printf 'Profile must be release or debug.\n' >&2
     exit 2
 fi
-if [[ -z "${EFI_AGENT_SHELL:-}" ]]; then
-    printf 'Set EFI_AGENT_SHELL to a locally built x64 Shell.efi from vendor/uefi-shell.\n' >&2
+if [[ -n "${EFI_AGENT_SHELL:-}" ]]; then
+    shell_path=$EFI_AGENT_SHELL
+else
+    shell_profile=${profile^^}
+    shell_path=$(find vendor/uefi-shell/edk2/Build/Shell -type f -path "*/${shell_profile}_*/X64/Shell_*.efi" -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d ' ' -f 2- || true)
+    if [[ -z "$shell_path" ]]; then
+        printf 'Build the x64 Shell from the vendor/uefi-shell submodule first, or set EFI_AGENT_SHELL to its .efi output.\n' >&2
+        exit 2
+    fi
+fi
+if [[ ! -f "$shell_path" ]]; then
+    printf 'UEFI Shell image not found: %s\n' "$shell_path" >&2
     exit 2
 fi
+export EFI_AGENT_SHELL=$shell_path
 build_args=()
 if [[ "$profile" == release ]]; then build_args+=(--release); fi
 target_dir=${CARGO_TARGET_DIR:-target}
