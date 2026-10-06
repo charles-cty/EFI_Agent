@@ -15,11 +15,11 @@ fn shell_assets() -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), Error> {
     let shell = std::env::var_os("EFI_AGENT_SHELL")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("vendor/uefi-shell/shellx64.efi"));
-    let directory = shell.parent().ok_or("EFI_AGENT_SHELL has no parent directory")?;
+    let source = Path::new("vendor/uefi-shell");
     Ok((
-        fs::read(shell)?,
-        fs::read(directory.join("License.txt"))?,
-        fs::read(directory.join("README.md"))?,
+        fs::read(&shell)?,
+        fs::read(source.join("License.txt"))?,
+        fs::read(source.join("README.md"))?,
     ))
 }
 
