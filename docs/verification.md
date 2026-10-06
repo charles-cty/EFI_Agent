@@ -1,5 +1,151 @@
 # Verification record
 
+## 2026-10-05: One environment configuration for VM and native packages
+
+VM launch and native packaging use the same EFI_AGENT_* variables and host
+configuration parser. The package command now takes only the EFI file and
+output directory. Build scripts no longer accept --config / -Config. They
+generate EFI/AGENT/CONFIG.JSON in the native boot tree and image. The native
+workspace is \work. EFI_AGENT_CA_CERTIFICATE names a host DER file; both modes
+copy it to EFI/AGENT/CA.DER and generate its firmware path. Packaging without
+that variable removes a previously generated private CA.
+
+Verified on Windows and a Linux-local checkout:
+
+- Both Release build scripts complete without a user config file.
+- Launcher Clippy with warnings denied and all 11 launcher tests pass.
+- Actual packaging preserves quoted/backslash API keys and Unicode model
+  names, Responses format, effort, custom DNS address/port, and private CA bytes.
+- Repeat packaging removes the old CA; VM packages contain no API config.
+- Independent Linux mtools extraction matches the generated native config.
+  Unset optional variables restore defaults. A missing API key rejects the
+  package before its output tree is created.
+- The full tmux launcher smoke test with the system QEMU 8.2.2 passes direct
+  EFI boot, environment-injected private CA/config, HTTPS tools, exact saved
+  host file bytes, editing/resize, and terminal restoration. A separate QEMU
+  11.1.2 installation on PATH reports a 2011 firmware time and correctly fails
+  the current test certificate's validity check. The independent clock oracle
+  still passes; the QEMU/firmware time difference has not been diagnosed.
+
+Generated packages use provider.example and test credentials. This entry
+supersedes earlier instructions to supply a user-authored CONFIG.JSON.
+
+## 2026-10-05: Direct provider access in UEFI; relay removed
+
+This entry supersedes the relay architecture and relay-address build options
+described in earlier entries. Both VM and native mode now execute provider
+requests in firmware. The host relay, serve command, framed RPC transport,
+heartbeat code, and relay-only disconnect test have been removed.
+
+Implemented direct DNS A queries over TCP, HTTP/1.1 body framing, no_std Rustls
+with RustCrypto, public trust roots, an optional private DER CA, firmware RNG,
+and firmware-clock certificate validation. Certificate chain, hostname, and
+expiry checks cannot be disabled. HTTP remains available for explicit local
+testing. All read/write/edit tools use the boot-volume workspace. Shared no_std
+Chat Completions/Responses parsing retains reasoning, opaque signatures, usage,
+and stream limits. Each model request has a separate connection; cancellation
+closes it and does not block the next prompt.
+
+The VM launcher accepts Cargo's .efi directly, an ESP tree, or a disk image.
+It creates a private writable FAT disk, injects API settings from environment
+variables, copies in the host workspace, and saves changed files after QEMU
+stops. A host conflict rejects the save; the disk is retained for recovery.
+Save errors propagate on normal exits. Native CONFIG.JSON contains direct API
+settings and credentials. Packaging scripts use --config / -Config and default
+to Release for both programs. Final packages contain test-key/test-model with
+provider.example, not usable third-party credentials.
+
+Verified:
+
+- Linux-local and Windows-local unit/integration tests: 40 core and 11 launcher
+  tests pass. The desktop clipboard integration test stays ignored on Linux.
+- Launcher all-target and UEFI-target Clippy with warnings denied on both
+  platforms. Release firmware linking and both platform packaging scripts pass.
+- QEMU/KVM boots with an independent local HTTPS provider and a temporary CA.
+  Chat Completions and Responses each pass direct DNS, certificate-verified TLS,
+  fragmented HTTP chunking/UTF-8/SSE/tool arguments, streamed text before
+  completion, draft editing during waits, retained reasoning state, exact tool
+  results, HTTP 402 detail, usage/cache ratio, truncated-tool rejection,
+  cancellation, and a new request after cancellation.
+- Actual FAT files contain the expected edited Unicode bytes, newly created
+  file, and unchanged ambiguous-edit file; truncated tools create no file.
+- Final HTTP and HTTPS smoke runs pass after handling TCP4 peer FIN both at
+  receive submission and at token completion. A close-delimited HTTP error
+  retains its complete provider message. TLS still rejects a TCP EOF without
+  close_notify; DNS rejects EOF before its complete response.
+- Untrusted CA, wrong hostname, and expired certificate are rejected in actual
+  firmware before any HTTP request reaches the provider. Expired-certificate
+  testing also passes after extracting the clock conversion into shared code.
+- The clock oracle walks every calendar day from 1970 through 2101 independently
+  of the production formula, checks both ends of each day, and covers leap
+  centuries, positive/negative timezones, and pre-epoch rejection.
+- Actual FAT save tests on Linux and Windows preserve unrelated host edits,
+  save Unicode and newly created files, and reject conflicts before writing.
+- Linux tmux/KVM launcher tests pass dimensions, resize, Unicode editing,
+  multiline/bracketed paste, direct HTTPS tools, exact saved host file bytes,
+  /exit, the two-press Ctrl+C gesture, termios and alternate-screen restoration.
+  The same full test passes with Cargo's .efi as the boot input.
+- Native SimpleText/QMP keyboard input under OVMF, without VM.TXT, drives five
+  direct HTTPS model rounds and verifies actual local FAT file bytes.
+- Windows WHPX/psmux ConPTY boots Cargo's .efi directly and passes Unicode
+  editing, multiline clipboard paste, local /status, /exit and Ctrl+C recovery.
+- Independent sgdisk and mtools checks verify both platforms' generated GPT
+  images, exact EFI bytes, direct native config/workspace, VM-only marker, and
+  absence of old NATIVE.JSON. README, AGENTS.md and UEFI safety documentation
+  describe the direct architecture.
+
+Limits: no third-party provider or physical motherboard/NIC/USB has been tested.
+Windows ConPTY testing does not include model traffic; actual direct HTTPS
+runtime tests ran on Linux KVM. DNS uses TCP and an explicit IPv4 DNS server.
+Firmware RNG and wall-clock quality remain platform requirements. An
+unspecified firmware timezone is treated as UTC. VM host files are updated only
+at exit; concurrent filesystems are not isolated against changes during save.
+Native packages and VM recovery disks contain credentials.
+
+## 2026-10-05: Release and native boot packaging scripts
+
+Both build scripts now default to Release for the UEFI application and host
+launcher. The profile can be set to Debug. A relay IPv4 address is required;
+the port defaults to 7420. Each script creates separate VM and native boot
+trees and GPT/FAT32 images. The native tree contains NATIVE.JSON and a work
+directory, excludes VM.TXT, and retains existing workspace files. Each image
+is replaced only after successful packaging. CARGO_TARGET_DIR is supported.
+
+Verified with actual Linux-local and Windows-local builds:
+
+- Release and Debug builds and both image packages on each platform.
+- Debug with address 010.023.004.005 and port 1, normalized to [10, 23, 4, 5].
+- Release with port 65535, then default port 7420 on repeat packaging.
+- Independent sgdisk, fsck.fat, and mtools checks of both platforms' Debug
+  and Release images: GPT validity, FAT consistency, exact EFI bytes against
+  the selected profile's binary, parsed JSON, workspace presence, and absence
+  of the opposite mode's marker/configuration.
+- Repeat packaging removes stale mode markers. A Linux native workspace file
+  retains its exact Unicode bytes in the rebuilt disk image.
+- Both scripts reject malformed IPv4, octet 256, zero and multicast addresses,
+  port 0/65536, and unknown profiles before compilation.
+- Bash and PowerShell syntax checks and git diff whitespace checks.
+
+Windows Debug verification used a separate CARGO_TARGET_DIR to avoid replacing
+the existing Debug launcher. Final Windows packages use Release with example
+relay address 192.168.1.73 and default port 7420; users must rebuild with their
+actual relay address. No VM boot, live provider, physical USB write, or
+bare-metal hardware run was performed for this script update.
+
+## 2026-10-05: Linux and bare-metal README instructions
+
+Added Linux prerequisites, build commands, OVMF preparation, the KVM access
+check, API environment setup, and the terminal VM launch command. Moved native
+setup into a separate bare-metal section with USB boot-volume contents,
+firmware network requirements, relay startup, UEFI shell launch, and checks
+for model access and boot-volume file tools.
+
+Checked commands and paths against the build script, launcher argument parsing,
+and UEFI runtime configuration and file access. README Bash examples pass
+`bash -n`; `git diff --check` passes. This change is documentation only. No
+build, VM run, provider call, USB preparation, or physical hardware test was
+performed for this update. Physical bare-metal support remains unverified.
+
 ## 2026-10-04: initial implementation
 
 Environment: Windows native Rust 1.93.1, invoked from WSL with PowerShell 7
@@ -846,3 +992,165 @@ Chat Completions and Responses QEMU smoke tests expanded the failed edit panel,
 asserted that its actual arguments and error appeared together, then collapsed
 it and checked that both disappeared. Both full smoke tests passed. The firmware
 and VM images were updated.
+## 2026-10-05: User-reported physical firmware protocol failure
+
+A user booted the application on physical UEFI firmware. A normal prompt
+failed with `TCP4 service binding: UEFI Error NOT_FOUND: ()`. The capability
+probe reported zero TCP4 interfaces, zero IPv4 configuration interfaces, and
+no firmware RNG protocol. The board, NIC, firmware settings, and boot method
+have not yet been identified. This is a reported failure, not a passing
+bare-metal verification.
+
+Source inspection confirms that the application locates existing TCP4 service
+bindings; it does not call ConnectController to connect network drivers.
+DNS uses TCP4 too, so this failure can occur before any provider connection.
+TLS uses the firmware RNG protocol and has no alternative random source.
+Missing network protocols and missing RNG are separate blockers.
+
+On firmware with a UEFI Shell, run `connect -r`, then launch the application
+again and repeat `/caps`. A positive TCP4 count after this step distinguishes
+unconnected installed drivers from the original state. If the count remains
+zero, inspect UEFI network-stack settings and NIC driver support. Enabling a
+network stack does not guarantee that the firmware supplies a driver for the
+attached NIC, especially for USB and wireless adapters. This check has not yet
+been performed on the reported machine. Missing RNG needs a separate usable
+cryptographic source; changing DNS, API credentials, or certificates cannot
+supply the missing protocols.
+
+## 2026-10-05: Bundle UEFI Shell and connect installed drivers
+
+Native packaging now boots EDK II UEFI Shell 2.2 from pbatard/UEFI-Shell 26H1.
+The fixed x64 binary, upstream release URL, SHA-256, and BSD-2-Clause-Patent
+license are in vendor/uefi-shell. The release API digest matched the download.
+Both package trees carry the Shell license and source record. Native startup
+runs connect -r, selects the common 80x25 text mode, then starts AGENT.EFI using
+homefilesystem. Esc skips startup; /exit returns to the resident Shell.
+The VM boot entry remains Agent. The launcher also selects AGENT.EFI when
+preparing a private disk from a generated native package.
+
+Agent startup recursively connects installed controller drivers before opening
+long-lived protocols. Missing TCP4 reports network-stack/NIC guidance instead
+of the raw NOT_FOUND error. /caps reports Shell protocol presence. These changes
+cannot supply absent network drivers, TCP4 stacks, or cryptographic RNG.
+Model-driven Shell commands are not implemented. The Execute interface and
+output, working-directory, permissions, status, and cancellation constraints
+are recorded in docs/shell-execution.md.
+
+Actual Shell boot exposed console defects that direct boot did not reproduce:
+file-backed Shell stdout does not implement cursor-addressed drawing; empty
+stderr sinks can advertise a mode; the Shell logger can retain dimensions that
+do not match all underlying console sinks; cursor hiding can return UNSUPPORTED.
+Native console selection now checks actual cursor movement at the far edge,
+prefers firmware console splitters, and uses keyboard protocols with wait
+events. UEFI's optional cursor visibility does not stop the interface. The
+startup script's common 80x25 mode lets the display and serial sinks agree.
+System-table console pointers are not changed.
+
+Windows-local Release builds passed for UEFI and launcher. Host tests passed
+(40 core, 11 launcher), and host all-target plus UEFI Release Clippy passed with
+warnings denied. Windows UEFI Debug linking failed in the existing poly1305
+and polyval dependencies with an LLVM "Do not know how to split the result of
+this operator" error. Release linking passed; no workaround was added.
+
+scripts/smoke_shell.py passed under actual Windows QEMU/OVMF with TCG in three
+cases: one FAT volume, Agent on fs1: with a decoy fs0:, and no NIC or RNG device.
+Each case booted packaged Shell into Agent, sent /caps through QMP keyboard
+input, checked display pixels for the Agent interface, returned with /exit,
+executed a Shell echo command, and checked its UTF-16 output in the real FAT
+image with an independent parser. The no-device case reported TCP4 zero and
+missing RNG while the Shell remained usable. Display screenshots were also
+inspected. Results are in artifacts/shell-smoke.
+
+The Windows WHPX direct HTTPS Chat Completions smoke passed streamed text,
+draft editing, tools, usage, truncation, cancellation, and the next request.
+Actual FAT bytes and absence of the truncated tool's output passed. The test
+now uses dissect.fat instead of the Linux-only mtype dependency and writes its
+screen record as UTF-8. Results are in artifacts/shell-direct-smoke.
+
+Updated artifacts/esp, artifacts/native-esp, and both disk images. Native
+packaging reused the existing generated provider config without exposing its
+key and retained the native workspace. Physical firmware has not yet been
+retested; the user's missing network and RNG protocols remain unresolved until
+the new package is tested there.
+
+Run scripts/smoke_shell.py with --launcher, --efi, --code, --vars, --qemu, and
+--output paths. The script runs native Windows or Linux tools and needs no
+provider credentials. Windows paths must remain local to Windows.
+
+## 2026-10-05: Standard driver activation and extra driver loading
+
+Reviewed UEFI 2.11 chapters 3, 7, 11, 24, 28, and 35. The official HTML
+endpoints returned HTTP 403 both directly and through the configured proxy;
+their text was read through r.jina.ai. Sources and section links are recorded
+in docs/firmware-drivers.md. EDK II DriverSupport.c and protocol definitions
+were also checked against the standard. There is no portable switch to enable
+a missing firmware network stack. ConnectController selects loaded driver
+handles; GetDriverPath describes images that a separate component must load.
+DriverOrder/Driver#### are boot-manager variables, not a runtime component
+enable API. SNP Start/Initialize initialize an existing packet interface; they
+do not provide TCP/IP. Private setup variables and PI DXE services are not used.
+
+Added optional EFI/AGENT/DRIVERS.JSON startup loading through LoadImage and
+StartImage. The manifest specifies ordered x64 PE32+ boot-service/runtime
+drivers on Agent's boot volume. Applications and other architectures are
+rejected before executing their entry points. Paths are restricted to
+EFI/AGENT/DRIVERS. Bounds are 64 KiB for the manifest, 32 paths, 8 MiB per
+image, and 32 MiB total. Firmware retains image verification/signing policy.
+Successful driver images stay resident. Matching full loaded-image paths are
+skipped when Agent is restarted. A list error stops later drivers; existing
+drivers are still connected and the UI reports the error through /caps.
+
+Recursive ConnectController passes now continue until handle and Driver
+Binding sets are stable. Connection errors are retained in /caps along with
+driver loading results. Added SNP, MNP service binding, IP4 service binding,
+and Driver Binding counts. Protocol discovery uses the standard GUIDs.
+Packaging creates the optional driver directory and retains user-supplied
+driver files. No NIC/network/RNG driver binary is bundled by this change.
+
+Windows-local UEFI and host Release builds, 42 core tests and 11 launcher
+tests, host all-target Clippy and UEFI Release Clippy passed. Parser checks cover
+EFI driver versus application subsystems, every truncated length of a valid
+header, large PE offsets, cross-volume paths, traversal, and case aliases.
+
+Built scripts/fixtures/driver-probe as an actual EFI boot-service driver with
+the linker subsystem set to efi_boot_service_driver. It installs a resident
+Driver Binding protocol and writes an entry-point counter on its own boot
+volume. Initial QEMU loading found an ACCESS_DENIED error because Agent kept
+its filesystem protocol open during StartImage. The loader now releases the
+filesystem and device-path references before starting drivers. The successful
+fixture confirms its LoadedImage boot-device association and filesystem access.
+
+Seven Windows QEMU/OVMF TCG cases passed in artifacts/driver-smoke: one volume,
+Agent on fs1:, no NIC/RNG, driver startup and restart, application rejection,
+manifest path rejection, and a missing driver. Successful startup adds exactly
+one Driver Binding instance. A second Agent invocation reports the driver as
+resident, adds no new binding, and leaves the FAT counter at one execution.
+All cases retain the displayed interface, capability reporting, and working
+Shell after Agent returns. Independent FAT parsing checks actual bytes.
+
+An extra ordered-list test in artifacts/driver-stop-smoke put an application
+first and a valid fixture driver second. The loader rejected the application;
+the later driver's FAT marker did not exist. This confirms stop-on-error rather
+than silently executing later entries.
+
+The Windows WHPX direct-boot HTTPS Chat Completions smoke also loaded the
+fixture without a resident Shell. It passed DNS, verified TLS, streamed text,
+draft edits, tools, token usage, truncation, cancellation, and the next prompt.
+Actual FAT file bytes and the driver counter passed. Results are in
+artifacts/driver-direct-smoke. This confirms that activation is in Agent startup,
+not dependent on Shell startup.nsh. The smoke accepts --driver for this case.
+
+Updated both ESP trees and images with the verified Release firmware, retaining
+existing provider configuration and native workspace. Real motherboard driver
+availability, network-stack activation, and RNG support still need physical
+retesting. Secure Boot rejection and real third-party driver compatibility were
+not exercised by these unsigned OVMF fixture tests.
+
+Build the fixture on Windows with:
+
+```powershell
+cargo.exe rustc --manifest-path scripts/fixtures/driver-probe/Cargo.toml --target x86_64-unknown-uefi --target-dir artifacts/driver-probe-build --release -- -C link-arg=/subsystem:efi_boot_service_driver
+```
+
+Then supply its generated .efi with --driver to scripts/smoke_shell.py. Select
+--case reject-application to check stop-on-error, or omit --case for all cases.
