@@ -11,6 +11,301 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 ## Architecture
 
+The UEFI app now embeds the no_std `efi-agent-wasm` crate with wasmi 2.
+Each process has an independent Store and memory. A single APPLICATION-TPL
+dispatcher resumes retained call stacks after explicit yield, child wait,
+or fuel exhaustion. `/wasm` loads registered command modules and starts,
+runs, lists, cancels, or reaps their processes. Basic WASI arguments, finite
+stdin, stdout/stderr, exit and yield are implemented. The `efi_process`
+imports provide getpid/getppid, spawn and waitpid without fork. Children
+inherit selected standard descriptors. Descriptor tables, 64 KiB pipes,
+dup2, close, renumber and blocking reads/writes retain continuations;
+last-endpoint closure supplies EOF or EPIPE and exit closes descriptors.
+WASI poll_oneoff suspends across descriptor readiness, EOF/HUP and errors;
+an immediate relative timeout allows nonblocking checks. Timed waits still
+require an available clock type. The firmware provider now supplies realtime
+through EFI GetTime and its reported resolution. Timed relative/absolute
+poll and WASI clock_time_get/clock_res_get use that provider. Firmware
+monotonic and CPU clocks are not implemented.
+The C process and concurrent capture libraries are under guests. Nonblocking
+waitpid_nohang lets command event loops drain all child streams. Module
+registration eagerly compiles functions; execution remains fuel-scheduled.
+Stream fd_seek returns SPIPE. QuickJS 2026-06-04 builds with Windows WASI SDK
+34 through scripts/build_quickjs.ps1. It links the engine without quickjs-libc
+and exposes print and a Promise-based $ command template, quoting each
+interpolated shell word. Commands spawn registered ash instances with -c and
+capture stdout/stderr. Host wasmi verified the real engine and command ABI
+against both a probe and actual ash builtins. Actual QEMU/OVMF also verified the
+engine, top-level await, firmware Date.now and concurrent real ash capture.
+The implemented application ports and their remaining limits are described
+below and in docs/wasm-world.md.
+Actual CPython 3.14.0 builds with scripts/build_cpython.ps1 using Windows WASI
+SDK and matching Windows build Python. Native MSYS2 supplies configure/make
+only. It has single-thread pthread stubs, frozen UTF-8 encodings and efi,
+builtin/frozen imports only, and no posix/time/signal/socket host modules.
+FileIO allows only fd 0–2, no filenames or custom opener. Builtin open/input/
+breakpoint are removed. python -e CODE executes real Python; efi.shell accepts
+shell text or individually quoted list/tuple words and captures raw/text
+stdout/stderr. Nonzero exits raise ShellError unless check=False. Each stream
+is capped at 512 KiB; oversized output is drained and child status reaped.
+Host checks verify actual language execution, restrictions, capture boundaries
+and concurrent Python children with independent module state and saved files.
+Actual QEMU verifies Python execution, real ash capture and persisted FAT files.
+Normal return, proc_exit, traps and cancellation now drop execution Stores,
+linear memory, continuations and pending I/O immediately. Only parent PID,
+status and shared output remain until wait/reap. Live children are adopted by
+PID 0 and retain inherited output even after their parent is reaped. A counting
+allocator test verifies release of at least 60 MiB on each terminal path before
+reap; adoption, pipe closure and wait-status behavior pass host checks. The
+earlier combined Python concurrency test needed 512 MiB with exited Stores
+retained; the revised combined firmware test passes at 256 MiB, including
+concurrent Python roots, QuickJS, ash and saved FAT byte checks. One prior run
+stopped on a malformed serial view frame before Python; the rerun passed.
+That intermittent transport failure remains unroot-caused.
+The initial network provider and efi_net.tcp_connect ABI now reserve a socket
+descriptor and suspend in Connecting until completion. Connected sockets use
+WASI read/write/poll and shared descriptor lifetime. Native run_guest installs
+a mio nonblocking TCP backend. Actual Windows TCP tests verify byte payloads,
+EOF, refusal, duplicate closure, child progress during network wait and host
+cancellation of a blocked read. ABI tests cover validation before effects,
+descriptor/port bounds, failed-attempt retry and pending-connect cleanup.
+UEFI now installs a persistent-token TCP4 provider in tcp/cooperative.rs.
+It reuses configured static IPv4 or starts DHCP without waiting in the guest
+call. Mapping/connect states advance per dispatcher poll with a 30-second
+deadline. Boxed connect/read/write tokens, packets and buffers remain stable
+until completion or confirmed synchronous reset. GET_PROTOCOL access to the
+service binding permits independent TCP children on one NIC. Writes accept
+owned prefixes up to 64 KiB; reads/poll cache received bytes up to 64 KiB.
+The last close requests abortive close then resets and verifies pending token
+retirement. Real QEMU TCP transfer, child progress handshake and blocked-read
+cancellation with observed peer closure pass. efi_net.tcp_close now drains
+accepted sends and queues normal TCP4 close with a 30-second deadline. It
+suspends in Closing, consumes the descriptor on completion/error, and closes
+the shared connection for duplicates. Native and real QEMU tests verify the
+full 196,613-byte payload before EOF and closed-duplicate behavior. Ordinary
+fd_close and cancellation remain abortive; half-shutdown is not implemented.
+/wasm run now redraws new
+output immediately while polling, so children can communicate progress.
+DNS now uses cooperative TCP queries through efi_net.resolve_ipv4. It accepts
+ASCII hostnames, checks the random transaction ID and question, follows bounded
+CNAME chains and returns one IPv4 A address. The configured DNS address/port
+feeds the firmware world. A 10-second realtime deadline bounds the query;
+failures preserve the guest output and terminal paths release the connection.
+Native and actual QEMU tests verify fragmented A/CNAME responses, NXDOMAIN,
+wrong IDs/questions and invalid compression. Deterministic ABI tests verify
+deadline boundaries, cancellation, clock/random failures and range validation.
+Socket fd_fdstat_set_flags now supports NONBLOCK. Duplicates share flags;
+pending reads/writes return AGAIN without changing guest outputs, zero-byte
+operations succeed, and EOF remains a successful zero-byte read. Restoring
+blocking mode resumes cooperative waiting; poll readiness is independent of
+that flag. Deterministic ABI, actual Windows TCP and QEMU/UEFI tests pass.
+efi_net.tcp_open, tcp_connect_fd and tcp_error now separate descriptor creation,
+connection and shared SO_ERROR-like reporting. NONBLOCK returns INPROGRESS;
+poll write readiness advances connection, and duplicate descriptors share
+Connecting/Connected/Failed/Closed state. Pending repeats return ALREADY,
+connected repeats ISCONN. Failure drops transport storage but retains the
+descriptor; error retrieval clears the shared report without restoring a
+connection. Failed sockets can retry. Blocking connect retains a continuation.
+Deterministic ABI and real Windows tests verify success/refusal, validation,
+error clearing, retry and pending cancellation. Actual QEMU verifies asynchronous
+connect/poll/error followed by TCP data and EOF. guests/posix now supplies WASI
+Preview 1 socket, connect, getsockopt, send, recv and IPv4 getaddrinfo/freeaddrinfo
+wrappers. It uses SDK fcntl/poll/close and the existing cooperative imports.
+Numeric services and hosts, byte order, shared nonblocking flags, SO_ERROR
+buffer bounds/clearing, errno conversion, data/EOF and hostname DNS pass real
+Windows and QEMU checks. Native refusal is ECONNREFUSED; tested QEMU NAT drops
+SYNs to the bound non-listening host port, so firmware verifies ETIMEDOUT instead,
+with retained packet capture. Unknown options fail explicitly.
+Socket options, address queries, listen/accept, peek/waitall and half-shutdown remain
+unsupported. Canonical names are available for numeric inputs only. Actual
+curl and WolfSSH ports use the implemented client operations described below.
+All descriptor kinds now use descriptor-local close-on-exec metadata. Default
+spawn skips marked standard descriptors; explicit spawn_fds mappings and dup2/
+dupfd clear the copied flag, while renumber and same-fd dup2 preserve it.
+Host integration tests cover sockets allocated at fd 0 after stdin closure.
+scripts/build_curl.ps1 builds actual curl 8.22.0 with the explicit Windows WASI
+SDK and native MSYS configure/make. It now links wolfSSL 5.9.4 built through
+scripts/build_wolfssl.ps1 with single-thread user I/O and WASI random_get.
+Library/client headers share user_settings.h; generated options.h is disabled.
+The build disables threaded resolution, socketpair, IPv6, FTP, TFTP and NTLM.
+Real Windows wasmi and
+QEMU/OVMF TCP4 checks pass redirect and chunked 131,089-byte downloads plus
+196,613-byte uploads with independent byte oracles and saved FAT verification.
+Curl DNS A/CNAME downloads and NXDOMAIN/malformed response rejection also pass
+native and actual firmware checks. Actual firmware also verifies a held curl
+HTTP response while another WASM instance makes progress, then cancellation
+with server-observed TCP closure. QuickJS zx-like commands and restricted
+CPython both call real ash-to-curl uploads while that curl remains waiting;
+independent server bytes and returned SHA256 match. Actual native Release and
+QEMU/OVMF verify TLS 1.2/1.3 bytes, trusted CA loading, invalid signatures,
+missing issuers, wrong-IP and expired certificates. Certificate failures are
+curl error 60; unavailable firmware entropy rejects TLS before HTTP with 35.
+CA trust is explicit through --cacert; no system/default CA bundle is packaged.
+WASI path_readlink checks rights/ranges, retains missing/provider errors and
+returns EINVAL for existing non-links without output changes. Symlink access
+is rejected by providers. WolfSSH 1.6.0 now builds as the actual WASI library
+and an exec client through scripts/build_wolfssh.ps1. It requires an explicit
+SHA256 host-key pin, reads a bounded password file, attempts password auth
+once, sends stdin EOF, drains stdout/stderr with shared-window credit, and
+propagates remote exit status after channel close. Missing status fails with
+255. Independent native AsyncSSH tests pass binary streams, delayed/missing
+status, trust/authentication failures and password/pin boundaries. All crypto
+consumers share the WASI 128-bit-integer feature to keep big-integer ABI
+consistent. UI loops dispatch input/events after each WASM time slice and skip
+the fixed 10 ms idle wait when the scheduler made progress. Real QEMU TCP4
+checks pass byte-exact stdout/stderr files, late/missing status, rejected pins
+before auth, rejected passwords, simultaneous held SSH and QuickJS/Python
+ash-to-WolfSSH chains, and cancellation with observed closure. With RDRAND
+disabled, SSH fails before authentication without an entropy fallback.
+The complete curl/TLS/DNS/POSIX/WolfSSH/QuickJS/ash/CPython combination passes
+with 512 MiB RAM in artifacts/wasm-applications-combined-512. The same full
+combination with 256 MiB fails at second concurrent Python initialization
+with out-of-memory; the separate 256 MiB WolfSSH combination passes.
+See artifacts/wasm-wolfssh-combined, artifacts/wasm-wolfssh-no-rdrand,
+artifacts/wasm-curl-tls-final,
+artifacts/wasm-curl-tls-no-rdrand and artifacts/wasm-curl-combined-final
+and docs/verification.md.
+BusyBox 1.37.0 sources are staged under artifacts/guest-sources. The actual ash
+translation unit now compiles to a wasm32 object through check_busybox.ps1 and
+prepare_busybox.py. build_busybox.ps1 now links and Asyncify-transforms ash.wasm.
+Real ash echo, quoting, functions, loops, conditions, exit status and syntax
+errors pass in host wasmi. Real ash and concurrent QuickJS shell capture also
+pass in QEMU/OVMF. Streams expose filestat; unchanged fd flags are accepted and
+unsupported changes fail. Ordinary external commands
+now use live exact-name program registry lookup and spawn/wait/reap fresh
+instances. Shell function/builtin precedence, temporary exports, repeated
+assignment last-value behavior, exec, set -e and statuses 126/127 pass host
+checks. External dispatch and QuickJS rejection also pass QEMU/OVMF.
+Windows guest builds must use the explicit
+WASI SDK compiler path. MSYS2 mingw64 Clang was repaired by upgrading the
+Clang/LLVM/compiler-rt family together to 22.1.8-2. Its previous 21.1.8
+libraries imported emulated-TLS symbols absent from GCC 16.2.0-3. Native
+compiler startup and a threaded C++ call_once program now pass. Guest builds
+continue to use WASI SDK 34 explicitly.
+guests/busybox/exec.c starts registered programs as fresh instances with explicit
+environment, waits/reaps, and propagates their exit status. Its separate real
+WASM fixture verifies errors and child status. tasks.inc serializes nodes and
+shell state for fresh tasks (512 KiB binary bytes, tree depth 256). Pipelines
+spawn all stages before waiting; command substitution drains before waiting.
+Variables, export/readonly/unset flags, functions, aliases, options, positionals,
+getopts state, $$ and previous status cross the boundary. Host checks cover
+nested tasks, background wait, tested errexit, transfer bounds and a 196,609-byte
+three-stage pipeline. QEMU/OVMF checks pipelines, substitution, parent state
+isolation and QuickJS pipeline capture. Here-documents now expand in the
+current shell and use efi_process.input_snapshot, an anonymous read-only
+stream capped at 512 KiB. The bytes are copied; descriptor duplicates/spawn
+share consumption and EOF. This removes the upstream fork/pipe-writer path.
+Native checks pass 4096/65536 boundary sizes, 196613-byte input, literal and
+expanded text, tab stripping, multiple inputs, small pipeline inheritance,
+300 repeated closes and oversize rejection. Actual QEMU verifies the same
+cases against independent saved FAT bytes in artifacts/wasm-ash-heredocs.
+The full 512 MiB curl/TLS/DNS/WolfSSH/QuickJS/ash/CPython regression with
+these cases also passes in artifacts/wasm-applications-heredocs-512.
+Large heredoc syntax trees now cross fresh task boundaries in a mapped binary
+snapshot stream, independently of the 64 KiB argv/environment limit. Native
+checks pass 30001/65537/196613-byte here-documents through subshells, pipelines,
+command substitutions and inherited functions, plus 256 KiB variable state.
+The 512 KiB cap covers the entire serialized shell state and syntax tree.
+Actual QEMU verifies all 26 here-document cases and malformed binary inputs in
+artifacts/wasm-binary-tasks-focused. The full 512 MiB application combination
+with these checks, arithmetic, descriptor mapping and both language interfaces
+also passes in artifacts/wasm-applications-binary-tasks-512. Staged printf
+captures numeric conversion errors before stdio output, which may change errno
+even on success; this fixes false status 1 for large firmware output.
+The process ABI now offers spawn_mapped_fds with an explicit child-to-parent
+descriptor map (up to 127 entries, target fd 3 reserved for the workspace).
+Native integration tests verify output swaps, shared binary consumption,
+parent-close lifetime, invalid maps without PID allocation, empty maps and
+close-on-exec duplication. Actual QEMU checks fd 127, the full map, parent
+descriptor lifetime and the preserved filesystem preopen in
+artifacts/wasm-descriptor-mapping. Ash tasks and external commands now inherit
+open user descriptors through explicit maps. Internal pipes and saved parser/
+redirection descriptors are marked close-on-exec and omitted; tasks explicitly
+map needed internal pipe ends to stdio. The task snapshot uses an available
+child descriptor >=4, preserving user fd 4, and closes before decoding/evaluation.
+Native cases verify fd 4/7, shared cursors, pipelines, substitutions, external
+commands, nested tasks, output files, child-close isolation, closed stdin and
+300 repeated open/task/close cycles. The dupfd wrapper converts POSIX errors
+to WASI libc errors, including the EBADF branch for previously unopened targets.
+Actual QEMU verifies all ten descriptor cases against saved FAT bytes and
+descriptor flags on snapshots/files/pipes/output in the full 512 MiB named
+application combination, artifacts/wasm-applications-descriptors-512.
+BusyBox's real 64-bit arithmetic and test/[ builtins are now enabled. Native
+checks pass precedence/base parsing, assignment, signed wrap, short-circuit,
+64-bit test boundaries, file type/size checks, task isolation and repeated
+nonlocal error recovery. The staged math patch adds logical short-circuit
+suppression with enclosing state restoration; upstream only handled ternary
+suppression. Independent expression/side-effect oracles verify nested branches.
+The test error helper uses the same Asyncify-safe return semantics as ash.
+Actual QEMU verifies these math/test cases against saved FAT bytes in the
+complete 512 MiB application regression, artifacts/wasm-applications-math-512.
+The dedicated artifacts/wasm-ash-math-languages QEMU run also verifies
+QuickJS/Python shell arithmetic (sum of squares 0..20 = 2870) and exact test
+error capture. QuickJS awaits the outer Promise so assertion rejection fails
+the root process; both languages require status 2 and the actual diagnostic.
+Filesystem PATH, ulimit/umask and full filesystem support remain incomplete. The real
+upstream read builtin now supports IFS splitting, raw/escaped input, continuation,
+EOF, -n/-d and selected input descriptors through WASI read/poll. Host timed
+reads pass; UEFI positive timeouts reject the unavailable monotonic clock.
+Terminal echo control (-s) returns an explicit error. Host field-oracle checks
+and QEMU/OVMF actual read/QuickJS pipeline checks pass.
+The world now accepts a host filesystem provider and gives each process a
+preopened directory at fd 3, named dot. UEFI uses the configured boot-volume
+workspace, or \work when model configuration is absent. File handles support
+read/write, create/exclusive/truncate/append, metadata, seek/tell and sync.
+Duplicates share file cursors; independent opens have separate cursors.
+Directory-relative paths validate each intermediate component. Host WASI libc,
+ash redirections, fresh tasks and QuickJS file capture pass. Actual QEMU/OVMF
+also verifies file operations and the saved FAT bytes. Directory mutation,
+rename/delete, timestamps and filesystem PATH remain pending.
+File resizing now implements fd_filestat_set_size with writable-descriptor and
+resize-right checks, a 48 MiB limit, zero-filled growth and preserved shared
+cursors. Firmware reads beyond a truncated EOF return zero bytes without
+moving the cursor. Append descriptors resize without moving their cursor and
+append at the new EOF. Actual libc checks and a 71-operation resize/overwrite
+byte oracle pass on Windows and QEMU/OVMF, including independent saved FAT
+content checks. Firmware growth remains synchronous and physical failures can
+leave partial growth.
+WASI random_get now uses an installed host random provider, shared by processes.
+Firmware uses the application's RDRAND-seeded ChaCha20 generator; host examples
+use the OS random source. Ranges are checked before generation, empty requests
+need no provider, requests above 512 KiB return INVAL, and failed generation
+publishes no bytes. Missing RDRAND returns NOTSUP without a fallback. Actual
+libc getentropy, guarded buffers and persisted output records pass on Windows
+and QEMU/OVMF. A QEMU run with RDRAND disabled verifies the failure path.
+Deterministic ABI tests verify boundaries and shared-source continuity; core
+tests verify the ChaCha20 known vector and no reseeding. These checks do not
+establish curl or WolfSSH ports; separate checks establish CPython execution.
+Directory providers now enumerate real host/EFI entries. fd_readdir retains a
+sorted list per traversal, supports partial records and continuation cookies,
+and refreshes on cookie zero. Limits are 4096 entries and 512 KiB of encoded
+directory records. Duplicate descriptors share the traversal list; independent
+opens do not. Actual libc opendir/readdir/seekdir/rewinddir and ash Unicode glob
+checks pass on the host. Directory NONBLOCK is accepted and reported in fdstat.
+Actual QEMU/OVMF also verifies directory traversal, libc positioning, ash glob
+and QuickJS glob capture against independent name/type records read from FAT.
+The dupfd process import allocates the lowest available descriptor at or above
+a minimum. Ash uses it to save redirections at fd >=10, which do not cross spawn.
+The real upstream printf builtin and bb_strtonum helpers now build into ash.
+Host checks cover formatting, 64-bit integer boundaries, errors, byte escapes,
+NUL output, pipes and QuickJS binary capture. Actual QEMU/OVMF verifies signed
+and hexadecimal boundaries plus QuickJS NUL capture. Read regression checks
+pass with the upstream numeric helpers.
+guests/sjlj implements nonlocal jumps using Binaryen 133
+Asyncify, needed by ash's setjmp/longjmp recovery. Fixture checks passed with
+O0/O2/O3, nested/repeated jumps, volatile stack objects and concurrent instances.
+The driver operates entirely inside each guest; host imports retain wasmi
+continuations. Ash integration is verified; full nonlocal-jump resource limits
+remain pending. The world's Wasm call depth is bounded to 4096 to accommodate
+Asyncify's helper frames around bounded guest tree traversal. Its value stack
+is limited to 8 MiB per active interpreter stack.
+Process startup environments are now copied per instance. Ordinary spawn
+inherits the startup list; spawn_env_fds replaces or clears it explicitly.
+WASI environ calls expose the list. Arguments/environment share a 64 KiB limit;
+names are nonempty and unique, values may be empty or contain '='. C helpers
+pack explicit lists for future ash exports. Guest libc environment mutations
+require explicit passing; host environment variables are never copied implicitly.
+
 The UEFI application owns direct model HTTP/HTTPS requests, DNS A queries over
 TCP, SSE parsing for Chat Completions and Responses, reasoning state, usage
 statistics, cancellation, and the read/write/edit tool loop. There is no relay,
@@ -63,6 +358,13 @@ and firmware settings have not yet been checked (see docs/verification.md).
 
 ## Build and packaging
 
+The WASM work is split into functional commits for the runtime, firmware
+providers, C guest helpers, BusyBox ash, QuickJS, CPython, POSIX networking,
+curl/wolfSSL, WolfSSH, and combined verification/documentation. The latest
+recorded complete regression is artifacts/wasm-applications-descriptors-512.
+The 2026-10-12 commit review uses existing evidence; it does not rerun tests.
+Guest source acquisition and automatic guest packaging remain pending.
+
 Daily builds use Cargo separately for the launcher and x86_64-unknown-uefi
 application. `cargo build` alone selects only host default members. The VM
 launcher can boot Cargo's .efi output directly; no script is needed for that.
@@ -91,7 +393,7 @@ credentials are written only into the private temporary disk.
 
 ## UI and model behavior
 
-Slash commands: /help, /caps, /effort [value], /status, /clear, /quit, /exit.
+Slash commands: /help, /caps, /wasm, /effort [value], /status, /clear, /quit, /exit.
 A normal prompt runs at most twelve rounds of executed read/write/edit tools.
 Edit requires one exact match, including overlap checks. Tool results enter
 model history; slash commands do not. /clear resets history, retaining local
@@ -180,6 +482,7 @@ into the Agent boot trees. See docs/verification.md.
 
 - Physical bare-metal and third-party provider verification.
 - Arbitrary command execution.
+- Complete the WASM world and named application ports in docs/wasm-world.md.
 - Permissions and sandboxes.
 - Richer tool views and conversation navigation.
 - Live resize on physical terminals.

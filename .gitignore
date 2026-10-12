@@ -4,3 +4,4 @@
 *.fd
 *.img
 .env
+__pycache__/

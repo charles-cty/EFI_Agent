@@ -1,0 +1,13 @@
+(module
+  (import "efi_process" "spawn" (func $spawn (param i32 i32) (result i32)))
+  (import "efi_process" "waitpid" (func $wait (param i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "proc_exit" (func $exit (param i32)))
+  (memory (export "memory") 1)
+  (data (i32.const 64) "child\00")
+  (func (export "_start") (local $pid i32)
+    (local.set $pid (call $spawn (i32.const 64) (i32.const 6)))
+    (if (i32.le_s (local.get $pid) (i32.const 0)) (then unreachable))
+    (if (i32.ne (call $wait (local.get $pid) (i32.const 0)) (local.get $pid))
+      (then unreachable))
+    (call $exit (i32.load (i32.const 0)))
+    unreachable))

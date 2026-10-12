@@ -1237,3 +1237,2020 @@ Unsupported error and sent no provider credentials; results are in
 artifacts/rdrand-negative-smoke. No claim about physical CPU entropy quality
 is made by these tests. The VM launcher exposes CPU features and no longer
 adds a virtio RNG device. Native firmware still needs physical retesting.
+
+## WASM process dispatcher (2026-10-11)
+
+The UEFI app embeds wasmi 2 through the no_std `efi-agent-wasm` crate. Nine
+Windows host integration tests execute validated Wasm modules. They check
+independent instance globals, yield/resume without repeated side effects,
+bounded execution of an infinite loop, cancellation, child wait suspension,
+exit status, inherited output, UTF-8 and empty arguments, trap isolation,
+resource limits, and PID allocation. Boundary checks accept an iovec at byte
+65,535 with length one and reject length two with no partial output. A memory
+growth check accepts 1,024 pages and rejects the next page.
+
+Windows UEFI Release build, UEFI Release Clippy, and WASM all-target Clippy
+passed. Debug UEFI code generation failed in the existing sha2 0.10.9 dependency
+with `rustc-LLVM ERROR: Do not know how to split the result of this operator!`.
+The WASM crate's host Debug build and tests passed. No crypto configuration
+was changed to bypass that compiler failure.
+The 45 existing core tests also passed. The UEFI dependency feature tree shows
+wasmi without its `std` or `wat` features; WAT parsing is a host fixture tool.
+
+Actual Windows QEMU/TCG and OVMF passed `scripts/smoke_wasm.py` with the new
+Release EFI image. The VM has no NIC and receives no provider configuration.
+One infinite-loop instance remained runnable while a second instance spawned
+a child, waited across explicit yields, received `WASM_CHILD_731` through its
+inherited output, and exited with code 37. The smoke also cancelled and reaped
+the loop, isolated a Wasm unreachable trap, cancelled a foreground loop with
+Esc, ran new commands after both failures, and exited the firmware cleanly.
+Results are in `artifacts/wasm-smoke` (serial bytes, final text and QEMU log).
+
+Reproduce on Windows in a Windows-local checkout:
+
+```powershell
+cargo.exe test -p efi-agent-wasm
+cargo.exe build -p efi-agent
+cargo.exe build -p efi-agent-uefi --target x86_64-unknown-uefi --release
+cargo.exe run -p efi-agent-wasm --example compile_fixtures -- scripts/fixtures/wasm artifacts/wasm-fixtures
+./scripts/build_wasm_c_fixture.ps1 -WasiSdk $env:WASI_SDK_PATH
+uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-smoke --qemu qemu-system-x86_64.exe
+```
+
+The smoke uses unique process IDs and result markers for each operation;
+previous screen text cannot satisfy a later result check. It uses observation
+deadlines rather than fixed boot sleeps. No flakiness was observed in the
+completed run, but repeated-run stability has not been established. This test
+does not cover a physical machine, guest filesystem or network operations,
+BusyBox, QuickJS, CPython, curl, or WolfSSH. Their implementations and
+full-application verification remain required; see docs/wasm-world.md.
+
+## WASM descriptor and pipe verification
+
+Fifteen Windows WASM integration tests passed after adding descriptor tables,
+bounded pipes, redirected spawn, fd close/renumber/stat, and blocking reads
+and writes. The pipeline test observes both blocked read and blocked write
+states. It checks 196,608 nonuniform bytes through producer, copier and
+consumer instances. A separate host oracle compares the actual captured bytes
+with independently generated data at read sizes 257, 997 and 8,191. Tests also
+cover the last duplicated writer, last-reader cancellation with EPIPE,
+orphan EOF after cancellation, zero-length I/O, wrong descriptor directions,
+the 128-descriptor limit, atomic pipe allocation with one free slot, and
+invalid redirect descriptors.
+
+The updated Windows QEMU/TCG smoke passed with the Release UEFI app in
+`artifacts/wasm-pipe-smoke`. It runs that three-process pipeline in actual
+firmware, checks every received byte in the consumer, validates the success
+marker and exit code, and proves that both children have been reaped. An
+earlier test assertion inspected old UI text and failed after the pipeline
+itself completed. The check now asks to reap each already-reaped child and
+requires a unique UnknownProcess result. This removes that stale-text check;
+repeated-run stability remains unverified. WASM all-target Clippy passed.
+
+The Windows MSYS2 Clang failed to load its DLLs, so it is excluded from the
+build procedure. The fixture script requires an explicit independent WASI
+SDK path and does not choose Clang from PATH. The official WASI SDK 34 Windows
+archive is being downloaded; the SDK script path still needs validation.
+
+## C process capture verification
+
+The actual C capture module passed both the host wasmi runner and Windows
+QEMU/OVMF (`artifacts/wasm-capture-smoke`). It uses the same C process header
+and library that the application ports will use. It checks argv packing on
+both sides of a capacity boundary, creates redirected child input/output
+pipes, transfers a payload with an embedded NUL, collects three-byte reads
+until EOF, compares the actual bytes, waits for the child exit, and checks
+reaping. The UEFI smoke requires the marker `C_SPAWN_CAPTURE_OK`, root exit
+code 0, and a unique UnknownProcess result for the reaped child.
+
+For this verification, the independent Windows Clang 20.1.8 frontend compiled
+the freestanding sources to wasm32 LLVM bitcode with `-emit-llvm -c`.
+Rust's bundled rust-lld then generated the command module with
+`-flavor wasm --no-entry --export=_start --export-memory`. This uses no MSYS2
+compiler or DLL. Native Clang in PATH lacks a Wasm object-code backend, so
+direct `-c` code generation is not the procedure used for this run.
+The SDK-specific build procedure above remains unverified until the SDK
+download finishes. The WASM runner example can execute the generated module:
+
+```powershell
+cargo.exe run -p efi-agent-wasm --example run_guest -- artifacts/wasm-fixtures capture
+```
+
+Fifteen WASM tests, WASM all-target Clippy, and UEFI Release Clippy passed.
+Actual QuickJS, Python, BusyBox, curl and WolfSSH application execution is
+still pending. QuickJS 2026-06-04 sources have been downloaded under
+artifacts/guest-sources for the next port work; downloading sources does not
+prove that the engine is embedded or executable.
+
+## WASM readiness polling
+
+Seventeen Windows WASM tests passed after adding WASI poll_oneoff. A real
+Wasm caller suspends in Polling state while a child holds an empty pipe open.
+It resumes when data arrives, checks 64-bit userdata, event type, available
+bytes and HUP, then reads the same bytes to prove the poll did not consume
+them. A second call returns an invalid-descriptor error event and a valid
+EOF event in subscription order. Immediate relative timeout tests return
+only ready subscriptions. Invalid output memory and empty subscription lists
+return errors before writing the event count. Timed and absolute waits
+return NOTSUP until clock support is implemented.
+
+UEFI Release build, WASM all-target Clippy, and the expanded Windows
+QEMU/OVMF smoke passed. Results are in artifacts/wasm-poll-smoke. Actual
+firmware checks the POLL_READY_OK marker, root exit 0, and child reaping,
+alongside the existing process, backpressure and C binary capture checks.
+The test fixture initially used an i64 as an if condition; Wasm validation
+rejected it. The fixture now compares that i64 to zero and both host and
+firmware tests passed. No runtime validation was bypassed.
+
+The WASI SDK and sysroot transfer handles still run without completed output.
+Their local archive sizes are not evidence of successful download or of a
+usable toolchain. Revalidate the running handles before any retry. The named
+application ports and the QuickJS/Python command interfaces remain incomplete.
+
+## WASM clock and timed wait verification
+
+Twenty Windows WASM integration tests passed after adding clock_time_get,
+clock_res_get, a host clock provider, and relative/absolute poll deadlines.
+Deterministic tests compare a relative deadline at 150 ns against 149 ns,
+150 ns and a realtime rollback to 90 ns. A following absolute deadline of
+200 ns completes at 200, not at now plus 200. They also check clock failure
+while suspended, unchanged result memory on failure, deadline overflow,
+invalid and unavailable clock IDs, and the last valid eight-byte output
+range versus a one-byte overrun. The provider cannot be replaced while any
+process exists.
+
+UEFI Release build, WASM all-target Clippy and UEFI Release Clippy passed.
+Actual Windows QEMU/OVMF passed the expanded smoke in
+artifacts/wasm-clock-smoke. The Wasm clock fixture reads firmware realtime
+and positive reported resolution, waits for a relative one-second timeout,
+checks that realtime advanced by at least one second, and requires the
+FIRMWARE_CLOCK_WAIT_OK marker and root exit 0. The prior process, pipe,
+poll and C capture cases also passed.
+
+UEFI realtime comes from GetTime, including its nanosecond field and the same
+UTC calendar conversion used for TLS. GetTime capabilities supply the clock
+resolution. UEFI monotonic and process/thread CPU clocks return NOTSUP;
+this verification does not claim those clock types or physical RTC behavior.
+The host runner uses SystemTime and Instant and a bounded idle sleep for
+fully sleeping worlds. Application ports remain incomplete.
+
+## Concurrent command capture and real QuickJS
+
+WASI SDK 34, its sysroot and compiler runtime finished downloading and
+extracting. The SDK's Windows-native clang.exe and wasm-ld.exe successfully
+built scripts/build_wasm_c_fixture.ps1. No MSYS2 compiler was invoked.
+scripts/build_quickjs.ps1 built the real QuickJS 2026-06-04 engine with WASI
+libc and the restricted command wrapper. The copied source patches disable
+threaded Atomics, include malloc.h and remove dtoa's unused setjmp.h include.
+quickjs-libc.c is not linked. The upstream license accompanies the module.
+
+Twenty-three Windows WASM integration tests, WASM all-target Clippy, UEFI
+Release build and UEFI Release Clippy passed. New checks cover live versus
+exited nonblocking wait, untouched status memory while live, invalid status
+memory, reaping once, stream seek errors and the last valid result range.
+A large callee with 20,003 global increments verifies that fuel exhaustion
+preserves its continuation while another process completes. Real QuickJS
+initially exposed a lazy-translation fuel error; eager module compilation
+resolved it without increasing the runtime quantum or replaying guest code.
+
+The shared C capture fixture runs two real children concurrently. Each child
+writes 70,003 binary stderr bytes before 65,537 stdout bytes. The parent
+compares every byte, exit code 23 and both lengths, then repeats with stdout
+capacity reduced by one byte. Overflow is reported while both streams still
+drain and the child is reaped. A missing program checks descriptor cleanup.
+Host wasmi and actual UEFI QEMU/OVMF passed. Firmware artifacts are under
+artifacts/wasm-shell-capture-smoke and artifacts/wasm-quickjs-smoke.
+
+The real QuickJS command ABI smoke passed through scripts/smoke_quickjs.py.
+It verifies Promise.all with two parallel commands, exact generated shell
+bytes for single quotes, empty words, Unicode and shell metacharacters,
+stderr-before-stdout capture, nonzero-exit rejection, NUL rejection and
+absence of std/os/process/require globals. Its child is an explicit ABI probe
+registered temporarily as ash. The probe is not a shell interpreter, so this
+does not prove BusyBox ash or actual shell syntax execution.
+
+Actual Windows QEMU/OVMF passed scripts/smoke_wasm.py with --quickjs
+artifacts/wasm-guests/quickjs.wasm. Firmware loaded and ran the real engine,
+resolved top-level await, checked restricted globals and firmware Date.now,
+printed QUICKJS_ENGINE_OK and reported Process 20: Exited(0). The expanded
+C capture case printed MULTI_CHILD_SHELL_CAPTURE_OK and Process 16: Exited(0);
+PIDs 17, 18 and 19 were confirmed reaped through UnknownProcess results.
+The earlier dispatcher, pipe, cancellation, timed poll and clock cases passed.
+No flaky result was observed in these runs. Wall-clock QEMU smoke deadlines
+still depend on host load. Physical firmware remains unverified.
+
+BusyBox ash NOFORK, CPython, curl, WolfSSH, guest filesystem/socket support,
+and the Python command interface remain incomplete. The QuickJS command API
+still requires a real registered ash port for actual shell command execution.
+
+## Guest nonlocal jumps for ash
+
+BusyBox 1.37.0 sources were downloaded from busybox.net and extracted under
+artifacts/guest-sources. Inspecting the actual ash source confirmed that
+FEATURE_SH_NOFORK does not remove its nested setjmp/longjmp error recovery,
+or its fork paths for pipelines, external commands and subshells. No BusyBox
+ash application has been built or claimed executable yet.
+
+Binaryen 133's Windows archive completed download and extraction. The new
+guests/sjlj runtime saves Wasm frames with Asyncify, restores the guest C stack
+pointer, and handles capture/jump cycles below the instrumented application.
+It does not require host stack manipulation or Wasm exception handling.
+scripts/build_wasm_sjlj.ps1 uses the verified Windows WASI SDK and Binaryen,
+with no MSYS2 compiler invocation. All transforms and runtime calls stay
+inside each Wasm module.
+
+The actual C fixture passed at O0, O2 and O3 in host wasmi. It checks stack
+allocated environments, nested jumps, zero-to-one and negative return values,
+re-capture at a repeated location, five jumps to the same saved environment,
+volatile stack objects changed after capture, and entry side effects executed
+once. Deep recursive jumps call sched_yield first. Two child instances execute
+concurrently with the root and are waited for and reaped.
+
+scripts/smoke_sjlj.py computes a separate arithmetic oracle for 37 structured
+jumps per seed, with varying depths and signed values. Each optimization
+level passed root/child seeds 11/17/29 and standalone seeds 0, 1, 2, 999,
+65535, 123456789 and 4294967295. The captured digest and marker counts matched
+the host oracle. This explores jump paths, not random invalid-module input.
+
+Actual Windows QEMU/OVMF passed the expanded smoke with --sjlj
+artifacts/sjlj-o2/sjlj.wasm. Artifacts are in artifacts/wasm-sjlj-smoke.
+The firmware root PID 21 printed SJLJ_MULTI_INSTANCE_OK and exited 0.
+Child PIDs 22 and 23 were confirmed reaped with UnknownProcess errors.
+The real QuickJS engine and all earlier process, pipe, capture and clock
+checks also passed. No flaky result was observed. The Asyncify jump runtime
+still needs maximum-depth/resource checks and integration with actual ash
+error recovery. This result does not prove BusyBox, CPython or shell execution.
+
+## Process startup environments
+
+The world now stores an independent startup environment per instance.
+World::spawn_with_environment supplies explicit root entries; firmware roots
+remain empty. Ordinary spawn copies its parent's startup entries, while the
+new spawn_env_fds import replaces or clears them. WASI environ_sizes_get and
+environ_get expose actual entries. The guest C helper packs both argv and
+environment into caller scratch. No host environment variables are copied.
+Guest libc or shell mutations require explicit environment passing.
+
+Twenty-eight distinct WASM integration tests passed, with WASM all-target
+Clippy, UEFI Release build and UEFI Release Clippy. Five environment tests
+check host validation, exactly 65,536 joint argument/environment bytes versus
+one byte beyond, unchanged PID allocation after rejection, structured lists
+with empty/Unicode/newline/equals-containing values, invalid output memory,
+raw spawn invalid UTF-8, duplicate names, missing final NUL, bad descriptors,
+explicit-size overflow and inherited-size overflow. Serialized output is
+compared with an independently constructed host byte list.
+
+The real WASI-libc C fixture verifies getenv in a child and grandchild,
+explicit clearing from a nonempty child, parent isolation, invalid names and
+duplicate entries, and a 46-byte scratch capacity against a 45-byte capacity.
+It waits for all children and validates their exit statuses. Host wasmi and
+actual Windows QEMU/OVMF passed. Firmware artifacts are under
+artifacts/wasm-environment-smoke. The root PID 20 printed
+PROCESS_ENVIRONMENT_OK and exited 0. Children 21 through 24 were confirmed
+reaped through UnknownProcess errors. QuickJS PID 25 and jump-runtime PID 26
+also exited 0; jump children 27 and 28 were reaped. Earlier process, capture,
+pipe, timed polling and clock checks passed. QuickJS's separate process ABI
+smoke passed with quoted templates, parallel capture and failure rejection.
+
+No flaky result was observed. These checks verify environment transport,
+not ash assignment/export parsing. Actual BusyBox ash and the remaining
+application ports are still incomplete.
+
+## Upstream ash object and terminal program bridge
+
+scripts/prepare_busybox.py and scripts/check_busybox.ps1 now prepare the real
+BusyBox 1.37.0 ash source and compile it to artifacts/wasm-guests/ash-build/ash.o
+using Windows WASI SDK 34. The generated source and upstream license are
+retained beside the object. The initial configuration enables aliases,
+getopts, command, internal glob and FEATURE_SH_NOFORK. Full applet/builtin
+and arithmetic configurations remain pending.
+
+Direct fork is replaced in the generated translation unit with the declared
+efi_ash_spawn_node boundary. This boundary still needs its serializer and
+fresh-instance entry implementation. No fork implementation or successful
+no-op was supplied. Utility, signal, CPU-clock and filesystem declarations
+do not prove those interfaces are implemented. The object check alone does
+not verify ash execution. C noreturn promises on ash error helpers
+are replaced with noinline boundaries so Asyncify can unwind through them.
+Explicit unwind return values resolved all return-path compiler diagnostics.
+
+The terminal program bridge in guests/busybox/exec.c is implemented and
+tested separately. It packs the selected argv and explicit environment,
+starts a registered fresh instance, waits/reaps it and exits with its status.
+POSIX process errno values are mapped to the different WASI-libc errno
+numbers. Missing programs and duplicate environment entries return ENOENT
+and EINVAL before successful child execution. Program selection currently
+uses argv[0]; filesystem PATH search still needs implementation.
+
+The real C fixture and scripts/smoke_ash_exec.py passed in host wasmi. The
+child checked its nonzero parent PID and its empty/equals-containing
+environment values, printed ASH_EXEC_FRESH_INSTANCE_OK and exited 37.
+The root propagated 37. The host smoke checks both that exact status and
+the standalone output line; a generic failure or trap does not satisfy it.
+
+Actual Windows QEMU/OVMF passed the expanded smoke with --ash-exec
+artifacts/wasm-fixtures/ash_exec.wasm. Artifacts are under
+artifacts/wasm-ash-exec-smoke. Root PID 29 exited 37 with the expected marker;
+child PID 30 was confirmed reaped with UnknownProcess. QuickJS, process
+environments, nonlocal jumps and earlier dispatcher/capture/clock cases
+also passed. No flaky result was observed. Full ash interpretation,
+pipelines, command substitution, subshell state isolation and syntax-error
+recovery are not verified yet. CPython, curl and WolfSSH remain incomplete.
+
+## Windows Clang dependency failure and ash link check
+
+MSYS2 mingw64 clang.exe produced Windows entry-point error dialogs, including
+__emutls_v._ZSt11__once_call in C:\msys64\mingw64\bin\libclang-cpp.dll.
+Static PE inspection confirmed that libclang-cpp.dll imports
+__emutls_v._ZSt11__once_call from libstdc++-6.dll. Neither the installed MSYS2
+runtime nor QEMU's runtime exports that symbol. The installed package records
+show Clang 21.1.8-4 and GCC runtime 16.2.0-3. This confirms an incompatible
+Clang/runtime pair; the DLL selected by the failing process was not traced.
+QEMU's directory also precedes MSYS2 on PATH and contains same-name GCC DLLs.
+Do not invoke that compiler for this project. Guest build scripts select
+bin/clang.exe under the explicit
+WASI SDK directory instead of resolving clang from PATH.
+
+The Windows WASI SDK compiler started successfully during the follow-up check.
+build_wasm_c_fixture.ps1 compiled all C fixtures with the explicit SDK path.
+No global PATH changes or MSYS2 package changes were made. The standalone
+LLVM installation did not contain llvm-readobj.exe; WSL objdump inspected the
+PE files without executing the affected compiler.
+
+Follow-up inspection on 2026-10-11 confirmed that the MSYS2 package versions
+remain Clang/clang-libs 21.1.8-4 and gcc-libs 16.2.0-3. The explicit Windows
+WASI SDK 34 compiler starts successfully. The current CPython rebuild also
+completed compilation and linking without invoking MSYS2 Clang. Its eight
+host integration tests still fail during interpreter initialization because
+the restricted builtin table removes `posix`, which external importer setup
+requires. This separate runtime issue was resolved in the CPython integration
+checks recorded below.
+
+Windows WASI SDK 34 clang --version passed. build_busybox.ps1 compiled, linked
+and Asyncify-transformed the real ash source into artifacts/wasm-guests/ash.wasm.
+The first host run_guest attempt rejected instantiation on the missing
+wasi_snapshot_preview1.fd_fdstat_set_flags import. This runtime failure was
+separate from the MSYS2 DLL loading failure and is now resolved below.
+
+## Real ash and QuickJS shell execution
+
+The world now provides stream fd_filestat_get and fd_fdstat_set_flags. It
+accepts zero flags, rejects unsupported defined flags with NOTSUP and rejects
+unknown flag bits with INVAL. Streams advertise FD_FILESTAT_GET rights. File
+metadata uses the WASI 64-byte layout; character streams have CHARACTER_DEVICE
+type, one link and zero size/timestamps. No filesystem preopens exist yet.
+Prestat returns BADF; directory operations return NOTDIR for valid streams and
+BADF for absent descriptors. These are interim domain errors, not filesystem
+support. The metadata integration test checks exact memory-end boundaries,
+invalid descriptors, flag cases and the independent WASI field offsets.
+
+Windows cargo test -p efi-agent-wasm passed 29 integration tests. Clippy with
+--all-targets -- -D warnings passed. The UEFI Release build passed.
+scripts/smoke_ash.py passed real BusyBox ash echo, quoted expansion, functions,
+function return status, for loops, conditions, explicit exit 37 and syntax
+error exit 2. With --quickjs, it also passed concurrent actual shell execution,
+single quotes, empty arguments, Unicode, literal shell-special substitutions,
+capture and rejection of exit 17. No flaky result was observed.
+
+Actual Windows QEMU/OVMF passed scripts/smoke_wasm.py with --ash, --quickjs,
+--sjlj and --ash-exec. Artifacts are under artifacts/wasm-real-ash-smoke. Ash
+root PID 31 printed ASH_REAL_ENGINE_OK and exited 0. QuickJS PID 32 launched
+two actual ash instances and printed QUICKJS_REAL_ASH_OK. The existing process,
+pipe, clock, environment, QuickJS, nonlocal jump and exec-bridge checks passed
+in the same run. Full shell node serialization, pipelines, command substitution,
+external command evaluation, filesystem support and the other application
+ports remain incomplete.
+
+## Real ash external program dispatch
+
+The live efi_process.program_exists import queries exact registered names and
+yields without allocating a PID. Its integration test checks an absent name,
+registration after the caller starts, a memory-end valid name, a one-byte
+overrun, empty names, size limits, embedded NUL and invalid UTF-8. Windows
+cargo test -p efi-agent-wasm passed 30 integration tests. Clippy with
+--all-targets -- -D warnings and the UEFI Release build passed.
+
+prepare_busybox.py now routes ordinary external commands through efi_ash_run
+instead of forkshell. Builtins and functions retain lookup precedence; command
+bypasses functions. The parent waits/reaps and continues, while exec exits
+after its fresh child finishes. Registered command lookup is independent of
+filesystem PATH; filesystem PATH support remains pending.
+
+scripts/smoke_ash_external.py passed actual ash dispatch of ash_child.wasm:
+empty/quoted/Unicode argv, stdout/stderr, exported and temporary variables,
+export override, repeated assignments using the last value, parent isolation,
+nonzero status followed by continued execution, exec exit 23, set -e exit 17,
+missing command status 127, function precedence, command bypass, and status 126
+when expanded environment bytes exceed 64 KiB. Direct i32 child exits -1 and
+300 become shell statuses 255 and 44. QuickJS also passed actual ash external
+command capture and rejection. The separate ash exec bridge smoke still passed.
+
+The repeated-assignment check exposed duplicate environment names and an
+unsigned ash exitstatus conversion that changed spawn failure -1 into 255.
+Environment lists now compare variable names and discard earlier assignments.
+Spawn errors remain signed until converted to shell statuses. The world still
+rejects duplicate raw environment entries; its validation was not relaxed.
+
+Actual Windows QEMU/OVMF passed the expanded smoke with --ash-child, --ash,
+--quickjs, --sjlj and --ash-exec using the final rebuilt ash and C fixtures.
+Artifacts are under artifacts/wasm-ash-external-smoke. Ash PID 35 reported child
+status 17 and continued. QuickJS PID 37 rejected the same external command with
+exitCode 17. Children 36, 38 and 39 were confirmed reaped. Existing firmware
+checks passed in the same run. No flaky result was observed. Shell-node
+serialization, pipelines, command substitution, filesystem PATH and the other
+application ports remain incomplete.
+
+## Real ash shell tasks, pipelines and command substitution
+
+guests/busybox/tasks.inc now encodes typed AST fields and shell state, then
+starts a fresh ash instance through the process ABI. It transfers no pointers
+or linear-memory image. The state carries variables with export/readonly/unset
+flags, functions, aliases, options, positionals and $0, getopts cursor, $$,
+previous status and $!. The binary limit is 28,000 bytes, hex-encoded into
+argv; traversal depth is limited to 256. Task errors use ash error recovery.
+The child starts in a new Store with selected standard descriptors.
+
+Pipeline creation starts all stages before waiting and closes the parent's
+unused pipe endpoints. Job waiting polls known children cooperatively and
+stores packed exit statuses. Command substitution drains its pipe before
+waiting; upstream ash removes trailing newlines and expands the result. The
+child clears errexit for substitution, matching this upstream configuration.
+Tested subshells and pipelines preserve EV_TESTED. Background tasks support
+$! and wait without asynchronous signal delivery.
+
+Windows scripts/smoke_ash_tasks.py passed 20 named shell cases covering state
+isolation, inherited functions and parameters, control trees, builtin/external
+pipes, pipeline last status, background wait, nested pipelines, substitution,
+nested substitution, substitution status and trailing newlines, substitution
+pipelines, alias/getopts/$$ inheritance, exported unset variables and tested
+errexit. A producer sends
+196,609 deterministic bytes through three actual ash/external stages with
+4093-byte writes and 257-byte reads; the consumer checks every byte and EOF.
+QuickJS captured the successful actual bounded pipeline.
+
+Five seeded structured shell states include Unicode, empty/quoted content,
+newlines and literal shell operators. Their pipeline output matched the
+independent Python string oracle. Readonly and nounset failures stayed inside
+the child, preserving parent state. Subshell redirection expansion executed
+its external command substitution once, then returned the expected file error;
+the child used the parent's expanded result without replay. The transfer check accepted a 20,000-byte
+variable and rejected a 30,000-byte variable with exit 2; a following parent
+command prevents the terminal subshell optimization from bypassing the test.
+The depth check accepted NCMD plus 255 argument nodes (depth 256) and rejected
+one extra argument node with exit 2. Odd/invalid hex, truncated words and a bad
+state version returned domain errors instead of interpreter traps.
+
+The depth check exposed Asyncify's interpreter value-stack overhead. Raising
+call depth alone did not fix it. The world now bounds call depth at 4096 and
+value-stack storage at 8 MiB, growing as needed. The exact guest depth boundary
+then passed. An independent WAT test completed 1200 nested calls and verified
+that unlimited recursion traps locally without stopping another instance.
+Windows cargo test -p efi-agent-wasm passed 31 integration tests; Clippy with
+--all-targets -- -D warnings and the UEFI Release build passed. Existing ash
+external-command and QuickJS capture/rejection host checks also passed.
+
+Actual Windows QEMU/OVMF passed the final Release firmware and guest modules
+with --ash-tasks, --ash-child, --ash, --quickjs, --sjlj and --ash-exec. Artifacts
+are under artifacts/wasm-ash-tasks-smoke. Ash root PID 40 verified the 196,609-byte
+pipeline; PID 47 returned child:parent from command substitution. QuickJS PID 49
+captured a command substitution containing the same bounded pipeline and printed
+UEFI_ASH_TASKS_OK. Children 41-46, 48 and 50-57 were confirmed reaped. Existing
+firmware checks passed in the same run.
+
+Full task failure cleanup, inherited nonstandard descriptors, background stdin
+isolation, large heredocs, remaining builtins, filesystem/PATH and other
+application ports remain incomplete. No flaky result was observed in the
+completed host checks.
+
+## Actual directory traversal and ash glob
+
+fd_readdir now uses real host/EFI directory entries. Each traversal retains a
+sorted list bounded to 4096 entries and 512 KiB of encoded WASI directory
+records. Cookie zero refreshes the list; subsequent cookies retain its contents
+even if another guest creates a file. Duplicate descriptors share the list.
+Directory opens have independent lists. Directory NONBLOCK is accepted and
+reported in fdstat. The regular file flag behavior remains unchanged.
+
+The actual C directory fixture passed on the Windows host and in QEMU/OVMF.
+It checks buffers of 0, 23, 24 and 25 bytes around the 24-byte header and first
+one-byte name. A changing buffer size forces retries at partial headers/names
+while traversing 82 initial entries. It checks unused buffer tails, invalid
+cookies, invalid output memory, BADF/NOTDIR/NOTCAPABLE, duplicate lifetime,
+creation during traversal and refresh on cookie zero. Actual libc opendir,
+readdir, telldir, seekdir, rewinddir, closedir and empty-directory EOF pass.
+Two new Rust integration tests independently check the entry and byte limits,
+including a rejected large entry followed by an exactly fitting entry.
+
+The fixture saves initial, refreshed and libc name/type records as hex-encoded
+UTF-8 names. Independent Python checks compare complete sets with the original
+host inputs and reject duplicates. Seeded inputs include 67 variable-length
+names, spaces, punctuation, hidden files, precomposed/decomposed Unicode,
+directories and long names. The refreshed listings include added.txt; the old
+listing excludes it. Actual ash glob results are independently derived from
+the staged names and verify sort order and hidden-name exclusion. QuickJS
+captures the actual ash glob and compares every byte. No fake guest filesystem
+or mocked libc is used.
+
+33 Rust integration tests, all-target wasm Clippy, host file/directory/ash/
+QuickJS checks and the UEFI Release build passed. Windows QEMU/OVMF passed
+scripts/smoke_wasm.py with --filesystem --directories, real ash and QuickJS.
+Artifacts are under artifacts/wasm-directory-smoke. The test reads the actual
+FAT image after shutdown and compares all directory records and glob-list.txt.
+Directory ash PID 36 returned UEFI_ASH_DIRECTORY_OK, and QuickJS PID 37 captured
+the glob through ash PID 38. These checks also retain the prior actual file
+cursor, append, rights, path validation and saved-byte checks.
+The complete optional firmware regression also passed under
+artifacts/wasm-directory-full-smoke, including nonlocal jumps, external dispatch,
+exec, pipelines, command substitution, read and printf before the directory cases.
+
+Intermediate issues resolved: the firmware module initially lacked the no_std
+ToString trait import. libc opendir requests O_NONBLOCK; the first version
+rejected it with NOTSUP. Directory enumeration now accepts that flag and
+reports it accurately. libc dirent types use DT_DIR/DT_REG values, which differ
+from WASI types; the record verifier explicitly converts them.
+
+One firmware smoke failed before the directory case when its unframed pyte
+display contained misplaced characters around an actual successful QuickJS
+exit. The smoke now consumes complete frames using guest view metadata and
+sets dimensions from each committed frame, as the host launcher does. The
+subsequent actual run passed. Offline replay of 239 recorded frames also
+recognized the successful QuickJS exit. A temporary replay command first had
+Bash/PowerShell quoting errors, causing Bash to interpret Python lines and
+start ImageMagick import commands. Those processes were terminated; the replay
+then passed with a literal Bash heredoc containing the complete PowerShell
+script. The temporary Wasm disassembly probe was removed. Python bytecode cache
+directories are now ignored by Git. No MSYS2 compiler or network download was
+needed. The supplied project state omits existing WASM progress; local Current
+state retains the verified implementation. The display-parser failure is a
+flaky-test issue observed in this turn; its framing fix passed actual rerun.
+
+Directory mutation, rename/delete, file resize imports, timestamps, symlinks,
+filesystem PATH, CPython, curl and WolfSSH remain incomplete.
+
+## Actual WASI filesystem and ash redirections
+
+The no_std world now accepts a filesystem provider before spawning. UEFI opens
+real EFI_FILE_PROTOCOL handles on the configured boot-volume workspace, or
+\work without model configuration. Each process receives a directory preopen
+at fd 3, named dot. The host runner uses native handles in its program directory.
+Open supports read/write, create/exclusive/truncate/append and directory handles.
+Metadata, seek/tell, sync and file readiness are implemented. Copies of a
+descriptor share a cursor; independent opens do not. Path resolution checks
+each intermediate directory, rather than removing dot-dot components blindly.
+
+Windows scripts/smoke_wasm_filesystem.py passed the real WASI libc fixture,
+actual ash write/append/read redirections, a fresh ash command-substitution
+task using the same filesystem, and QuickJS capture from an actual file.
+The fixture checks binary bytes, readonly creation, exclusive-create errors,
+shared and separate cursors, append after seek, metadata, Unicode openat,
+explicit and implicit directory opens, missing and non-directory parents,
+traversal outside a directory, rights failures, descriptor allocation limits,
+and output-pointer validation before truncation. A structured 97-operation
+cursor workload uses a 257-byte file. Guest reads and an independent
+Python byte-array oracle agree. Poll reports zero bytes at EOF and 256 bytes
+after seeking to offset 1.
+
+The Release UEFI build passed. Actual Windows QEMU/OVMF passed the complete
+optional guest smoke with --filesystem, --ash-printf, --ash-read, --ash-tasks,
+ash external dispatch, the exec fixture, nonlocal jumps and real QuickJS.
+Artifacts are under artifacts/wasm-filesystem-smoke. The filesystem fixture
+finished at PID 71; ash PID 72 and its task PID 73 returned success. QuickJS
+PID 74 captured a file through ash PID 75. After the final readonly-create
+and directory-error changes, a second firmware run also passed under
+artifacts/wasm-filesystem-final-smoke. Both runs read the FAT image after clean
+shutdown and verified exact binary file bytes plus first/second shell output.
+The final run uses the latest fixture, including file-readiness boundary checks.
+All 31 Rust integration tests and wasm all-target Clippy passed. The host read
+smoke also passed after the redirection changes.
+
+Intermediate issues resolved: the initial fixture used an incorrect dup2 name
+and then expected zero instead of the target descriptor. Both were corrected
+against the actual process ABI. WASI libc passes inheriting rights when opening
+regular files and requests rights for multiple file types. The implementation
+now verifies them against the parent and retains the applicable rights on the
+opened descriptor. Ash used unsupported libc F_DUPFD operations when saving
+redirections; those five upstream call sites now use the world's dupfd import.
+An early permissions check still returned stream BADF for a restricted file;
+it now reports NOTCAPABLE before touching output memory. The native provider
+also handles read-only creation without granting guest write rights.
+
+The first firmware display check matched command input before output arrived.
+The next check assumed streamed output would occupy a single transcript panel.
+The checks now require actual output lines and allow separate panels. Neither
+failure indicated a guest file-operation failure. No flaky result was observed
+after these fixes. The final checks also inspect the persisted FAT files.
+Local dependency probes first used nonmatching paths; the installed UEFI crate
+was found in Cargo's configured mirror directory. A direct upstream source
+request failed with a connection reset. The Windows proxy at port 2080 worked,
+but the requested source path returned HTTP 404. Local Wasm disassembly supplied
+the libc call evidence, and its temporary probe file was removed. MSYS2 Clang
+was not invoked. The supplied project-state text still omits verified WASM
+progress; the local Current state and this record retain that progress.
+A WSL Git status probe on the Windows tree was slow and was cancelled.
+Windows-native Git completed the final status and whitespace checks.
+
+Directory enumeration/mutation, rename/delete, file resize imports, timestamps,
+symlinks, filesystem PATH, complete working-directory state, socket operations
+and the remaining named application ports are not verified or complete.
+
+## Actual ash printf builtin
+
+Windows WASI SDK 34 compiled and Binaryen 133 transformed the actual upstream
+printf builtin and bb_strtonum helpers. scripts/smoke_ash_printf.py passed
+14 named cases, a seeded independent signed/hexadecimal integer oracle and
+real QuickJS NUL capture. Cases cover repeated formats, missing arguments,
+dynamic width/precision, signed and unsigned 64-bit limits, radix parsing,
+floats, escapes, stop escape, malformed numbers, overflow, format/usage errors,
+real pipelines and read over NUL-containing output. The read smoke passed
+again after replacing the local numeric helper with upstream bb_strtonum.
+
+Actual Windows QEMU/OVMF passed scripts/smoke_wasm.py with --ash-printf,
+--ash-read and all earlier optional guest checks. Artifacts are under
+artifacts/wasm-ash-printf-smoke. Root PID 68 printed the signed minimum and
+negative hexadecimal conversion. QuickJS PID 69 captured a three-byte a/NUL/b
+result and printed UEFI_QUICKJS_PRINTF_BINARY_OK. Its ash child PID 70 was
+confirmed reaped. No flaky result was observed; the integer oracle is seeded
+and byte output comparisons do not depend on terminal rendering.
+
+Intermediate issues resolved: the feature scanner initially omitted printf.c,
+leaving ENABLE_HUSH_PRINTF undefined. It now scans that translation unit.
+A smoke run before the successful build tested the retained old ash artifact
+and returned command-not-found. The new artifact passed. The initial missing
+integer argument test expected success; upstream reports invalid empty number
+and returns 1, so the test now checks that behavior. MSYS2 Clang remains
+excluded because of the previously recorded DLL entry-point errors; its
+installation was not repaired. The supplied project-state text omits the
+existing WASM work; the local Current state retains verified progress.
+
+## Actual ash read builtin
+
+prepare_busybox.py extracts upstream BusyBox shell_builtin_read from
+shell/shell_common.c with its license header. The build links it with real ash.
+Platform changes remove termios, explicitly reject silent terminal input,
+check the monotonic clock before positive timeouts, and reject invalid
+descriptors in the zero-timeout readiness path. Ash now handles -d even with
+Bash compatibility disabled; it was previously parsed but silently ignored.
+The existing WASI read and poll_oneoff imports provide cooperative suspension.
+
+Windows scripts/smoke_ash_read.py passed 17 named input checks: whitespace and
+nonwhitespace IFS, last-field remainder, empty/missing fields, raw versus escaped
+backslashes, continuation, empty IFS, partial and empty EOF, -n read boundary,
+-d delimiter, multiline loops, timed input and invalid descriptors. Ten seeded
+raw input cases matched an independent Python field oracle. A writer kept its
+pipe open for two seconds: read -t 1 returned failure without changing its
+variable, and a following blocking read collected the later input. Invalid
+count/name and unsupported echo control returned errors. Actual QuickJS
+captured a real ash read pipeline. No flaky result was observed in this run;
+the delayed timeout case requires enough host scheduling time within its
+120-second overall limit.
+
+Actual Windows QEMU/OVMF passed scripts/smoke_wasm.py with --ash-read and the
+existing --ash-tasks/--ash-child/--ash/--quickjs/--sjlj/--ash-exec checks. Artifacts
+are under artifacts/wasm-ash-read-smoke. Root PID 58 returned UEFI_READ_INPUT.
+PID 61 exited 2 with the expected unavailable monotonic timeout clock error.
+QuickJS PID 64 printed UEFI_QUICKJS_READ_OK after actual read/IFS capture.
+Children 59-60, 62-63 and 65-67 were confirmed reaped. All earlier firmware
+checks passed in the same run. This turn changed guest build preparation and
+smoke scripts; no runtime Rust or firmware binary change was required.
+
+Intermediate platform limitations handled explicitly: WASI has no termios
+interface for this guest; firmware has no monotonic clock provider yet. Both
+return domain errors instead of fabricated success. No Windows/WSL tool,
+dependency, shell-quoting or network failure occurred in this read-port work.
+The supplied Current state text omits ongoing WASM changes; the local state
+and this document retain the verified implementation and outstanding scope.
+
+## Actual guest file resizing
+
+The WASI fd_filestat_set_size import requires resize rights and a writable
+descriptor. Native and EFI providers preserve the shared file cursor, zero-fill
+growth and reject sizes above 48 MiB with FBIG before mutation. EFI uses SetInfo
+for shrink and explicit zero writes for growth. Append handles resize without
+moving their cursor; the next write selects the new EOF. A physical write
+failure can leave partial growth. The zero-fill loop is synchronous.
+
+Actual WASI libc checks cover shrink with the cursor past EOF, duplicate handle
+growth, zero extension across chunk boundaries, negative and oversized lengths,
+restricted rights, invalid descriptors, directory/stream errors, zero shrink,
+regrowth and append after resize. Seventy-one structured resize/overwrite
+operations compare every intermediate byte in the guest. The host and firmware
+integration drivers compare final file contents with an independent bytearray
+oracle, including bytes read from the FAT image after shutdown. These file
+checks extend the smoke drivers into integration tests; markers alone are not
+accepted as proof of persistence. The cases are deterministic, use isolated
+workspaces and do not depend on timing to establish the resize result.
+
+Windows host file/directory, actual ash task/redirection and QuickJS capture
+checks passed. All 33 Rust integration tests passed, and the UEFI Release build
+passed. Actual QEMU/OVMF file and directory checks passed with artifacts under
+artifacts/wasm-resize-smoke. No CPython, curl or WolfSSH support is established
+by these checks.
+
+Clippy passed with warnings denied. The expanded QEMU/OVMF integration run
+also passed with nonlocal jumps, ash exec/external dispatch, pipeline/task
+isolation, read/printf builtins and QuickJS capture enabled. Its artifacts are
+under artifacts/wasm-resize-full-smoke. No flaky result was observed in these
+host and firmware runs.
+
+Intermediate issues resolved: the C compiler rejected a signed/unsigned read
+length comparison; the fixture now uses an explicit ssize_t conversion.
+Windows append-only native handles denied resizing; the native provider now
+opens a writable handle and seeks EOF for each append write. EFI FAT returned
+an error for a read beyond the truncated EOF; the firmware provider now checks
+the cursor against current metadata and returns zero without changing it.
+The combined cursor/read assertion was split to identify either failure.
+The supplied Current state still omits the WASM work; the local document keeps
+its verified state. No MSYS2 compiler was invoked during these resize checks.
+
+## Actual guest cryptographic random bytes
+
+The world now supplies WASI random_get through an explicit host provider.
+Processes share that provider without restarting its state. Memory validation
+precedes generation. Valid empty requests succeed without a source. Nonempty
+requests return NOTSUP when no source is available or IO on provider failure.
+The 512 KiB per-call cap bounds synchronous allocation and generation; larger
+requests return INVAL. Staging prevents publication of partially generated
+bytes after a provider error.
+
+UEFI uses the existing RDRAND-seeded ChaCha20 application generator, also used
+by TLS. It does not reseed per call or process. Missing RDRAND and seed failure
+return NOTSUP; there is no weak fallback. The native runner uses the OS source
+through getrandom. QuickJS receives no additional JavaScript host interface.
+
+All 36 Rust WASM integration tests passed. Three new tests use actual wasmi
+modules to check valid/invalid memory-end boundaries, pointer overflow, empty
+ranges, the exact request cap and cap plus one, absent/failed providers and
+three independent instances. An error-injecting provider fills its temporary
+buffer before failing; guest sentinels confirm that none of those bytes are
+published. Expected output from a shared deterministic sequence is computed
+independently of the dispatcher order. These tests check ABI behavior, not
+random quality. The core generator's three tests passed, including the
+ChaCha20 zero-key known vector, bounded seed failure and no reseeding.
+
+Clippy with warnings denied and the UEFI Release build passed. Actual WASI
+libc getentropy checks passed on the Windows native runner. The fixture checks
+the libc 256-byte limit, invalid raw pointers, guard bytes and repeated calls,
+then saves three 256-byte records. The host integration driver verifies actual
+saved data. Actual QEMU/OVMF passed with --random --filesystem --directories,
+real ash and QuickJS. The firmware integration driver verifies all three
+distinct records directly in FAT after shutdown. Artifacts are under
+artifacts/wasm-random-smoke. Record inequality detects accidental repeated
+output; it is not a statistical or cryptographic quality test.
+
+A separate actual QEMU run with --random --no-rdrand disabled the CPU feature.
+Raw random_get and libc getentropy returned the expected unsupported errors;
+all target and guard bytes retained their sentinels. Artifacts are under
+artifacts/wasm-random-unavailable-smoke. Existing process, pipe, readiness,
+environment, file, directory, ash and QuickJS checks passed in their respective
+runs. No flaky result was observed.
+
+Intermediate issues resolved: one fixture build patch omitted the existing
+process-library argument in its context and did not apply; it was corrected
+against the actual file. A WSL git diff probe stalled on the Windows worktree;
+that probe was stopped and the final check used git.exe in a Windows-local
+working directory. A documentation patch used mismatched context and was
+corrected before applying. Searches for nonexistent network/entropy source
+paths were replaced by the actual random.rs modules. No compiler, dependency
+download or network failure occurred. The supplied project-state text omits
+the WASM work; the local Current state retains verified progress. CPython,
+curl, WolfSSH and guest sockets remain unfinished.
+
+## Actual CPython 3.14 and restricted Shell interface
+
+Windows build: `scripts/build_cpython.ps1` with Windows WASI SDK 34 and the
+stable CPython 3.14.0 build interpreter. It produces the real static CPython
+engine, frozen UTF-8 codec modules, `efi`, native `_efi_shell`, and the upstream
+license. The resulting `python.wasm` is about 6.4 MiB. All compiler paths are
+explicit SDK paths. Native MSYS2 is used only for configure and make.
+
+The restricted configuration uses CPython's pthread stubs. Dynamic loading,
+readlink and realpath capability probes are disabled. The import core installs
+only built-in and frozen importers. The FileIO source permits integer fd 0–2
+without a custom opener. Host modules and builtins listed in docs/wasm-world.md
+are excluded. These interface restrictions do not establish a security sandbox.
+
+Ten native integration cases in scripts/test_cpython.py were verified against
+the actual interpreter and real ash. They check the final release version,
+arithmetic, math, Unicode, exact binary output, separate stderr, asymmetric
+argument quoting, checked and unchecked exit statuses, repeated fresh Shell
+state, pipelines, NUL and UTF-8 command bounds, uncaught Python errors, and
+disabled file/module interfaces. The restriction check adds `.` to sys.path
+and confirms that the existing external.py still cannot be imported. Alternate
+_io open functions and custom openers are also rejected. Output at exactly
+512 KiB is captured intact; one byte above the limit fails on either stream,
+drains/reaps the child, and permits the next command. Concurrent Python children
+have independent efi module state and create independently checked saved files.
+Nine cases passed in the combined run; the corrected multi-instance case and
+the strengthened restriction case passed as focused reruns.
+
+Actual firmware command, run from the Windows-local project directory:
+
+```powershell
+.\artifacts\toolchains\uv-current\uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-cpython-smoke --python artifacts/wasm-guests/python.wasm --ash artifacts/wasm-guests/ash.wasm --quickjs artifacts/wasm-guests/quickjs.wasm --filesystem --directories --random --memory 512 --qemu qemu-system-x86_64.exe
+```
+
+The command used the project-local uv-current/uv.exe. The actual QEMU/OVMF
+test passes CPython language execution, host-interface restrictions, binary
+Shell capture, errors, repeated commands and saved FAT bytes. Two Python root
+instances each run ash; alpha creates its file and waits for beta's file, while
+beta waits for alpha before writing its own. Both roots complete. After QEMU
+stops, direct FAT reads verify python-shell.txt == PYTHON_SHELL_FILE,
+python-alpha.txt == alpha and python-beta.txt == beta. The same run passes
+QuickJS, real ash, process/pipe/timed-wait/environment checks, directory and
+filesystem byte oracles, and actual libc entropy checks. Wire and disk evidence
+are retained in artifacts/wasm-cpython-smoke.
+
+The first combined concurrent firmware run with 256 MiB failed while initializing
+the second Python root, with an explicit CPython out-of-memory error. The test
+now accepts --memory; the same workload passes with 512 MiB. Root Stores retain
+execution memory until explicit reap. Memory reclamation at exit remains work;
+the larger test allocation does not resolve that lifecycle limitation.
+
+Intermediate issues resolved: CPython's external importer required the removed
+posix module, so external importer initialization is omitted in the copied
+restricted import core. Moving that source required its generated clinic header,
+which is now copied too. Nested firmware Python source now uses a raw outer
+string to preserve binary escapes. Focused unittest selection needed a fully
+qualified __main__ name. The multi-instance fixture omitted the printf argument
+and saved empty files; its command now passes $1 and the saved-byte check passes.
+One documentation patch had incorrect context and was reapplied against the
+actual section. MSYS2 Clang remains excluded; its incompatible runtime has not
+been changed. Upstream HACL endian macro redefinitions and unused external
+import-helper warnings remain in the CPython build log. The supplied Current
+state omits the WASM work; the local state has been updated. curl, WolfSSH,
+guest sockets and complete application-world verification remain unfinished.
+
+## Execution memory is released before process reap
+
+The process record now separates execution resources from wait/reap metadata.
+Normal Wasm return, proc_exit, traps and host cancellation drop the Store,
+linear memory, continuation and pending I/O immediately. Dropping the descriptor
+table closes pipe endpoints and filesystem handles before waking waiters.
+Parent PID, terminal status and shared stdout/stderr remain until wait/reap.
+Live children retain inherited output and are adopted by PID 0 when a parent
+exits. A terminal record still consumes a process slot; reaping frees that slot.
+
+The independent allocation check in crates/wasm/tests/exit_memory.rs uses a
+counting System allocator in a separate single-test binary. Each actual Wasm
+instance has 64 MiB linear memory, writes separate stdout/stderr and suspends.
+For return, explicit exit, trap and cancellation, the check observes a drop of
+more than 60 MiB of live allocation bytes before reap, verifies the exact saved
+outputs and status, checks idempotent cancellation, and finally reaps all four
+records. It does not infer memory release from process status. The threshold
+allows small interpreter/cache allocations while excluding retained 64 MiB
+linear memory. Modules and any reusable engine caches remain world resources.
+
+An additional actual process test reaps an exited parent before its child
+continues, checks getppid changes from the original parent to PID 0, and verifies
+the child's inherited output. Existing pipe tests exercise cancellation while
+blocked, last-reader EPIPE, last-writer EOF and orphan progress. Existing wait
+tests verify child exit codes, reaping exactly once and status-copy behavior.
+All 38 Rust integration tests and all ten actual CPython/ash integration cases
+pass in their combined suites. Clippy for all wasm targets passes with
+warnings denied; the native runner and UEFI Release build pass.
+
+The combined QEMU/OVMF application check now passes with 256 MiB, using the
+same arguments as the CPython command above except --memory 256 and --output
+artifacts/wasm-exit-memory-retry. It runs actual CPython roots with mutual file
+waits and real ash children, QuickJS, process/pipe/environment/timer checks,
+directory and file byte oracles, and entropy checks. Direct FAT reads verify
+all three Python-created file contents. The previous need for 512 MiB in this
+workload is resolved by dropping terminal execution resources. This does not
+establish that every workload of up to 32 live instances fits in 256 MiB.
+
+Intermediate issues: the first allocation fixture attempted to grow memory in
+one dispatcher step. Fuel charging suspended before growth completed, so its
+measurement was premature. The fixture now declares the full memory at module
+instantiation and measures terminal release after an explicit yield. One
+combined firmware run stopped before Python when a serial view frame contained
+ANSI bytes instead of its JSON payload. The retry passed without changing or
+relaxing the parser. The original failure is retained under
+artifacts/wasm-exit-memory-smoke; the transport corruption remains unroot-caused.
+QEMU also emitted a Windows GLib application-manifest warning; it did not prevent
+the successful run. A source search used a nonexistent network.rs/vm filename;
+the actual TCP source is crates/uefi/src/tcp.rs. The supplied Current state still
+omits the WASM work; the local state has been maintained. No global compiler or
+package changes were made. curl, WolfSSH and guest sockets remain unfinished.
+
+## Initial cooperative TCP ABI and actual native network checks
+
+The no_std runtime now accepts a nonblocking network provider. The initial
+efi_net.tcp_connect import validates four address bytes, port 1..65535 and a
+four-byte result range before opening a connection. It reserves a descriptor
+while connecting and suspends the guest in Connecting. Only successful
+completion publishes the descriptor. Failure closes the reservation and leaves
+the result unchanged. Provider methods must return immediately; pending I/O
+uses the existing retained continuation and descriptor polling paths.
+
+Socket descriptors share connections across duplicates. Existing WASI
+fd_read/fd_write/poll_oneoff/fd_close and descriptor duplication/renumbering
+apply. Socket fdstat reports SOCKET_STREAM. Dropping the last descriptor closes
+the native connection. Native run_guest uses mio 1 with nonblocking TCP and
+zero-time event polling. mio is a dev dependency only; firmware remains no_std
+and receives no native socket implementation.
+
+Four ABI cases verify output/address memory boundaries, unsigned port endpoints
+and invalid ports, descriptor exhaustion before provider invocation, pending
+connect suspension without duplicate attempts, asynchronous refusal with retry,
+descriptor reuse and pending-connect cancellation cleanup. A separate actual
+native TCP test blocks one WASM root in a socket read, completes another root
+with exit code 37, cancels the blocked root and observes EOF at the server.
+
+The actual libc network fixture and scripts/test_network.py pass on Windows:
+
+```powershell
+.\artifacts\toolchains\uv-current\uv.exe run --no-project scripts/test_network.py --runner target/debug/examples/run_guest.exe --fixture artifacts/wasm-fixtures/network.wasm
+```
+
+The local server independently checks all 196,613 request bytes, then waits
+for a guest child to save network-peer.txt == PEER_PROGRESS before replying.
+The child must run while its parent waits for the socket. The server sends
+131,089 response bytes in 317-byte fragments and half-closes; the guest reads
+in 997-byte buffers, validates every byte, and saves network-response.bin.
+The test independently checks saved bytes and observes the guest closing its
+last duplicate socket descriptor. A bound, non-listening local port verifies
+real connection refusal and unchanged result output without a port-reuse race.
+Both cases pass. The existing 38 Rust tests plus four network ABI cases and
+one native network case pass (43 total). Clippy with warnings denied, native
+runner build and UEFI Release build pass. Source formatting and diff checks
+are required below.
+
+Intermediate issues: the SDK uses subscription.u.u.fd_read, not the initially
+assumed fd_readwrite union member. The fixture was corrected and compiled with
+warnings treated as errors. An initial search expected subscription definitions
+in wasi/api.h; the current SDK defines them in wasi/wasip1.h. Network/tcp source
+inspection used one nonexistent network.rs path; the actual file is tcp.rs.
+No MSYS2 compiler, global package update or network download was needed. The
+supplied Current state still omits WASM progress; local state is maintained.
+
+This evidence proves native TCP integration only. UEFI does not yet install
+a network provider and tcp_connect returns NOTSUP there. Stable asynchronous
+TCP4 tokens, DNS, guest socket controls, actual curl and WolfSSH application
+ports, and firmware network verification remain unfinished. This initial ABI
+does not replace any of those full-goal requirements.
+
+## Actual UEFI cooperative TCP4 provider
+
+The firmware world now installs tcp/cooperative.rs as its network provider.
+It uses separate TCP4 child protocols and GET_PROTOCOL service-binding access
+for shared NIC use. Optional CONFIG.JSON static IPv4 is passed into the world;
+without it the provider starts DHCP policy and advances default mapping during
+polls. Mapping and connection use a 30-second deadline without internal waits.
+Connection, receive and transmit tokens, their completion contexts, packets and
+byte buffers have stable owned heap storage across WASM suspension. Network
+polls run at APPLICATION and callbacks only queue notifications.
+
+Read readiness queues a receive and retains at most 64 KiB until reads consume
+it. Writes copy/accept at most 64 KiB and report that prefix once. Following
+writes wait for completion, and writable polling retires completed transmits.
+Dropping the last descriptor queues abortive close then synchronously resets
+TCP4, dispatches completions and asserts all queued tokens are retired before
+freeing storage, closing the protocol and destroying the child. Abortive close
+can discard accepted writes still in flight; graceful flush and shutdown are
+not implemented. DNS and guest POSIX socket integration remain required.
+
+Actual Windows-native QEMU/OVMF check:
+
+```powershell
+.\artifacts\toolchains\uv-current\uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-network-cancel --network --qemu qemu-system-x86_64.exe
+```
+
+This check passes with 256 MiB, e1000 and QEMU NAT static IPv4. A separate local
+server verifies all 196,613 request bytes. It sends no response until the guest
+child emits NETWORK_PEER_PROGRESS after saving its file. The firmware UI and
+child must make progress while the root waits in TCP read polling. The server
+then sends 131,089 independently derived bytes in 317-byte fragments and sends
+EOF. After shutdown, direct FAT reads verify every response byte and the exact
+PEER_PROGRESS file. A second connection blocks in fd_read; Esc cancels it with
+status 130 and the server observes EOF or reset. The provider's pending-token
+retirement assertions pass. network-server.json records accepted connection,
+request/response byte counts, child progress and observed cancellation close;
+serial.bin and disk.img preserve firmware and saved-file evidence.
+
+The same run passes the process, pipe, timed-wait and environment integration
+checks. Native TCP integration tests pass with the updated fixture. Firmware
+Clippy with warnings denied, Release build, formatting, Python source parsing
+and diff checks pass. This verifies static IPv4 on this OVMF/e1000 setup only;
+DHCP, physical NICs, multiple simultaneous firmware sockets, connect cancellation
+and all transport failure paths need further verification. curl and WolfSSH
+are still not ported or verified, so the complete requested world is unfinished.
+
+Intermediate issues resolved: the first server handshake timed out because
+/wasm run collected output without redrawing it during network polling. The
+loop now redraws new messages immediately, and the same handshake passes.
+Completed transmit readiness was initially left pending; readiness now collects
+completion. Writes now report copied-prefix acceptance once, avoiding completion
+counts being attributed to a different writer on a duplicate descriptor.
+The test initially removed the first `none` argument while replacing -net none;
+that could remove the display value, so it now removes the adjacent option pair.
+Rust requires parentheses around an unsafe block used as the left comparison
+operand in the close-queue closure; this syntax error was corrected. Clippy's
+collapsible-if finding was fixed with a let-chain. No dependency or network
+download error occurred. MSYS2 Clang remains excluded and global tool packages
+are unchanged. The supplied Current state omits WASM progress; local state is
+updated with the actual verification scope and pending work.
+
+## Normal TCP close drains accepted sends cooperatively
+
+The network provider now exposes poll_close and the guest import
+efi_net.tcp_close(fd). It waits for outstanding accepted sends, then closes
+the shared connection normally. Pending close suspends the process in Closing;
+other processes remain runnable. Completion or transport error consumes the
+selected descriptor. Unknown and non-socket descriptors return BADF/NOTSOCK
+without changing them. Duplicate descriptors continue to exist but data
+operations return NOTCONN. Normal close is explicit: fd_close and cancellation
+still use abortive cleanup, and half-shutdown is not implemented.
+
+Firmware waits for its copied transmit prefix to complete before queuing a
+boxed TCP4 close token with abort_on_close=false. A 30-second deadline bounds
+drain/close. The same reset and retirement assertions protect pending normal
+close tokens on cancellation or errors. A completed normal close does not
+queue a second abortive close during resource destruction.
+
+Seven network ABI tests pass, including normal-close suspension with another
+root completing, descriptor consumption exactly once, cancellation while
+closing and exact transport-error propagation. All prior Rust tests pass
+(46 cases including the added focused error case). Three actual Windows TCP
+integration tests pass. The new test sends 196,613 independently checked bytes
+and closes immediately after the final accepted write; the server reads to EOF
+and verifies all bytes. It also checks that the closed descriptor is BADF and
+a remaining duplicate returns NOTCONN without changing the read-count output.
+
+The actual QEMU command from the preceding section passes with output
+artifacts/wasm-network-graceful. Its third connection runs that same real libc
+normal-close fixture. The independent server reads in 419-byte chunks until
+EOF, checks the complete asymmetric payload, and only then closes its end.
+network-server.json records graceful_bytes=196613 and graceful_eof=true. The
+run also verifies prior transfer, child progress, blocked-read cancellation,
+saved FAT byte oracles and process/pipe/environment checks. Release build,
+firmware and wasm Clippy with warnings denied pass. No new environment,
+dependency or download failure occurred. Formatting, diff and source checks
+are run for the final sources. The supplied Current state omits WASM work;
+the local state is maintained. DNS, guest POSIX networking, curl and WolfSSH
+remain unfinished; successful normal close does not establish those ports.
+
+## Cooperative WASM DNS over TCP
+
+The guest efi_net.resolve_ipv4 import now resolves one ASCII hostname to an
+IPv4 A address through the installed TCP provider. Firmware passes its configured
+DNS address and port into World; the native runner reads EFI_WASM_DNS. Queries
+retain their own connection and suspend in Resolving. Input/output ranges and
+hostname syntax are validated before side effects. A cryptographic two-byte
+transaction ID and a 10-second realtime deadline are required. Terminal paths
+drop the query before publishing its four-byte address; errors preserve output.
+
+Windows cargo test -p efi-agent-wasm passed all integration and library tests.
+Four new ABI cases cover a deadline at 10,000,000,731 ns and the preceding
+nanosecond, immediate connection release before reap, cancellation, a failing
+clock during suspension, invalid memory/name input, failed entropy collection
+and deadline overflow. The deterministic providers count random calls, network
+attempts and connection drops. Guest assertions check the exact errno and an
+unchanged sentinel at the last valid four-byte memory range. The final library
+rerun passes three parser cases, including CNAME records before/after the A
+record, duplicate equivalent aliases, conflicting targets, A+CNAME conflicts,
+alias cycles and malformed A/CNAME RDATA lengths. Every truncated prefix of a
+valid compressed response is rejected.
+
+The rebuilt native run_guest passes scripts/test_dns.py with an independent
+local TCP server for six variants: A, CNAME, NXDOMAIN, wrong transaction ID,
+wrong question and an invalid compression pointer. The server checks the
+normalized mixed.example IN A query and sends the response frame one byte at
+a time. Actual guest libc calls check 203.0.113.7 or the exact error with an
+unchanged output buffer.
+
+Actual QEMU/OVMF verification passed with this Windows-local invocation:
+
+```powershell
+& .\artifacts\toolchains\uv-current\uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-dns-smoke --network --dns --qemu qemu-system-x86_64.exe
+```
+
+The firmware test runs the same six independent DNS responses using TCP4 and
+QEMU NAT, with DNS address 10.0.2.2 and a dynamically selected local server port.
+It also passes TCP transfer, child progress handshake, EOF, blocked-read
+cancellation, graceful close, saved FAT response bytes, process/pipe scheduling,
+timed wait and process environment checks. Artifacts include serial.bin,
+screen.txt, qemu.log and network-server.json under artifacts/wasm-dns-smoke.
+Release firmware build, wasm all-targets Clippy and firmware Clippy with warnings
+denied pass. Python AST checks, cargo fmt and git diff --check pass.
+
+During implementation, retaining Rc<RefCell<Query>> in a wasmi HostError failed
+its Send+Sync requirement. Query ownership moved to the process Context; the
+suspended action carries only an output pointer. An initial TCP framing check
+rejected the two-byte prefix stage; it now checks the declared message length
+after the prefix is complete. A patch initially assigned DNS state in the TCP
+connect path and was corrected before verification. During toolchain diagnosis,
+a search included a nonexistent .cargo directory and a package query included
+an uninstalled llvm package; subsequent probes used existing files/packages.
+MSYS2 Clang/runtime incompatibility remains unresolved globally, and builds use
+the independent Windows WASI SDK without invoking MSYS2 Clang. The supplied
+Current state omits existing WASM work; the local Current state retains it.
+
+This establishes bounded cooperative IPv4 DNS only. IPv6, IDNA, caching,
+nonblocking POSIX socket controls, half-shutdown, actual curl/WolfSSH ports and
+multi-application firmware verification remain unfinished. Deadlines currently
+use wall time, so a clock adjustment can change the observed wait duration.
+
+## Shared nonblocking socket flags
+
+Socket descriptors now share a NONBLOCK flag through duplicates. WASI
+fd_fdstat_get reports that flag and FD_FDSTAT_SET_FLAGS rights. Setting zero
+restores blocking mode. Unsupported known flags return NOTSUP and unknown
+bits return INVAL without mutation. Pending reads or writes return AGAIN
+instead of suspending when NONBLOCK is set. Neither buffers nor result counts
+are changed by AGAIN. Empty operations complete with count zero; EOF also
+returns zero instead of AGAIN. poll_oneoff retains its readiness semantics.
+Connection establishment still uses the existing blocking cooperative import.
+
+All Rust tests pass, including the new deterministic network case. Its WAT
+guest checks flags through both duplicates, rejected changes, advertised
+rights, read/write backpressure, output sentinels and empty operations. It
+restores blocking mode and reaches Reading(3), then cancellation releases the
+last shared connection. Four actual Windows TCP integration cases pass through
+the rebuilt run_guest and compiled libc fixture. The new server withholds data
+until receiving byte 0xa7, independently proving the initial read has no data.
+The guest checks AGAIN, restores blocking mode, receives exactly [19,73,211],
+polls EOF, switches to NONBLOCK and checks successful count zero.
+
+Actual QEMU/OVMF verification passes with:
+
+```powershell
+& .\artifacts\toolchains\uv-current\uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-network-nonblocking --network --dns --qemu qemu-system-x86_64.exe
+```
+
+network-server.json records nonblocking_eof=true as well as the complete
+196,613-byte graceful payload, 131,089-byte response, child progress and
+cancelled-peer closure. All six firmware DNS cases and process/pipe/environment
+checks pass. The firmware release build, wasm all-targets Clippy and firmware
+Clippy with warnings denied pass. Source formatting, Python syntax and diff
+checks pass.
+
+The first new WAT rights assertion used i32.eqz with an i64 mask, so module
+validation rejected the test. It was corrected to i64.eqz without changing
+the assertion. An SDK header probe used wasm32-wasi rather than the installed
+wasm32-wasip1 include directory; scoped discovery found the correct directory.
+QEMU emitted a GLib-GIO warning for a missing ChatGPT AppxManifest.xml, but
+completed all checks. A documentation patch expected single quotes where the
+source used double quotes; the patch was corrected and reapplied. MSYS2 Clang
+remains excluded; no global package or PATH changes were made. The supplied
+Current state omits existing WASM work; the local state retains it. POSIX socket
+creation, asynchronous connect/SO_ERROR, half-shutdown, curl/WolfSSH ports and
+full application verification remain open.
+
+## Separate socket creation and asynchronous connect
+
+efi_net now provides tcp_open, tcp_connect_fd and tcp_error. The no_std Socket
+wrapper owns New, Connecting, Connected, Failed and Closed state, shared by
+duplicate descriptors. A failed attempt releases its provider connection
+immediately while retaining the descriptor and a shared pending error. Reading
+that error clears only the report. A failed socket can start another attempt;
+a pending repeat returns ALREADY and a connected repeat returns ISCONN.
+NONBLOCK connect returns INPROGRESS until completion. Blocking mode retains
+the continuation without creating another descriptor. Write polling advances
+pending connects and returns a completion/error event. tcp_error validates
+output memory before progressing or clearing the report. The convenience
+tcp_connect path still removes its reserved descriptor on failure.
+
+All Rust regression tests pass. The final focused network rerun passes eleven
+cases, including three added state-machine cases. These independently verify
+pending polling, shared errors, failed-error clearing, invalid output preserving
+the pending error, retry, NOTCONN after error clearing, range/port/descriptor
+validation, blocking failure with a retained descriptor, peer scheduling and
+cancelled pending poll cleanup with duplicate descriptors. Controlled provider
+attempt/drop counts verify exact transport lifetime and no duplicate attempt.
+
+Six real Windows TCP integration cases pass with the rebuilt native runner and
+WASI SDK-compiled libc fixture. New cases create NONBLOCK sockets separately,
+connect, poll write completion, retrieve and clear the error, verify ISCONN,
+exchange handshake bytes and reach EOF. A bound non-listening port independently
+checks asynchronous CONNREFUSED, retained descriptor closure and cleared error.
+Both immediate and pending connection outcomes are accepted by the integration
+fixture; deterministic tests require the pending path explicitly.
+
+The actual firmware command passes:
+
+```powershell
+& .\artifacts\toolchains\uv-current\uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-network-async --network --dns --qemu qemu-system-x86_64.exe
+```
+
+The fifth server connection verifies the separate open/connect/poll/error path
+and exact [19,73,211] data following the 0xa7 guest handshake. Independent
+network-server.json records async_eof=true. Prior 196,613-byte request and
+normal-close payload, 131,089-byte response, cancelled-peer closure, nonblocking
+read, child progress, saved FAT response checks, six DNS variants and
+process/pipe/environment checks all pass. Firmware Release build, both Clippy
+checks with warnings denied, formatting, Python AST and diff checks pass.
+
+No new dependency, shell, build or network error occurred. MSYS2 Clang remains
+excluded; global packages and PATH were not changed. The supplied Current state
+omits existing WASM work; local state retains it. These imports establish the
+connection ABI only. Guest POSIX socket/connect/getsockopt wrappers,
+half-shutdown, curl/WolfSSH builds and full application checks remain open.
+
+## Guest POSIX C networking
+
+guests/posix/network.c and its two headers now provide actual WASI Preview 1
+socket, connect, getsockopt, send, recv, getaddrinfo, freeaddrinfo and gai_strerror
+functions. The layer uses the verified efi_net imports and SDK byte-order,
+errno, fcntl, poll and close support. It handles IPv4 TCP only and reports
+unsupported features explicitly. No host OS socket handles enter guest memory.
+The standard fixture builder now builds posix_network.wasm with this layer.
+
+Four Windows integration cases in scripts/test_posix_network.py pass against
+actual run_guest. Numeric resolver assertions independently check address
+bytes [203,0,113,7], port bytes [192,1], port limits 0/65535 and rejection of
+65536, signed/malformed ports and service names. AI_NUMERICHOST avoids DNS.
+Loopback/passive defaults, result cleanup, unsupported family/type/flags,
+canonical-host restrictions and SOCK_CLOEXEC rejection are checked. Real TCP
+checks exercise socket/connect, SDK poll/fcntl, duplicate flags, send/recv,
+null buffers, unsupported peek, exact bytes and EOF. A non-listening native
+port must produce ECONNREFUSED. SO_ERROR short buffers preserve the pending
+error, full reads publish it and subsequent reads return zero. Six independent
+DNS responses verify getaddrinfo A/CNAME success, NXDOMAIN as EAI_NONAME and
+malformed ID/question/compression as EAI_FAIL.
+
+The Windows WASI SDK compiler passes -O2 -Wall -Wextra -Werror. The final actual
+QEMU/OVMF command passes:
+
+```powershell
+& .\artifacts\toolchains\uv-current\uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-posix-network-final --network --dns --posix-network --qemu qemu-system-x86_64.exe
+```
+
+The firmware runs the real POSIX fixture over TCP4, verifies byte order and
+resolver boundaries, performs connect/poll/fcntl/send/recv, and checks a timed
+out connection's SO_ERROR preservation/clearing. Its sixth server connection
+checks the 0xa7 handshake and exact [19,73,211] bytes; network-server.json records
+posix_eof=true. Six additional POSIX getaddrinfo calls use the independent DNS
+server, in addition to all six raw DNS ABI calls. Previous process/pipe/env,
+network payload, cancellation, normal close, async connect and saved FAT byte
+checks pass. Final source syntax and diff checks pass. No Rust source changed
+in this step; the previously verified firmware and runner were used.
+
+The initial firmware test assumed the bound non-listening host port would
+return ECONNREFUSED. It instead returned ETIMEDOUT (73), confirmed by a guest
+diagnostic and independent network.pcap: repeated SYN packets have no reverse
+RST or ICMP reply. Failed runs are retained under artifacts/wasm-posix-network,
+artifacts/wasm-posix-network-diagnostic and artifacts/wasm-posix-network-packets.
+The test now explicitly checks timeout for this NAT path; its expected error
+can be selected with --posix-connect-error timeout|refused for other QEMU
+environments. Native ECONNREFUSED assertions remain unchanged. The final packet
+capture is retained with the passing firmware artifacts. A documentation patch
+joined two lines incorrectly and was corrected before the final diff check.
+MSYS2 Clang remains excluded. The supplied Current state omits existing WASM
+work; local state retains it.
+
+This is a client IPv4 TCP layer. SOCK_CLOEXEC, setsockopt, address queries,
+listen/accept, peek/waitall, half-shutdown and hostname canonical target output
+are not implemented. Actual curl/WolfSSH builds and named-application combined
+firmware checks remain required.
+
+Follow-up for the reported entry-point dialogs on 2026-10-11: Windows-native
+PE inspection again found the imported `__emutls_v._ZSt11__once_call` symbol
+in MSYS2 `libclang-cpp.dll` and no matching export in its installed
+`libstdc++-6.dll`. No affected Clang process was running during inspection.
+The explicit Windows WASI SDK 34 compiler passed `--version`, and
+`build_wasm_c_fixture.ps1` completed successfully with that SDK. The global
+MSYS2 installation remains unchanged and unresolved. A Windows ripgrep
+invocation initially used a shell-style wildcard as a file operand; the
+inspection was repeated with `-g` filters.
+
+## Actual curl HTTP and socket close-on-exec
+
+On 2026-10-11, scripts/build_curl.ps1 built upstream curl 8.22.0 with the
+explicit Windows WASI SDK 34 compiler. Native MSYS supplies configure/make
+only. The intermediate build disables TLS, threaded resolution, socketpair,
+IPv6, FTP and TFTP. Other advertised protocols are not verified.
+
+Socket creation now accepts EFI_NET_CLOEXEC (0x10000) alongside NONBLOCK (4).
+The former is descriptor-local; the latter remains shared connection state.
+Default spawn excludes marked standard descriptors. Explicit spawn_fds, dup2
+with different descriptors and dupfd clear the copy's mark. Same-fd dup2 and
+fd_renumber preserve it. The integration test deliberately allocates sockets
+at fd 0 after closing stdin, covers independent duplicate metadata and tests
+both marked and unmarked inheritance. All wasm Rust tests, wasm/UEFI Clippy,
+actual native POSIX tests and the UEFI Release build pass.
+
+The actual curl CLI passes scripts/test_curl.py against an independent HTTP
+server: redirected 131,089-byte download, chunked binary stdout, and a
+196,613-byte upload with independently computed SHA256. No API credentials
+or third-party provider are used. The firmware run passes:
+
+```powershell
+& .\artifacts\toolchains\uv-current\uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-curl-http --network --curl artifacts/wasm-guests/curl.wasm --qemu qemu-system-x86_64.exe
+```
+
+The test reads both saved binary downloads and the upload digest from actual
+FAT after QEMU exits and compares full bytes. Existing dispatcher, pipes,
+process environments, actual TCP transfer, cancellation, graceful close,
+nonblocking flags and asynchronous connection checks also pass.
+
+Build issues resolved during this port: unconditional signal/setjmp includes
+were guarded by configured feature macros without adding emulation; missing
+POSIX declarations and unavailable bind/options/address operations now fail
+explicitly; a static archive replaced raw-object LIBS; make targets exclude
+unrelated upstream test binaries. Checked unsupported WASI directory mutation
+and sock_accept imports permit CLI instantiation without fabricated success.
+Curl's initial error 27 was wakeup-pipe initialization failure, removed by
+--disable-socketpair. Dummy dependency files required a clean after configure;
+the script now does that and forces relink for external POSIX archive changes.
+An MSYS clean invocation initially lacked /usr/bin on PATH and was repeated
+with the correct environment. A patch and two source searches used outdated
+text/paths and were corrected. The subsequent curl error 7 was SOCK_CLOEXEC
+rejection, resolved by real descriptor semantics. Curl error 23 on binary
+stdout was its character-device safety check; --output - permits the intended
+binary stdout and the exact-byte check remains unchanged. That failing test
+also produced a server connection-reset traceback. A firmware build command
+used an incorrect package name; efi-agent-uefi is the actual package and the
+corrected Release build passes. QEMU emits a GLib warning for a missing ChatGPT
+AppxManifest.xml, but completed the firmware checks. No MSYS Clang, global
+package update, global PATH change, or network workaround was needed.
+
+TLS, actual curl cancellation and combined named-application checks remain
+required. WolfSSH remains unfinished. This step does not complete the goal.
+
+The expanded native curl suite passes four tests, including six independent
+DNS responses. Actual upstream curl uses getaddrinfo/efi_net resolution for
+MiXeD.Example.; A and CNAME resolve to the local HTTP server and all 131,089
+bytes are compared. NXDOMAIN, wrong transaction IDs, wrong questions and
+cyclic compression terminate the real CLI with curl error 6 and no body.
+
+The matching actual QEMU/OVMF combined run passes:
+
+```powershell
+& .\artifacts\toolchains\uv-current\uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-curl-dns-final --network --dns --posix-network --curl artifacts/wasm-guests/curl.wasm --qemu qemu-system-x86_64.exe
+```
+
+This includes six raw DNS cases, six POSIX resolver cases, six real curl DNS
+cases, the prior actual network scenarios and all three curl HTTP scenarios.
+Both positive curl DNS downloads are independently read from saved FAT and
+compared with the full body. Negative CLI statuses are checked before reap.
+The first combined run exhausted the process table because completed root
+metadata was retained. The driver now reaps each checked DNS/curl process;
+it preserves the runtime limit and the exit-status assertions. The rerun passes.
+Asynchronous connect tests additionally create NONBLOCK|CLOEXEC sockets and
+verify duplicated sockets retain shared NONBLOCK without exposing CLOEXEC as
+WASI fd flags. Targeted network/close-on-exec tests and final syntax/diff checks
+pass. The supplied Current state was older than the authoritative worktree;
+the existing WASM implementation and verification records were preserved.
+
+## Actual curl cancellation and named application chains
+
+On 2026-10-11, the native actual curl suite additionally verified --max-time 1
+against a held HTTP response: the real CLI returns error 28 with no body and
+the independent server observes connection closure. Actual QEMU/OVMF verifies
+curl waiting on an incomplete HTTP response, another WASM root completing,
+and cancellation/reap status 130 with server-observed TCP4 connection closure.
+The held connection must remain open until the explicit cancellation.
+
+The combination then passed actual QuickJS Promise-based zx-like commands to
+real ash to actual curl and restricted CPython efi.shell to ash to curl, while
+another real curl was still waiting. The HTTP server independently checks the
+196,613-byte upload. Both language callers check its exact SHA256 response;
+QuickJS concurrently captures another real ash command. Subsequent HTTP/file
+byte checks, CPython restrictions, Python root isolation, persistent shell files,
+process/pipe/env checks and network scenarios pass with 256 MiB RAM.
+
+Passing artifacts: artifacts/wasm-curl-applications-ready. The command used
+scripts/smoke_wasm.py with --network, --curl artifacts/wasm-guests/curl.wasm,
+--quickjs artifacts/wasm-guests/quickjs.wasm, --ash artifacts/wasm-guests/ash.wasm,
+and --python artifacts/wasm-guests/python.wasm, plus the standard Windows
+launcher, Release EFI, firmware, fixture and QEMU paths recorded above.
+
+The first combined test incorrectly matched a child's status before the
+language root had completed; the driver now waits for the full-line success
+marker and the Ready footer before selecting/reaping the root. A 30-second
+held-server deadline also expired during CPython startup, so that test-only
+endpoint now allows 180 seconds for application setup. Explicit open-before-
+cancel and closed-after-cancel assertions remain. Failed artifacts are kept
+under wasm-curl-applications, wasm-curl-applications-final and
+wasm-curl-applications-run. A failed early exit also produced an expected peer
+reset traceback during server teardown. The corrected combination passes.
+
+TLS preparation downloaded wolfSSL 5.9.4's official stable tag archive after
+GitHub API rate limiting persisted with the Windows proxy. Git tag discovery
+succeeded through that proxy; the guessed release asset URL returned 404, and
+the official codeload tag archive succeeded. scripts/build_wolfssl.ps1 builds
+a static WASI library with SDK clang, native CMake/Ninja and single-thread user
+settings. Random bytes use WASI random_get with an explicit crypto failure
+on unavailable entropy. No predictable random fallback or native socket I/O is
+installed. The library's COPYING and user settings are retained with the build.
+Initial build issues: Windows backslashes in WASI_SDK_PREFIX broke generated
+CMake escaping, corrected to slash paths and a fresh configure; TLS 1.3 needed
+an explicit FFDHE size; IP certificate checks needed inet declarations.
+The archive build passes. Curl TLS verification is still in progress below;
+a library archive alone is not HTTPS evidence.
+
+## Actual curl TLS 1.2/1.3 through wolfSSL
+
+On 2026-10-11, scripts/build_wolfssl.ps1 built wolfSSL 5.9.4 and
+scripts/build_curl.ps1 linked actual curl 8.22.0 against it. Builds use Windows
+WASI SDK 34, native CMake/Ninja, and MSYS configure/make. There is no MSYS Clang
+invocation. The shared user settings select portable math, single-thread user
+I/O, TLS 1.2/1.3, certificate/IP checks and WASI random_get. Old TLS, RC4, 3DES
+and the NTLM feature are excluded. Guest PEM trust is explicit via --cacert;
+no default CA bundle is packaged. Source/license records remain with artifacts.
+
+The Release native runner passes all six scripts/test_curl.py tests, including
+six DNS variants and six independent TLS cases. The TLS server allows only
+1.2 or only 1.3 for the two positive cases, records the actual negotiated
+version, and returns the independent 131,089-byte oracle. The real CLI's entire
+stdout must match. Wrong-key CA signatures, absent CA issuers, wrong IP SAN and
+expired server certificates return error 60, no body and no HTTP request.
+
+Build and verification commands:
+
+```powershell
+& ./scripts/build_wolfssl.ps1 -WasiSdk artifacts/toolchains/wasi-sdk-34.0-x86_64-windows
+& ./scripts/build_curl.ps1 -WasiSdk artifacts/toolchains/wasi-sdk-34.0-x86_64-windows -Reconfigure
+& cargo.exe build -p efi-agent-wasm --example run_guest --release
+& ./artifacts/toolchains/uv-current/uv.exe run scripts/test_curl.py --runner target/release/examples/run_guest.exe --guest artifacts/wasm-guests/curl.wasm
+& ./artifacts/toolchains/uv-current/uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-curl-tls-final --network --curl artifacts/wasm-guests/curl.wasm --curl-tls --qemu qemu-system-x86_64.exe
+& ./artifacts/toolchains/uv-current/uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-curl-tls-no-rdrand --network --curl artifacts/wasm-guests/curl.wasm --curl-tls --random --no-rdrand --qemu qemu-system-x86_64.exe
+```
+
+Both actual QEMU/OVMF commands pass. The normal run verifies negotiated TLS
+versions and exact saved FAT bytes for each positive case, plus the four
+negative certificate cases before HTTP. The no-RDRAND run rejects all six TLS
+attempts with error 35 and observes zero HTTP requests; WASI random failure
+also preserves the guest output. Existing plaintext HTTP, binary upload,
+held-request peer progress/cancellation, TCP transfer, EOF, graceful close,
+nonblocking/async socket and process/pipe/environment checks still pass.
+
+Library integration issues resolved: generated wolfSSL options.h reset the
+handwritten feature macros, causing client/library declaration mismatches and
+hardening warnings. WOLFSSL_NO_OPTIONS_H and a shared user-settings include
+now make the configurations agree. The full upstream BIO interface is needed
+by curl. The inet header is limited to library compilation so Autoconf's
+connect probe does not encounter a conflicting declaration. No warning is
+suppressed to hide those configuration errors.
+
+The TLS-linked CLI introduced a real WASI path_readlink import. The runtime
+now validates directory rights, path and output memory before metadata access.
+Providers reject symlink access/traversal. Existing non-links return INVAL;
+missing/provider errors remain exact and no outputs are written. Independent
+WAT/provider tests cover file/directory, zero-size buffer, missing path,
+invalid descriptors, traversal, denied capabilities and memory edges. The first
+capability test referenced unimplemented fd_fdstat_set_rights; it now opens a
+real reduced-rights directory with path_open. All wasm tests and both Clippy
+checks pass; the UEFI Release build passes. An attempted runner relink hit
+Windows LNK1104 while earlier tests still used the executable; that test session
+finished and the rebuild then passed. A version preflight now fails a suite
+before starting DNS peers if the actual module cannot instantiate.
+
+Upstream curl initially classified ASN_SIG_CONFIRM_E as generic error 35 and
+ASN_NO_SIGNER_E as CA-file error 77. The staged backend patch maps both peer
+certificate failures to error 60 while retaining certificate validation and
+other file/transport errors. The tests retain their exact expected error 60;
+they were not weakened to accept any failure. The independent TLS rejection
+server treats connection resets between requests or before HTTP as expected;
+payload errors remain recorded. Earlier reset tracebacks are documented above.
+Debug wasmi spent substantial CPU time in cryptography; the Release suite
+passes in about nine seconds without increasing its timeout. WSL-mounted log
+reads sometimes showed older output while Windows was still rewriting logs;
+Windows-native log/process inspection was used to resolve current status.
+A documentation patch used a stale line boundary, failed without edits and
+was reapplied against the actual text.
+
+WolfSSH 1.6.0 official stable-tag source is staged under artifacts/guest-sources.
+Its actual WASM client and integration remain required, as do remaining shell
+and guest transport operations. The full goal is still active; these TLS
+checks do not prove WolfSSH.
+
+The final 256 MiB actual firmware combination also passes with the current
+TLS-enabled curl module. It includes raw/POSIX/curl DNS responses, both TLS
+versions and all certificate failures, QuickJS/ash/curl and Python/ash/curl
+chains while a held curl stays connected, cancellation, exact HTTP/FAT bytes,
+restricted Python and QuickJS checks, concurrent Python roots, saved shell
+files, actual guest entropy, and the previous process/pipe/network scenarios:
+
+```powershell
+& ./artifacts/toolchains/uv-current/uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-curl-combined-final --network --dns --posix-network --curl artifacts/wasm-guests/curl.wasm --curl-tls --quickjs artifacts/wasm-guests/quickjs.wasm --ash artifacts/wasm-guests/ash.wasm --python artifacts/wasm-guests/python.wasm --random --qemu qemu-system-x86_64.exe
+```
+
+Final Rust formatting, PowerShell/Python syntax and Git diff checks pass.
+No commit was requested or made. No physical hardware or third-party service
+verification is claimed by these local QEMU/independent-server checks.
+
+## MSYS2 Clang ABI repair and actual WolfSSH exec client (2026-10-11)
+
+The reported Windows entry-point error was reproduced at the binary-import
+level without opening another error dialog. MSYS2 Clang/clang-libs 21.1.8-4
+imported `__emutls_v._ZSt11__once_call` and
+`__emutls_v._ZSt15__once_callable` from libstdc++-6.dll. Installed GCC libraries
+16.2.0-3 exported the newer access functions instead. Pacman integrity checks
+reported no altered Clang, Clang-library or GCC-library files; this was a
+mixed compiler ABI, not a corrupt DLL or a missing file.
+
+The available signed Clang 22.1.8-2 package was downloaded and its staged
+libclang-cpp.dll imports checked against the actual GCC exports. Pacman then
+upgraded exactly mingw-w64-x86_64-clang, clang-libs, llvm-libs and compiler-rt
+to 22.1.8-2. GCC libraries remain 16.2.0-3. No global PATH change or GCC
+downgrade was performed. clang, clang++, clang-cpp, clang-format, clang-check,
+clang-cl, clang-refactor, clang-repl and clang-scan-deps version checks pass.
+A native C++20 two-thread call_once program builds with warnings as errors
+and returns `once-ok`, verifying both compilation and runtime synchronization.
+Its temporary files and staged DLL were removed. The old Current state
+instruction prohibiting MSYS2 Clang startup is obsolete and was corrected.
+Guest builders still select the independent Windows WASI SDK explicitly.
+
+scripts/build_wolfssh.ps1 now builds official WolfSSH 1.6.0 library sources
+and guests/wolfssh/main.c into artifacts/wasm-guests/wolfssh.wasm. It uses
+the existing guest POSIX TCP ABI, upstream single-thread user-I/O hooks, and
+the previously verified wolfSSL archive. No native server service or external
+SSH endpoint is needed. The guest requires an explicit SHA256 host-key pin
+and a bounded password file. It attempts password authentication once, opens
+one exec channel, sends stdin EOF, drains both output streams, waits for close
+after EOF, and propagates remote status. Missing/out-of-range status fails
+with 255. The build retains upstream LICENSING and rejects linker warnings.
+
+wolfSSL's CMake config detected HAVE___UINT128_T, while its consumers initially
+lacked that feature declaration. WolfSSH therefore declared sp_cmp_d/sp_sub_d
+with i32 digit arguments while the library used i64. The shared user settings
+now declare the same WASI integer feature for every consumer. The rebuilt
+WolfSSH and wolfSSL logs contain no warnings/errors. curl was reconfigured,
+rebuilt, and passed its complete native HTTP/DNS/TLS suite with the new shared
+settings, including exact certificate rejection codes.
+
+Independent native AsyncSSH tests pass nine cases: interleaved 262181-byte
+stdout and 196613-byte stderr; stderr-only window replenishment; remote status
+23 with distinct streams; status 37 delivered after EOF; missing status;
+wrong key rejection before authentication; incorrect password with no exec;
+4096-byte accepted and 4097-byte/NUL-rejected password files; and malformed
+host-key pins before networking. Native logs are artifacts/wolfssh-native.log
+and artifacts/curl-ssh-settings-native.log.
+
+```powershell
+& ./scripts/build_wolfssh.ps1 -WasiSdk artifacts/toolchains/wasi-sdk-34.0-x86_64-windows
+& ./artifacts/toolchains/uv-current/uv.exe run scripts/test_wolfssh.py --runner target/release/examples/run_guest.exe --guest artifacts/wasm-guests/wolfssh.wasm
+```
+
+Actual UEFI TCP4 verification passes in artifacts/wasm-wolfssh-combined.
+The independent server keeps one authenticated SSH exec channel waiting while
+other guest instances finish the binary output/error cases and trust/auth
+negative paths. QuickJS Promise commands and restricted CPython call actual
+ash-to-WolfSSH chains and check exact remote status/stdout/stderr. The held
+connection must stay open through those peers. `/wasm kill` then closes it as
+observed by the server, and `/wasm reap` returns 130. Saved FAT stdout/stderr
+files are independently compared byte for byte. With RDRAND disabled,
+artifacts/wasm-wolfssh-no-rdrand passes failure before authentication, with no
+exec and no entropy fallback. Existing process/environment/pipe/clock/TCP4,
+Python restrictions and concurrent Python roots also pass.
+
+```powershell
+& ./artifacts/toolchains/uv-current/uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-wolfssh-combined --network --wolfssh artifacts/wasm-guests/wolfssh.wasm --quickjs artifacts/wasm-guests/quickjs.wasm --ash artifacts/wasm-guests/ash.wasm --python artifacts/wasm-guests/python.wasm --random --qemu qemu-system-x86_64.exe
+```
+
+Firmware tests exposed fixed 10 ms idle waits after each background WASM time
+slice, causing SSH cryptography to miss the test handshake deadline. Runtime
+poll now reports whether it ran a time slice. Both serial and native-console
+loops continue with event dispatch after progress and retain the idle wait
+without progress. Input is still checked each iteration. This preserves the
+distinction between runnable CPU work and a world waiting for I/O/timers;
+real timed-wait and cancellation scenarios pass with this change.
+
+Other bypassed issues: the standalone LLVM installation has no llvm-readobj,
+so the independent SDK llvm-objdump was used for PE imports/exports; the MSYS2
+mirror file is mirrorlist.mingw rather than mirrorlist.mingw64; clang-tidy is
+not installed in this MSYS2 prefix, so its optional startup probe was removed.
+A WSL git status scan stalled and was interrupted; Windows Git with tracked
+files selected supplied the status. A PowerShell linker argument containing
+commas initially failed to parse; a proper argument array fixed it. The
+SHA256 convenience declaration required hash.h. Exit-status functions require
+WOLFSSH_SHELL. Upstream's licensing filename is LICENSING, not COPYING or
+LICENSE. An early suite ran before successful linking and reported a missing
+guest; the dependency was completed before rerunning. Client stream_read
+reports EOF when the last channel is already retired; the client checks the
+channel list before trying to drain a freed channel. A rejected password
+initially retried until the dispatcher limit; the client now supplies it once.
+Test command IFS expansion entered redirect filenames; explicit subshell
+syntax separates stdout/stderr targets. A nested Bash/PowerShell Python syntax
+probe lost its quotes; a literal heredoc fixed it. Tests preserve the original
+byte/status/security expectations. Terminal draining continues while the
+test waits for a peer event. QEMU's existing missing ChatGPT AppxManifest GLib
+warning persists and did not prevent passing tests.
+
+Release UEFI build, all WASM Rust tests, host/UEFI Clippy with warnings as
+errors, Rust formatting, PowerShell/Python syntax and Git whitespace checks
+pass. No commits were requested or made. The full WASM-world goal remains
+active; remaining shell/filesystem/task/transport work is listed in
+docs/wasm-world.md. No physical hardware or third-party SSH result is claimed.
+
+The additional full curl/TLS/DNS/POSIX/WolfSSH/QuickJS/ash/CPython combination
+in artifacts/wasm-applications-combined reached all SSH scenarios but failed
+with 256 MiB RAM when the second concurrent Python root initialized. Python
+reported `_PyErr_NoMemory` before PyExc_MemoryError was initialized; the expected
+beta marker was absent. The failure is retained. The separate 256 MiB WolfSSH
+combination above passes. This does not establish a minimum RAM requirement
+for the complete application set.
+
+Rerunning the same complete combination with 512 MiB RAM passes, with all
+existing byte/status/security assertions retained. Results are in
+artifacts/wasm-applications-combined-512 and its adjacent log. It includes raw,
+POSIX and actual curl DNS, curl HTTP/TLS and certificate failures, both held
+curl/SSH cancellations, both QuickJS/Python-to-ash application chains, binary
+FAT output/error oracles, concurrent Python roots, guest entropy, and the
+existing process/environment/pipe/timed-wait cases.
+
+```powershell
+& ./artifacts/toolchains/uv-current/uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-applications-combined-512 --memory 512 --network --dns --posix-network --curl artifacts/wasm-guests/curl.wasm --curl-tls --wolfssh artifacts/wasm-guests/wolfssh.wasm --quickjs artifacts/wasm-guests/quickjs.wasm --ash artifacts/wasm-guests/ash.wasm --python artifacts/wasm-guests/python.wasm --random --qemu qemu-system-x86_64.exe
+```
+
+## Actual ash here-documents without fork (2026-10-11)
+
+The previous turn made verified progress by repairing MSYS2 Clang and adding
+actual WolfSSH/native/UEFI application checks. This step removes another
+remaining fork dependency from BusyBox ash: upstream openhere() used a forked
+pipe writer for inputs above PIPE_BUF. The port now expands the here-document
+in the current shell using upstream expandhere(), then snapshots its bytes
+into an anonymous read-only host stream. No writer process, fork, temporary
+workspace file or filesystem permission is required.
+
+The new efi_process.input_snapshot import copies at most 512 KiB and returns
+a descriptor or negative POSIX errno. Reads consume shared state across
+duplicates/inherited descriptors, then return EOF. Writes and seeks fail.
+Memory bounds, the size cap and free descriptor checks precede installation;
+failed requests do not consume slots. Independent Rust tests verify embedded
+NUL/non-UTF8 bytes, source mutation after copy, asymmetric reads through two
+duplicates, close/EOF, write/seek rejection, exact 512 KiB acceptance, one-byte
+overflow, memory edges, descriptor exhaustion and reuse. All WASM Rust tests
+pass; host/UEFI Clippy, Rust formatting and syntax/whitespace checks pass.
+
+Native actual ash integration passes 14 named cases in
+artifacts/ash-heredocs-native.log: byte-exact literal sizes 4095/4096/4097,
+65535/65536/65537 and 196613; unquoted variable assignment/substitution and
+escaped dollar; quoted literal substitution text; <<- leading-tab handling;
+multiple here-documents with ordered exactly-once command substitutions;
+pipeline inheritance; 300 repeated builtin redirections; and expanded
+payload above 512 KiB rejected as a redirection error. Existing real shell
+tasks, randomized state transfer, malformed-task and QuickJS pipeline capture
+regressions pass in artifacts/ash-heredoc-tasks-regression.log.
+
+```powershell
+& ./scripts/build_busybox.ps1 -WasiSdk artifacts/toolchains/wasi-sdk-34.0-x86_64-windows -Binaryen artifacts/toolchains/binaryen-version_133
+& ./artifacts/toolchains/uv-current/uv.exe run scripts/test_ash_heredocs.py --runner target/release/examples/run_guest.exe --ash artifacts/wasm-guests/ash.wasm --child artifacts/wasm-fixtures/ash_child.wasm
+```
+
+Actual 256 MiB QEMU/OVMF verification passes the same cases against independent
+saved FAT stdout/stderr byte oracles in artifacts/wasm-ash-heredocs. It also
+passes the existing process/environment/pipe/timed-wait, QuickJS, fresh ash,
+external child status and reaping checks. Add --ash-heredocs with --ash-child
+to the firmware driver:
+
+```powershell
+& ./artifacts/toolchains/uv-current/uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-ash-heredocs --ash artifacts/wasm-guests/ash.wasm --ash-child artifacts/wasm-fixtures/ash_child.wasm --ash-heredocs --quickjs artifacts/wasm-guests/quickjs.wasm --qemu qemu-system-x86_64.exe
+```
+
+Bypassed issues: the first Rust fixture incorrectly assumed dup2 returns zero;
+the import returns the target descriptor, and the fixture now checks that
+contract. Early shell fixtures used arithmetic and test/[ even though these
+features are not enabled; the repeated cleanup and expansion fixtures now
+use existing for/case syntax and retain their original byte/resource checks.
+This exposed arithmetic/test as remaining work, not verified support. An
+oversize redirection returns ash status 1; the original test incorrectly
+expected shell syntax status 2. The corrected fixture requires the exact
+redirection diagnostic and status 1. Existing smoke_ash_tasks assumed no
+filesystem provider, which is outdated: its target can now be created. The
+test now uses an explicitly missing parent directory while retaining its
+original status and exactly-once substitution assertion. No failure assertion
+was removed. Windows log probes before build completion found no firmware
+log; the confirmed live build session was retained and polled until terminal.
+The existing QEMU missing ChatGPT AppxManifest warning remains non-fatal.
+
+Large syntax trees/heredoc bodies serialized to fresh pipeline/subshell tasks
+still hit the separate 28000-byte task limit. Arithmetic/test builtins,
+filesystem PATH, descriptor inheritance and task failure cleanup remain open.
+This step does not complete the full goal. No commits were requested or made.
+
+The final complete 512 MiB firmware regression also passes with the rebuilt
+ash module and the new here-document cases enabled. Results are in
+artifacts/wasm-applications-heredocs-512 and the adjacent log. This retains
+all curl HTTP/DNS/TLS/certificate, WolfSSH trust/auth/status, two cancellation
+peers, QuickJS/Python-to-ash application chains, concurrent Python roots,
+entropy and existing process/pipe/timed-wait assertions, and adds saved FAT
+here-document output/error checks:
+
+```powershell
+& ./artifacts/toolchains/uv-current/uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-applications-heredocs-512 --memory 512 --network --dns --posix-network --curl artifacts/wasm-guests/curl.wasm --curl-tls --wolfssh artifacts/wasm-guests/wolfssh.wasm --quickjs artifacts/wasm-guests/quickjs.wasm --ash artifacts/wasm-guests/ash.wasm --ash-child artifacts/wasm-fixtures/ash_child.wasm --ash-heredocs --python artifacts/wasm-guests/python.wasm --random --qemu qemu-system-x86_64.exe
+```
+
+## Actual ash 64-bit arithmetic and test builtins (2026-10-11)
+
+The previous turn made verified progress with here-document input snapshots,
+native/UEFI byte checks and complete application regression. This step enables
+BusyBox 1.37.0's actual shell/math.c and coreutils/test.c in the ash build,
+including 64-bit arithmetic, base notation and 64-bit test operands. The guest
+does not expose a host identity/group database. Its supplementary groups are
+empty, consistent with the existing local UID/GID model. Bash [[ remains
+disabled. Real test/[ is a builtin and does not start a fresh external process.
+
+Native tests exposed upstream logical arithmetic evaluating both sides of
+&&/||, including assignments which should be skipped. The staged math patch
+keeps the enclosing suppression state for each logical stack entry, disables
+its right operand when its left operand decides the result, and restores the
+saved state before combining values. Existing ternary suppression then
+continues to work inside/outside logical branches. The build uses -fwrapv so
+signed overflow is explicit two's-complement wrapping. Upstream's existing
+minimum-integer divide/modulo guard is retained and tested.
+
+scripts/test_ash_math.py passes 20 named native integration cases. Independent
+oracles cover precedence/base notation, 32/64-bit boundaries, assignment and
+increment, signed wrapping including minimum/-1, nested short-circuit with
+skipped division/writes, a real while/test loop, test strings and numeric
+limits, regular/directory/missing/empty file checks, subshell/command-
+substitution/pipeline state isolation, and 300 successive bad-number test
+errors followed by successful tests. Divide-by-zero, recursion, syntax and
+readonly errors return shell status 2; test number overflow or missing ]
+returns builtin status 2 while later shell commands recover. No guest trap
+is accepted. Eighty structured random arithmetic expressions match independent
+Python integer results. Sixty nested logical/ternary trees match an independent
+recursive evaluator's result and variable side effects, without depending on
+the production parser's operator-stack representation.
+
+```powershell
+& ./scripts/build_busybox.ps1 -WasiSdk artifacts/toolchains/wasi-sdk-34.0-x86_64-windows -Binaryen artifacts/toolchains/binaryen-version_133
+& ./artifacts/toolchains/uv-current/uv.exe run scripts/test_ash_math.py --runner target/release/examples/run_guest.exe --ash artifacts/wasm-guests/ash.wasm --child artifacts/wasm-fixtures/ash_child.wasm
+```
+
+The build log has no diagnostics. Existing native task transfer/random state,
+malformed-task, QuickJS pipeline, printf exact-byte/NUL/integer and all
+here-document checks pass in artifacts/ash-math-tasks.log,
+artifacts/ash-math-printf.log and artifacts/ash-math-heredocs.log. New tests
+are in artifacts/ash-math-native.log. Python/PowerShell syntax, guarded
+upstream source patch markers and Git whitespace checks pass.
+
+Bypassed issues: test's missing index_in_strings and bb_basename helpers were
+implemented with their actual string semantics; no unrelated library emulation
+was added. Test's error helper carried NORETURN while Asyncify longjmp first
+returns during unwind. The copied source now uses NOINLINE, matching the
+existing ash adaptation; 300 error/recovery checks verify it. An upstream
+string-offset warning was removed by using the equivalent literal format.
+The first fixture writer used Windows write_text, translating LF into CRLF
+inside actual shell scripts and adding a literal CR to the final argument;
+fixtures now write exact UTF-8 bytes. The first native test ran after a failed
+link and inspected the old ash module; build and test are now sequential with
+native failures propagated. The logical-side-effect mismatch was fixed in
+the engine, retaining the expected short-circuit result. Tests do not accept
+the wrong side effects. The existing QEMU ChatGPT AppxManifest warning remains
+non-fatal. Earlier Current state claims that arithmetic/test were disabled
+are now outdated and were updated; historical verification failures remain.
+
+Large task/heredoc serialization, PATH, additional builtins, descriptor
+inheritance and task cleanup still require work. No commits were requested
+or made; the full goal remains active.
+
+Actual 512 MiB QEMU verification in artifacts/wasm-applications-math-512
+passes all 20 math/test cases using independently checked FAT stdout/stderr
+bytes, including the structured arithmetic and nested side-effect oracles.
+It also retains all HTTP/DNS/TLS/certificate/WolfSSH/entropy/cancellation,
+QuickJS/Python-to-ash application-chain, concurrent-Python, here-document,
+external-child/reap and process/pipe/timed-wait checks. This verifies the
+rebuilt ash module in the complete named-application environment:
+
+```powershell
+& ./artifacts/toolchains/uv-current/uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-applications-math-512 --memory 512 --network --dns --posix-network --curl artifacts/wasm-guests/curl.wasm --curl-tls --wolfssh artifacts/wasm-guests/wolfssh.wasm --quickjs artifacts/wasm-guests/quickjs.wasm --ash artifacts/wasm-guests/ash.wasm --ash-child artifacts/wasm-fixtures/ash_child.wasm --ash-heredocs --ash-math --python artifacts/wasm-guests/python.wasm --random --qemu qemu-system-x86_64.exe
+```
+
+An additional language-interface fixture initially contained a literal space
+inside the JavaScript diagnostic string `bad number`. /wasm run splits on
+whitespace, so QuickJS received excess arguments and returned usage status 2.
+The fixture now represents that space as a JavaScript hex escape, preserving
+its exact diagnostic/status assertion. This was a fixture argument-encoding
+failure, not an arithmetic/runtime failure.
+
+The next language check exposed two further fixture errors. The actual test
+diagnostic is `invalid: out of range\n`, not `bad number`. Both language
+fixtures now compare the exact diagnostic and status 2. QuickJS now awaits
+the outer Promise, so a rejected assertion fails the root process instead
+of leaving an unobserved rejection. Both exact fixture programs pass the
+native guest runner and print their QUICKJS_ASH_MATH_OK/PYTHON_ASH_MATH_OK
+markers. Python's generated source is also compiled before native execution.
+
+Interrupting a test left its QEMU process holding disk.img open (WinError 32).
+The process was identified by the exact language-test output path and stopped;
+the previous test process was allowed to finish before reusing its log file.
+An initial CIM query lost its quoted filter through Bash quoting. The corrected
+literal heredoc retained the Windows query quotes. No unrelated VM was stopped.
+Clang and clang++ 22.1.8 startup checks were repeated successfully after this
+cleanup. The earlier instruction treating MSYS2 Clang as unusable remains
+obsolete; the explicit WASI SDK selection still applies to guest builds.
+
+The corrected 512 MiB QEMU run completed with exit status 0 in
+artifacts/wasm-ash-math-languages; artifacts/ash-math-languages.log reports
+all 20 arithmetic/test cases and both dedicated language interfaces as PASS.
+The real QuickJS Promise.all concurrently captures the sum-of-squares loop
+(0..20 = 2870) and the rejected test result. Restricted CPython captures the
+same loop and checks the test failure with check=False. Both compare exact
+stdout/stderr and status. Saved FAT fixture outputs are checked independently.
+
+## Explicit process descriptor mappings (2026-10-11)
+
+efi_process.spawn_mapped_fds creates a fresh instance with explicit argv,
+environment and descriptor pairs {child target, parent source}. The map
+replaces standard stream inheritance, supports 0..127 entries and reserves
+target fd 3 for the configured WASI workspace. It uses the unchanged parent
+table, preserving swaps and duplicate-source sharing. Explicit copies clear
+close-on-exec only in the child. Validation completes before spawning.
+
+The new descriptor_mapping integration tests verify binary input across
+two targets after the parent closes its source, stdout/stderr swapping,
+absent unmapped stdin, empty maps, reserved/duplicate/out-of-range targets,
+bad memory, count overflow, absent sources, and no PID consumed on failure.
+The existing socket close-on-exec integration test now also exercises the
+mapped API. All efi-agent-wasm targets pass, with output in
+artifacts/descriptor-mapping-tests.log; the added close-on-exec case passed
+again after the full run. The release UEFI build also passes.
+
+scripts/fixtures/wasm/descriptor_mapping.c builds with the explicit Windows
+WASI SDK. Actual QEMU runs it against the firmware's FAT workspace: a child
+reads the copied binary snapshot through fd 4 and fd 127, closes its copies,
+and the parent still owns a valid source at EOF. A second child checks all
+128 descriptor numbers with a full 127-entry map plus the fd 3 preopen.
+Reserved-fd rejection and exact child status are also checked. The run
+completed with status 0; artifacts/descriptor-mapping-firmware.log contains
+the explicit mapping PASS marker.
+
+```powershell
+& ./scripts/build_wasm_c_fixture.ps1 -WasiSdk artifacts/toolchains/wasi-sdk-34.0-x86_64-windows
+& ./artifacts/toolchains/uv-current/uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-descriptor-mapping --descriptor-mapping --qemu qemu-system-x86_64.exe
+```
+
+Bypassed issues: the first no_std compilation lacked alloc's vec macro import;
+the import was added and compilation/tests repeated successfully. The initial
+source inspection requested tasks.c; the actual task codec is tasks.inc and
+was inspected instead. A nested-quote Python syntax probe lost its string
+quotes at the Bash boundary; the literal-heredoc invocation passed. Python,
+PowerShell syntax and Git whitespace checks pass. Documentation that restricted every spawn API to three
+standard streams was updated for the new explicit mapping API. Ordinary spawn
+and ash's existing invocation path still select standard streams only.
+Ash's 28000-byte hex task limit remains; moving state to mapped binary snapshot
+descriptors is the next integration step. No commit was made.
+
+## Ash binary snapshot task transfer (2026-10-11)
+
+Ash task serialization now sends its binary state through input_snapshot and
+spawn_mapped_fds. Selected stdio retains its meaning; child fd 4 carries the
+state and only its decimal length appears in argv. Hex encoding is removed.
+The limit is now 512 KiB for the complete serialized state/tree, with the
+existing depth limit of 256. The parent closes its source on both spawn success
+and failure. The child requires exactly the declared bytes and EOF, then closes
+fd 4 before decoding. Invalid length, flags, version or truncated node data
+returns shell status 2, without accepting a guest trap as success.
+
+Native integration passes 256 KiB variable state, oversized-state rejection,
+inherited stdin cursor sharing, all previous state/tree/pipeline checks and
+300 successive fresh tasks without descriptor exhaustion. The binary-input
+fixture checks empty/truncated/extra bytes, invalid flags/version and truncated
+state, with exact diagnostic text and child status. The expanded here-document
+oracle passes 26 cases: existing 14 plus 30001/65537/196613-byte bodies through
+subshells, pipelines, command substitutions and inherited functions. The exact
+output bytes are derived independently from the task codec.
+
+The focused 512 MiB QEMU run artifacts/wasm-binary-tasks-focused passes these
+26 here-document cases, independently checks saved FAT stdout/stderr, and
+executes the binary-input rejection fixture. Native logs are
+artifacts/ash-binary-task-native.log and artifacts/ash-binary-task-heredocs.log.
+The guest build has no diagnostics in artifacts/ash-binary-task-build.log.
+
+Bypassed issues: malformed task startup used an unset arg0 and printed `(null)`;
+the task entry now establishes argv[0] before decoding. A firmware test selected
+the lowest successful PID, which could be an already-reaped child when the root
+failed. Math/heredoc checks now find the root first and compare its actual status.
+The resulting firmware evidence showed correct 30001-byte output but status 1.
+Upstream printf accumulated errno after output as a conversion failure, although
+successful stdio can change errno. The staged source now captures each numeric
+conversion's errno before output, leaving output failures to ash's existing
+ferror check. The focused QEMU retest passes without weakening output/status
+assertions. Native printf regression also passes with the rebuilt source.
+
+The native timed-read regression exhausted the guest runner's fixed 100000-step
+bound before a two-second timer expired. The runner now uses a 60-second wall
+deadline, independent of dispatch speed. A standalone FAT-inspection dependency
+resolution hit network timeout and connection-reset errors; the command-local
+Windows proxy was tried, then the existing uv smoke_wasm environment was reused
+without downloads. An offline resolution attempt also lacked the requested
+package version. No global environment or toolchain configuration changed.
+An AGENTS.md patch did not match its expected lines and applied no edits; it was
+reapplied against the actual text. Old hex/28000-byte Current state claims were
+updated. Historical verification entries remain records of their tested state.
+
+The final native read regression now passes the real timeout-then-read sequence,
+IFS oracle and QuickJS pipeline. All 20 arithmetic/test cases also pass with
+the final staged printf source. Logs are artifacts/ash-binary-task-smoke_ash_read.log,
+artifacts/ash-binary-task-smoke_ash_printf.log and artifacts/ash-binary-task-math.log.
+Python/PowerShell syntax and Git whitespace checks pass.
+
+The final full 512 MiB QEMU combination completed with exit status 0 in
+artifacts/wasm-applications-binary-tasks-512. Its adjacent log reports PASS for
+HTTP/DNS/TLS/certificate failures, WolfSSH streams/status/cancellation,
+QuickJS/Python application chains, concurrent Python, entropy, process/pipe
+checks, all descriptor mappings, binary-state rejection, all 26 here-document
+byte oracles, all 20 arithmetic/test cases and both dedicated language math
+interfaces. The final rebuilt ash module is used throughout this combination.
+All efi-agent-wasm targets also pass in artifacts/ash-binary-task-runtime-tests.log.
+
+```powershell
+& ./artifacts/toolchains/uv-current/uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-applications-binary-tasks-512 --memory 512 --network --dns --posix-network --curl artifacts/wasm-guests/curl.wasm --curl-tls --wolfssh artifacts/wasm-guests/wolfssh.wasm --quickjs artifacts/wasm-guests/quickjs.wasm --ash artifacts/wasm-guests/ash.wasm --ash-child artifacts/wasm-fixtures/ash_child.wasm --ash-heredocs --ash-math --ash-task-input --descriptor-mapping --python artifacts/wasm-guests/python.wasm --random --qemu qemu-system-x86_64.exe
+```
+
+General shell descriptor inheritance, filesystem PATH lookup, remaining builtins
+and the complete reproducible packaging workflow still need work. No commit
+was made; the requested full environment goal remains active.
+
+## Ash user descriptor inheritance and general close-on-exec (2026-10-11)
+
+Close-on-exec metadata now belongs to the process descriptor table for all
+descriptor kinds. get_fd_flags/set_fd_flags expose bit 0 with negative POSIX
+errors; unknown bits fail without changing state. Socket creation initializes
+the same metadata. Close (including graceful socket close and failed connecting
+socket removal) discards flags; descriptor reuse starts clear. Duplication
+clears the new copy, same-fd dup2 preserves it, and renumber transfers it while
+discarding the replaced target's flags. Default spawn still selects standard
+streams and omits marked descriptors; explicit maps duplicate selected sources.
+
+Ash now maps open user descriptors into both fresh shell tasks and external
+commands. Its pipe wrapper marks internal endpoints, and staged F_DUPFD_CLOEXEC
+calls mark saved parser/redirection copies. Explicit task stdio selects needed
+internal pipe ends without passing unrelated endpoints. The task snapshot gets
+an available child descriptor >=4 and passes that number with its size, so
+user fd 4 is preserved. Closed stdin is omitted rather than making task spawn
+fail. The shared argv/environment packer also supports the explicit map helper.
+
+All efi-agent-wasm targets pass in artifacts/descriptor-flags-tests.log, including
+new default-spawn filtering/clear/reuse tests for console input/output, snapshots
+and pipes, plus existing socket and mapping tests. The C firmware mapping fixture
+checks explicit child copies clear flags while parent flags remain set, closed
+number reuse, regular-file duplication/renumber/overwrite, output and pipe flags,
+and fd 127/full-map/workspace checks. The release UEFI and C fixture builds pass.
+
+scripts/test_ash_descriptors.py passes ten native scenarios with exact stdout
+and empty stderr: shared fd 7 cursor across subshell and parent, user fd 4,
+substitution, pipeline, external command, nested tasks, shared output file,
+child close isolation, closed stdin, and 300 open/task/close cycles. Existing
+task/state/large pipeline, external command, printf and read regressions pass
+in artifacts/ash-descriptors-smoke_ash_*.log. The build has no diagnostics.
+
+The full actual 512 MiB QEMU combination completed with status 0 in
+artifacts/wasm-applications-descriptors-512. Its adjacent log reports all ten
+descriptor cases with independent saved FAT bytes, descriptor flags/mappings,
+26 here-documents, binary-state rejection, 20 arithmetic/test cases, both
+language arithmetic interfaces, HTTP/DNS/TLS/certificate failures, WolfSSH,
+concurrent Python, language application chains, entropy and process/pipe
+cancellation as PASS. No third-party provider or physical hardware claim is made.
+
+```powershell
+& ./artifacts/toolchains/uv-current/uv.exe run scripts/smoke_wasm.py --launcher target/debug/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/wasm-applications-descriptors-512 --memory 512 --network --dns --posix-network --curl artifacts/wasm-guests/curl.wasm --curl-tls --wolfssh artifacts/wasm-guests/wolfssh.wasm --quickjs artifacts/wasm-guests/quickjs.wasm --ash artifacts/wasm-guests/ash.wasm --ash-child artifacts/wasm-fixtures/ash_child.wasm --ash-heredocs --ash-math --ash-task-input --ash-descriptors --descriptor-mapping --python artifacts/wasm-guests/python.wasm --random --qemu qemu-system-x86_64.exe
+```
+
+Bypassed issues: source inspection initially used wasm32-wasi rather than the
+SDK's wasm32-wasip1 include directory, and an absent abi/*.rs glob; both searches
+were corrected to actual files. A multi-file patch failed its header marker
+and applied no changes; it was reapplied against the current text. The new fd 7
+test exposed the existing dupfd wrapper assigning POSIX error numbers directly
+to WASI errno. Closed targets were reported as Bad message instead of EBADF,
+breaking ash's redirection branch. Explicit errno conversion fixes this, and
+the exact-byte tests pass. A process poll mistakenly supplied the Windows PID
+to write_stdin; the original tool session was polled next and reported success.
+An absent-QEMU Get-Process probe returned nonzero after the VM exited normally;
+the original test session's status 0 and PASS log are authoritative. Earlier
+Current state/stdin-only and socket-only flag descriptions were updated. The
+old unsupported SOCK_CLOEXEC statement was also corrected to current behavior.
+Python syntax and Git whitespace checks pass. No commits were made; filesystem
+PATH lookup, remaining builtins, task cleanup audit and reproducible packaging
+remain work toward the full requested environment.
+
+## WASM progress review and functional commits (2026-10-12)
+
+This review uses the source tree, existing native logs and the final recorded
+QEMU log at artifacts/wasm-applications-descriptors-512.log. No build, test or
+firmware acceptance run was repeated. That log records PASS for the actual
+BusyBox ash, QuickJS, CPython, curl and WolfSSH application combination,
+network/TLS, concurrent instances, descriptor inheritance and language-to-shell
+chains. The full combination requires 512 MiB in the recorded configuration;
+the earlier full 256 MiB run failed at second concurrent Python startup.
+
+The work is committed in dependency order by function: the no_std wasmi world
+and native adapters; UEFI command/UI and firmware providers; shared C process,
+capture and Asyncify jump helpers; BusyBox ash; QuickJS; CPython; POSIX network
+wrappers; curl/wolfSSL; WolfSSH; and shared integration fixtures/documentation.
+Existing test sources are retained. Static Git whitespace and staging checks
+are used for commit hygiene only and do not establish new execution results.
+
+The current documentation now lists the implemented WASI imports and process
+helpers. Stale statements that curl/WolfSSH ports and all UEFI sockets were
+pending were replaced with the remaining limits. Source acquisition, automatic
+guest packaging, filesystem PATH, remaining filesystem/socket operations,
+monotonic clocks, permissions and physical hardware verification remain open.
+
+The pre-existing dirty vendor/uefi-shell tree is excluded from these commits.
+Its nested EDK II checkout contains an X11IncludeHack change and dirty OpenSSL
+and libspdm submodules. Those changes are retained for separate work.
+
+Bypassed issues: the initial WSL Git status was slow on the Windows checkout
+and held the index lock, blocking the first staging attempt. The review's WSL
+status process was stopped; its lock cleared and staging then succeeded.
+Subsequent Git operations used Windows Git through PowerShell 7 with a native
+working directory. A PowerShell search command used incorrect quote escaping
+and exited before it produced results; a literal Bash here-document supplied
+the corrected PowerShell command. No production code was changed for these
+environment issues. The old progress descriptions conflicted with later source
+and verification records; historical records were retained and current state
+descriptions were corrected.
