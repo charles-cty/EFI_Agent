@@ -1,0 +1,14 @@
+[package]
+name = "efi-agent-wasm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+wasmi = { version = "2.0.0", default-features = false, features = ["stable", "validate", "portable-dispatch", "prefer-btree-collections", "libm"] }
+
+[dev-dependencies]
+getrandom = "0.2"
+mio = { version = "1", features = ["net", "os-poll"] }
+wat = "1"
