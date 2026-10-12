@@ -1,0 +1,12 @@
+#ifndef EFI_ASH_TIMES_H
+#define EFI_ASH_TIMES_H
+#include <sys/types.h>
+#include <time.h>
+struct tms {
+    clock_t tms_utime;
+    clock_t tms_stime;
+    clock_t tms_cutime;
+    clock_t tms_cstime;
+};
+clock_t times(struct tms *result);
+#endif
