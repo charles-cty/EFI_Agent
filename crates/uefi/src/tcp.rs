@@ -1,6 +1,7 @@
 //! Cooperative TCP4 operations over firmware asynchronous tokens.
 //!
 //! No queued token, event context, or packet buffer can outlive its Rust storage.
+pub(crate) mod cooperative;
 use crate::event_loop::{self, Notification};
 use alloc::{boxed::Box, format, string::String};
 use core::{

@@ -25,6 +25,9 @@ mod random;
 mod tcp;
 mod terminal;
 mod tls;
+mod wasm;
+mod wasm_clock;
+mod wasm_filesystem;
 
 #[entry]
 fn main() -> Status {
@@ -57,6 +60,7 @@ fn submit(
     app: &mut App,
     agent: &mut Agent,
     runtime_state: &mut Option<environment::Runtime>,
+    wasm: &mut wasm::Runtime,
     text: String,
     driver_report: &str,
     mut refresh: impl FnMut(&mut App, bool) -> Result<bool, terminal::Error>,
@@ -76,12 +80,14 @@ fn submit(
     let previous_status = app.status.clone();
     app.status = String::from("Working");
     refresh(app, false)?;
-    let response = if text == "/caps" {
+    let response = if text.split_whitespace().next() == Some("/wasm") {
+        wasm.command(&text, app, &mut refresh)?
+    } else if text == "/caps" {
         app.capabilities = capabilities::detect(driver_report);
         app.capabilities.clone()
     } else if text == "/help" {
         String::from(
-            "/help  Show commands\n/caps  Probe network and CPU random generator capabilities\n/effort [value]  Show or set reasoning effort (provider validates values)\n/status  Show actual API, history, token and cache data\n/clear  Start a new conversation\n/quit, /exit  Exit\nSend a prompt to run the coding agent (read, write, edit tools).",
+            "/help  Show commands\n/caps  Probe network and CPU random generator capabilities\n/wasm  Manage WASM programs and processes\n/effort [value]  Show or set reasoning effort (provider validates values)\n/status  Show actual API, history, token and cache data\n/clear  Start a new conversation\n/quit, /exit  Exit\nSend a prompt to run the coding agent (read, write, edit tools).",
         )
     } else if text == "/status" {
         let history = agent.history_status().unwrap_or_else(|error| error);
@@ -114,13 +120,14 @@ fn submit(
         let render_error = RefCell::new(None);
         let cancelled = Cell::new(false);
         let result = {
-            let ui = RefCell::new((&mut *app, &mut refresh));
+            let ui = RefCell::new((&mut *app, &mut refresh, &mut *wasm));
             let mut control = || {
                 if cancelled.get() {
                     return true;
                 }
                 let mut ui = ui.borrow_mut();
-                let (app, refresh) = &mut *ui;
+                let (app, refresh, wasm) = &mut *ui;
+                wasm.poll(app);
                 match refresh(app, true) {
                     Ok(stop) => cancelled.set(stop),
                     Err(error) => {
@@ -139,7 +146,7 @@ fn submit(
             let mut tool_row = None;
             agent.turn(text, &mut environment, |event| {
                 let mut ui = ui.borrow_mut();
-                let (app, refresh) = &mut *ui;
+                let (app, refresh, _) = &mut *ui;
                 match event {
                     Event::ModelStarted => {
                         streaming_row = None;
@@ -267,6 +274,19 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
     if let Some(runtime) = &runtime_state {
         app.workspace = runtime.config.workspace.clone();
     }
+    let mut wasm = wasm::Runtime::new(
+        runtime_state
+            .as_ref()
+            .map_or("\\work", |runtime| runtime.config.workspace.as_str()),
+        runtime_state
+            .as_ref()
+            .and_then(|runtime| runtime.config.ipv4.clone()),
+        runtime_state
+            .as_ref()
+            .map_or(([1, 1, 1, 1], 53), |runtime| {
+                (runtime.config.dns_address, runtime.config.dns_port)
+            }),
+    );
     // VM mode is explicit. The launcher ESP has no motherboard UART enabled.
     if vm && let Ok(handles) = boot::find_handles::<Serial>() {
         for handle in handles {
@@ -310,6 +330,7 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
                     .map_err(|_| terminal::Error(Status::DEVICE_ERROR))?;
             }
             while !app.quit {
+                let wasm_progress = wasm.poll(&mut app);
                 draw_serial(&mut terminal, &mut app)?;
                 let mut bytes = [0; 128];
                 let count = terminal.backend_mut().sink.read(&mut bytes)?;
@@ -334,6 +355,7 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
                             &mut app,
                             &mut agent,
                             &mut runtime_state,
+                            &mut wasm,
                             text,
                             driver_report,
                             |app, poll| {
@@ -369,8 +391,12 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
                         )?;
                     }
                 }
-                event_loop::idle(core::time::Duration::from_millis(10))
-                    .map_err(|_| terminal::Error(Status::DEVICE_ERROR))?;
+                if wasm_progress {
+                    event_loop::dispatch();
+                } else {
+                    event_loop::idle(core::time::Duration::from_millis(10))
+                        .map_err(|_| terminal::Error(Status::DEVICE_ERROR))?;
+                }
             }
             terminal.show_cursor()?;
             return Ok(());
@@ -382,6 +408,7 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
     terminal.clear()?;
     terminal.hide_cursor()?;
     while !app.quit {
+        let wasm_progress = wasm.poll(&mut app);
         terminal.draw(|frame| app.render(frame.area(), frame.buffer_mut()))?;
         if let Some(key) = terminal.backend().read_key() {
             deferred.push_back(key);
@@ -397,6 +424,7 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
                     &mut app,
                     &mut agent,
                     &mut runtime_state,
+                    &mut wasm,
                     text,
                     driver_report,
                     |app, poll| {
@@ -418,8 +446,12 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
                 )?;
             }
         }
-        event_loop::idle(core::time::Duration::from_millis(10))
-            .map_err(|_| terminal::Error(Status::DEVICE_ERROR))?;
+        if wasm_progress {
+            event_loop::dispatch();
+        } else {
+            event_loop::idle(core::time::Duration::from_millis(10))
+                .map_err(|_| terminal::Error(Status::DEVICE_ERROR))?;
+        }
     }
     terminal.show_cursor()?;
     Ok(())
