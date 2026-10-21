@@ -365,6 +365,20 @@ recorded complete regression is artifacts/wasm-applications-descriptors-512.
 The 2026-10-12 commit review uses existing evidence; it does not rerun tests.
 Guest source acquisition and automatic guest packaging remain pending.
 
+The 2026-10-12 native allocation investigation found linear-memory capacity
+amplification: each Python instance starts at 18.875 MiB, grows to a visible
+19.375 MiB, but wasmi_core's Vec reserves 37.750 MiB. The UEFI allocator uses
+allocate/copy/free reallocation, so old and new buffers coexist during growth.
+The Python build also reserves a 16 MiB C stack per instance. Five registered
+modules occupy about 32.2 MiB in the native allocation probe. These findings
+do not establish the full firmware OOM cause or its minimum RAM requirement.
+See docs/verification.md and artifacts/memory-inspection-2026-10-12.log.
+Repeated registration also retains old compiled functions in the shared Engine.
+The full test loads Python three times and curl twice before Python concurrency;
+the same native registration sequence increases module allocations from 32.208
+to 62.269 MiB. This is an additional identified retention issue, not a complete
+firmware OOM explanation. See artifacts/module-reload-inspection-2026-10-12.log.
+
 Daily builds use Cargo separately for the launcher and x86_64-unknown-uefi
 application. `cargo build` alone selects only host default members. The VM
 launcher can boot Cargo's .efi output directly; no script is needed for that.

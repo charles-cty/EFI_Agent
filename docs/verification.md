@@ -3254,3 +3254,143 @@ the corrected PowerShell command. No production code was changed for these
 environment issues. The old progress descriptions conflicted with later source
 and verification records; historical records were retained and current state
 descriptions were corrected.
+
+## WASM memory allocation investigation (2026-10-12)
+
+Source inspection confirms that each PID creates its own Store and instantiates
+only the selected registered Module. The five applications are separate WASM
+files and are not linked into one instance. Module compilation is shared across
+instances through the world's Engine and registry.
+
+A temporary Windows-native Release probe used a counting allocator, the current
+guest binaries and a temporary copy of the runtime with a read-only linear-memory
+size accessor. It installed the native realtime/monotonic clock and OS entropy
+providers. Two Python roots execute `while True: pass`; the dispatcher advances
+1000 slices for the first root and 2000 more after starting the second. Both
+remain Ready with no reported first-root stderr. This is an allocation diagnostic,
+not a repeated application acceptance run. Project runtime sources are unchanged.
+The output is artifacts/memory-inspection-2026-10-12.log.
+
+| Stage | Requested live host allocations | Phase peak |
+|---|---:|---:|
+| Five modules registered, no live instances | 32.209 MiB | 33.015 MiB |
+| First Python instantiated | 51.561 MiB | 51.723 MiB |
+| First Python initialized and running | 70.441 MiB | 89.313 MiB |
+| Second Python instantiated | 89.772 MiB | 89.955 MiB |
+| Both Python roots initialized and running | 108.652 MiB | 127.524 MiB |
+| Both roots cancelled | 32.240 MiB | Prior running peak |
+| World dropped | 0.001 MiB | Prior module allocation |
+
+The counting allocator deliberately uses GlobalAlloc's default allocate/copy/free
+reallocation. This matches the allocation order of uefi 0.41's allocator, which
+implements alloc/dealloc but no realloc override. It does not reproduce firmware
+pool overhead, fragmentation, image allocations, or OVMF allocations. Native
+System reallocation can have a lower transient peak; it produces the same live
+allocation totals here. The reported values count requested allocation bytes,
+not Windows process working set or complete firmware physical memory.
+
+Binary inspection finds Python initial memory at 18.875 MiB, including the build's
+explicit 16 MiB C stack. Running memory.size corresponds to 19.375 MiB per root.
+The large-allocation log shows each root's backing buffer growing from 18.875 to
+37.750 MiB. wasmi_core 2.0.0 memory/buffer.rs uses Vec::try_reserve, whose geometric
+growth doubles this capacity even though visible memory grows by only 0.5 MiB.
+Each root therefore retains 18.375 MiB of unused capacity. During the first growth,
+old and new buffers coexist for 56.625 MiB before freeing the old allocation.
+Two running roots retain 36.750 MiB of unused linear-memory capacity in this probe.
+
+The five initial linear memories are ash 2.0625 MiB, QuickJS 1.125 MiB, Python
+18.875 MiB, curl 0.375 MiB and WolfSSH 1.0625 MiB. The 64 MiB per-instance limit
+is not allocated up front. Python module registration adds about 19.483 MiB of
+retained native allocations; registration does not instantiate Python memory.
+Cancellation releases execution resources; no retained per-instance memory was
+observed after dropping the world in this diagnostic. Small Engine stack caches
+can remain until that drop.
+
+These results identify avoidable linear-memory capacity and growth peaks, plus
+the large fixed Python C stack. They do not account for all memory in the full
+firmware combination or prove that correcting these allocations makes it fit
+in 256 MiB. Exact-capacity growth must also consider repeated-copy cost; shrinking
+the C stack requires a separate stack-usage and recursion check. No production
+memory policy or guest build was changed by this investigation.
+
+Bypassed diagnostic issues: the first temporary probe omitted host entropy and
+Python exited during initialization, so its startup result was discarded.
+The corrected probe installed the existing native clock and random providers.
+A temporary print expression held an immutable World borrow while draining
+output; moving output extraction before the print corrected the Rust borrow
+error. Temporary probe source and the copied runtime were removed afterward.
+
+## Repeated module registration retention (2026-10-12)
+
+The earlier two-Python probe registers each named application once. It does not
+represent the full firmware driver's module registration history. The full
+curl/DNS/WolfSSH/Python driver registers curl twice and Python three times before
+the final concurrent Python check. World::register always calls Module::new on
+the shared Engine, then replaces the registry entry. The Engine's function-code
+storage is append-only and retains previous compiled functions until Engine drop.
+Replacing the Module entry therefore does not release all old compiled storage.
+
+A second temporary Windows-native Release counting-allocator probe registers
+ash/QuickJS/Python/curl/WolfSSH once, then reloads curl/Python/Python in that order.
+It starts no instances. Recorded live requested allocations are:
+
+| Stage | Live allocations |
+|---|---:|
+| Five applications registered once | 32.208 MiB |
+| curl registered again | 36.357 MiB |
+| Python registered again | 49.813 MiB |
+| Python registered a third time | 62.269 MiB |
+| World dropped | 0.001 MiB |
+
+Results are artifacts/module-reload-inspection-2026-10-12.log. The extra retained
+30.061 MiB is a confirmed registration-lifetime problem. Together with the prior
+probe it suggests roughly 158 MiB requested allocation peak for a similar native
+two-Python scenario after these reloads; that sum is an estimate, not a full
+firmware measurement. EFI/OVMF memory use, other registered fixtures, pool
+fragmentation and other simultaneous allocations still require measurement.
+The observed 256 MiB failure and 512 MiB success establish neither 512 MiB as
+the minimum nor a required fourfold RAM increase. No production fix was applied.
+
+Bypassed issue: an inspection tried crates/core/src/app.rs, which does not exist;
+a targeted source search found the App definition instead. The temporary reload
+probe was removed after recording its output. No application acceptance run was
+repeated.
+
+## Uncommitted workspace and Shell submodule review (2026-10-21)
+
+The existing uncommitted AGENTS.md and verification additions record the two
+2026-10-12 allocation investigations. Their tables agree with the local logs.
+Both logs are ignored under artifacts and must be retained separately if the
+records need to be reviewed from a fresh checkout. No application test was rerun.
+
+The Shell gitlink remains ae263171ee125bd8d0be5aff3882649cd920a7f8 and its
+EDK II gitlink remains b7a715f7c03c45c6b4575bf88596bfd79658b8ce. Recursive
+submodule status showed no changed commit pointers. Windows Git reports dirty
+nested working trees because of filesystem access differences:
+
+- EDK II EmulatorPkg/Unix/Host/X11IncludeHack and the pkcs11-provider README
+  and tests/README are WSL symbolic links. Their targets match the committed
+  link contents. Targeted WSL Git diffs pass for all three links. Windows Git
+  cannot hash X11IncludeHack with its default settings; core.symlinks=true
+  still reports these WSL links as type changes.
+- The nested libspdm OpenSSL pyca-cryptography checkout reports 16 modified
+  certificate-pair test files with default Windows Git settings. Windows Git
+  diff reports Filename too long for these paths. A command-local
+  core.longpaths=true makes that checkout and libspdm clean.
+
+No actual tracked source edit was found behind the dirty Shell status. This
+refines the 2026-10-12 description of retained X11/OpenSSL/libspdm changes.
+The local ignored EDK II Build/Shell/RELEASE_GCC5/X64 output contains the Shell
+images used by packaging. Preserve those outputs before replacing a checkout.
+Keep the pinned commits; do not commit filesystem artifacts or hide the status
+with submodule ignore settings. Prefer a separate WSL-local EDK II build tree
+and a Windows-native vendor checkout; EFI_AGENT_SHELL can select the resulting
+image after copying it to a Windows-local path. Use repository-local long-path
+support where the Windows checkout needs it.
+
+Bypassed inspection issues: Windows Git's link hashing failure was checked with
+read-only WSL link inspection and targeted diffs. Command-local long-path support
+resolved the deep test-file status. Broad WSL Git status was slow on this Windows
+checkout and was stopped; remaining inspection used Windows Git. One child
+process exited before the stop command reached it. No reset, clean, checkout,
+Git configuration change, build or application test was performed.
