@@ -4020,3 +4020,36 @@ platform helpers and the fixed-ownership adaptation resolve those build errors.
 The malformed bracket test reaches sed delimiter validation before regex
 compilation; separate parser and regex cases now verify both diagnostics.
 
+## Upstream BusyBox grep and anchored mount correction
+
+The upstream 1.37.0 grep replaces the handwritten substring-only applet.
+It uses upstream recursive traversal and path helpers, SDK regex, getopt32,
+and context support. `scripts/test_busybox_grep.py` passes all 33 Windows
+Release native WASM cases in `artifacts/grep-integration.log`. These cover
+regex/literal/word/line matching, case folding, inversion, multiple patterns,
+empty pattern files, stdin, match counts/limits, context, file names,
+recursive directories, long lines, missing input, invalid regex/numbers,
+directory read errors, and closed output. Staged upstream corrections check
+the zero match limit before input consumption, retain input errors, and flush
+and check output before success. These failures were reproduced by integration
+cases before the corrections.
+
+Recursive traversal exposed virtual bin/dev/proc/tmp entries being added to
+each anchored ordinary directory. Ordinary directory views now use the base
+namespace directly. Nested names such as a/tmp remain ordinary directories,
+and open views retain identity after ancestor rename. Provider tests also
+check symlink-plus-parent traversal, root-to-anchored replacement, EOF beyond
+file length, temporary unlink lifetime, and temporary write/resize limits.
+The temporary and virtual file reads now return EOF rather than slicing past
+the data after an oversized seek. Temporary rename permits replacement.
+Full mount architecture, actual proc metadata and shared temporary directories
+remain incomplete.
+
+The same final guest image passes the awk and sed suites (45 checks total)
+in `artifacts/grep-editor-regression.log`. Firmware/WHPX checks for the new
+grep implementation remain pending. Build issues included the missing libbb
+exit_SUCCESS helper; the normal successful-exit macro resolves compilation.
+One added EOF test initially referenced an undefined options variable; explicit
+read-only options correct the test compilation. Rust formatting was applied
+after the first format check found a multiline assertion difference.
+

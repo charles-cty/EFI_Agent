@@ -21,10 +21,13 @@ unsigned string_array_len(char **array)
 int xatoi_positive(const char *text)
 {
     char *end;
+    int previous_error = errno;
     errno = 0;
     unsigned long value = strtoul(text, &end, 10);
-    if (!*text || *text == '-' || *end || errno || value > INT_MAX)
+    if (!*text || *text == '-' || *text == '+' || isspace((unsigned char)*text)
+        || *end || errno || value > INT_MAX)
         bb_error_msg_and_die("invalid number '%s'", text);
+    errno = previous_error;
     return (int)value;
 }
 

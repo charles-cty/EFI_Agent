@@ -14,6 +14,7 @@ ENABLED = {
     "FEATURE_FANCY_ECHO", "FEATURE_SH_NOFORK",
     "AWK", "FEATURE_AWK_LIBM", "FEATURE_AWK_GNU_EXTENSIONS", "FEATURE_ALLOW_EXEC",
     "SED", "LONG_OPTS",
+    "GREP", "FEATURE_GREP_CONTEXT",
 }
 
 
@@ -80,7 +81,8 @@ def main():
              args.source / "coreutils/printf.c",
              args.source / "coreutils/test.c", args.source / "shell/math.c",
              args.source / "include/unicode.h", args.source / "editors/awk.c",
-             args.source / "editors/sed.c", args.source / "libbb/getopt32.c"]
+             args.source / "editors/sed.c", args.source / "libbb/getopt32.c",
+             args.source / "findutils/grep.c"]
     names = set(ENABLED)
     for path in files:
         text = path.read_text(encoding="utf-8")
@@ -105,6 +107,23 @@ def main():
     # for all files, so replacing a file does not transfer its owner.
     sed = replace_once(sed, "\t\t\tfchown(nonstdoutfd, statbuf.st_uid, statbuf.st_gid);", "")
     (args.output / "sed.c").write_text(sed, encoding="utf-8")
+    grep = (args.source / "findutils/grep.c").read_text(encoding="utf-8")
+    # Upstream counts the first suppressed match for -m 0, incorrectly
+    # returning success. Check the limit before consuming input instead.
+    grep = replace_once(grep, "\tmatched = 0;\n", "\tmatched = 0;\n\tif ((option_mask32 & OPT_m) && max_matches == 0)\n\t\treturn 1;\n")
+    grep = replace_once(grep, "\t} /* while (read line) */", '''\t} /* while (read line) */
+    if (ferror(file)) {
+        if (!SUPPRESS_ERR_MSGS)
+            bb_simple_perror_msg(cur_file);
+        open_errors = 1;
+    }''')
+    grep = replace_once(grep, "\tif (open_errors)\n\t\treturn 2;", '''    if (fflush(stdout) != 0 || ferror(stdout)) {
+        bb_simple_perror_msg("standard output");
+        return 2;
+    }
+\tif (open_errors)
+\t\treturn 2;''')
+    (args.output / "grep.c").write_text(grep, encoding="utf-8")
     ash = (args.source / "shell/ash.c").read_text(encoding="utf-8")
     printf = (args.source / "coreutils/printf.c").read_text(encoding="utf-8")
     # Successful stdio output can change errno. Keep numeric conversion

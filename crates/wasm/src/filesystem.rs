@@ -54,6 +54,9 @@ impl File for VirtualFile {
         let count = buffer
             .len()
             .min(self.data.len().saturating_sub(self.offset));
+        if count == 0 {
+            return Ok(0);
+        }
         buffer[..count].copy_from_slice(&self.data[self.offset..self.offset + count]);
         self.offset += count;
         Ok(count)
@@ -105,6 +108,9 @@ impl File for TmpFile {
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize, FileError> {
         let data = self.data.borrow();
         let count = buffer.len().min(data.len().saturating_sub(self.offset));
+        if count == 0 {
+            return Ok(0);
+        }
         buffer[..count].copy_from_slice(&data[self.offset..self.offset + count]);
         self.offset += count;
         Ok(count)
@@ -116,6 +122,13 @@ impl File for TmpFile {
         let mut data = self.data.borrow_mut();
         if self.append {
             self.offset = data.len();
+        }
+        let end = self
+            .offset
+            .checked_add(buffer.len())
+            .ok_or(FileError::FileTooLarge)?;
+        if end as u64 > MAX_RESIZE_BYTES {
+            return Err(FileError::FileTooLarge);
         }
         if self.offset > data.len() {
             data.resize(self.offset, 0);
@@ -154,6 +167,9 @@ impl File for TmpFile {
     fn resize(&mut self, size: u64) -> Result<(), FileError> {
         if !self.write {
             return Err(FileError::ReadOnly);
+        }
+        if size > MAX_RESIZE_BYTES {
+            return Err(FileError::FileTooLarge);
         }
         let size = usize::try_from(size).map_err(|_| FileError::Overflow)?;
         self.data.borrow_mut().resize(size, 0);
@@ -282,8 +298,11 @@ impl FileSystem for VirtualFileSystem {
             destination.strip_prefix("tmp/"),
         ) {
             let mut files = self.tmp.borrow_mut();
-            if files.contains_key(destination) {
-                return Err(FileError::Exists);
+            if source == destination {
+                return files
+                    .contains_key(source)
+                    .then_some(())
+                    .ok_or(FileError::NotFound);
             }
             let data = files.remove(source).ok_or(FileError::NotFound)?;
             files.insert(destination.into(), data);
@@ -376,6 +395,79 @@ impl FileSystem for VirtualFileSystem {
         self.identity
     }
 
+    fn rename_to(
+        &self,
+        source: &str,
+        other: &dyn FileSystem,
+        destination: &str,
+    ) -> Result<(), FileError> {
+        let Some(other) = (other as &dyn core::any::Any).downcast_ref::<Self>() else {
+            let source = self.mounted(source);
+            if Self::virtual_directory(source.split('/').next().unwrap_or("")) {
+                return Err(FileError::CrossDevice);
+            }
+            return self.base.rename_to(&source, other, destination);
+        };
+        if self.identity != other.identity {
+            return Err(FileError::CrossDevice);
+        }
+        let source = self.mounted(source);
+        let destination = other.mounted(destination);
+        if source.starts_with("tmp/") || destination.starts_with("tmp/") {
+            if !Rc::ptr_eq(&self.tmp, &other.tmp) {
+                return Err(FileError::CrossDevice);
+            }
+            if !source.starts_with("tmp/") || !destination.starts_with("tmp/") {
+                return Err(FileError::CrossDevice);
+            }
+            let source = source.strip_prefix("tmp/").unwrap();
+            let destination = destination.strip_prefix("tmp/").unwrap();
+            let mut files = self.tmp.borrow_mut();
+            if source == destination {
+                return files
+                    .contains_key(source)
+                    .then_some(())
+                    .ok_or(FileError::NotFound);
+            }
+            let data = files.remove(source).ok_or(FileError::NotFound)?;
+            files.insert(destination.into(), data);
+            return Ok(());
+        }
+        if Self::virtual_entry(&source).is_some() || Self::virtual_entry(&destination).is_some() {
+            return Err(FileError::ReadOnly);
+        }
+        self.base
+            .rename_to(&source, other.base.as_ref(), &destination)
+    }
+
+    fn resolve_path(&self, base: &str, path: &str) -> Result<String, FileError> {
+        let virtual_path = !self.mount.is_empty()
+            || Self::virtual_directory(base.split('/').next().unwrap_or(""))
+            || Self::virtual_directory(path.split('/').next().unwrap_or(""));
+        if !virtual_path {
+            return self.base.resolve_path(base, path);
+        }
+        if path.is_empty() {
+            return Err(FileError::NotFound);
+        }
+        if path.starts_with('/') || path.contains(['\\', '\0']) {
+            return Err(FileError::NotCapable);
+        }
+        let result = if base.is_empty() {
+            String::from(path)
+        } else {
+            format!("{base}/{path}")
+        };
+        if result.split('/').any(|part| part == "..") {
+            return Err(FileError::NotCapable);
+        }
+        Ok(result
+            .split('/')
+            .filter(|part| !part.is_empty() && *part != ".")
+            .collect::<Vec<_>>()
+            .join("/"))
+    }
+
     fn directory_view(&self, path: &str) -> Result<Option<Rc<dyn FileSystem>>, FileError> {
         if Self::virtual_directory(path) {
             return Ok(Some(Rc::new(VirtualFileSystem {
@@ -385,14 +477,7 @@ impl FileSystem for VirtualFileSystem {
                 identity: self.identity,
             })));
         }
-        Ok(self.base.directory_view(path)?.map(|view| {
-            Rc::new(VirtualFileSystem {
-                base: view,
-                tmp: self.tmp.clone(),
-                mount: String::new(),
-                identity: self.identity,
-            }) as Rc<dyn FileSystem>
-        }))
+        self.base.directory_view(path)
     }
 }
 

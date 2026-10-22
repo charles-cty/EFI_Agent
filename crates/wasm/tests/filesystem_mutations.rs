@@ -121,9 +121,8 @@ fn persistent_namespace_wasi_mutations_keep_directory_and_file_identity() {
 fn virtual_mounts_supply_devices_and_ephemeral_tmp_files() {
     use efi_agent_wasm::filesystem::{FileSystem, OpenOptions, VirtualFileSystem};
     let workspace = Workspace::new();
-    let virtual_fs = VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(
-        workspace.0.clone(),
-    )));
+    let virtual_fs =
+        VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(workspace.0.clone())));
     assert!(virtual_fs.metadata("bin").unwrap().is_directory());
     assert!(virtual_fs.metadata("dev").unwrap().is_directory());
     assert!(virtual_fs.metadata("proc").unwrap().is_directory());
@@ -166,6 +165,84 @@ fn virtual_mounts_supply_devices_and_ephemeral_tmp_files() {
     virtual_fs.rename("tmp/value", "tmp/moved").unwrap();
     virtual_fs.unlink("tmp/moved").unwrap();
     assert!(virtual_fs.metadata("tmp/moved").is_err());
+    // Unlink preserves open handles, including reads after a seek beyond EOF.
+    tmp.seek(32, 0).unwrap();
+    assert_eq!(tmp.read(&mut bytes).unwrap(), 0);
+    assert!(tmp.resize(48 * 1024 * 1024 + 1).is_err());
+    assert!(tmp.write(b"x").is_ok());
+    tmp.seek(48 * 1024 * 1024, 0).unwrap();
+    assert!(tmp.write(b"overflow").is_err());
+    tmp.seek(0, 2).unwrap();
+    assert_eq!(tmp.read(&mut bytes).unwrap(), 0);
+    let mut uptime = virtual_fs
+        .open(
+            "proc/uptime",
+            OpenOptions {
+                read: true,
+                write: false,
+                create: false,
+                exclusive: false,
+                truncate: false,
+                append: false,
+            },
+        )
+        .unwrap();
+    uptime.seek(4096, 0).unwrap();
+    assert_eq!(uptime.read(&mut bytes).unwrap(), 0);
+    assert!(!workspace.0.join("tmp").exists());
+}
+
+#[test]
+fn virtual_wrapper_preserves_symlink_walk_and_anchored_cross_directory_rename() {
+    use efi_agent_wasm::filesystem::{FileSystem, VirtualFileSystem, namespace::Namespace};
+    let workspace = Workspace::new();
+    let namespace = Rc::new(
+        Namespace::open(
+            Rc::new(native_fs::NativeFileSystem(workspace.0.clone())),
+            Some(Rc::new(|| Ok(731))),
+        )
+        .unwrap(),
+    );
+    namespace.create_directory("a").unwrap();
+    namespace.create_directory("b").unwrap();
+    namespace.create_directory("b/deep").unwrap();
+    namespace.create_directory("a/tmp").unwrap();
+    efi_agent_filesystem::text::write(namespace.as_ref(), "a/tmp/local", "nested").unwrap();
+    efi_agent_filesystem::text::write(namespace.as_ref(), "b/value", "payload").unwrap();
+    namespace.symlink("../b/deep", "a/link").unwrap();
+    let fs = VirtualFileSystem::new(namespace.clone());
+    let path = fs.resolve_path("", "a/link/../value").unwrap();
+    assert_eq!(
+        fs.metadata(&path).unwrap().inode,
+        namespace.metadata("b/value").unwrap().inode
+    );
+    let from = fs.directory_view("b").unwrap().unwrap();
+    let to = fs.directory_view("a").unwrap().unwrap();
+    assert_eq!(
+        efi_agent_filesystem::text::read(to.as_ref(), "tmp/local").unwrap(),
+        "nested"
+    );
+    assert!(
+        !from
+            .read_directory("")
+            .unwrap()
+            .iter()
+            .any(|(name, _)| name == "dev")
+    );
+    namespace.rename("a", "renamed").unwrap();
+    from.rename_to("value", to.as_ref(), "result").unwrap();
+    assert_eq!(
+        efi_agent_filesystem::text::read(namespace.as_ref(), "renamed/result").unwrap(),
+        "payload"
+    );
+    assert!(namespace.metadata("b/value").is_err());
+    efi_agent_filesystem::text::write(namespace.as_ref(), "root-file", "root bytes").unwrap();
+    fs.rename_to("root-file", to.as_ref(), "root-moved")
+        .unwrap();
+    assert_eq!(
+        efi_agent_filesystem::text::read(namespace.as_ref(), "renamed/root-moved").unwrap(),
+        "root bytes"
+    );
 }
 
 #[test]

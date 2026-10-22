@@ -27,6 +27,9 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $build 'sed.c'), (Join-Path $Source 'libbb/getopt32.c'),
     (Join-Path $Source 'libbb/llist.c'), (Join-Path $Source 'libbb/get_line_from_file.c'),
     'guests/busybox/utility_support.c',
+    (Join-Path $build 'grep.c'), (Join-Path $Source 'libbb/recursive_action.c'),
+    (Join-Path $Source 'libbb/concat_path_file.c'), (Join-Path $Source 'libbb/concat_subpath_file.c'),
+    (Join-Path $Source 'libbb/last_char_is.c'),
     'guests/busybox/main.c', 'guests/busybox/support.c', 'guests/busybox/awk_support.c', 'guests/busybox/applets.c', 'guests/busybox/exec.c',
     'guests/lib/process.c', 'guests/sjlj/runtime.c', 'guests/sjlj/stack.s'
 $raw = Join-Path $build 'ash.raw.wasm'

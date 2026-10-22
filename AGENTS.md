@@ -19,6 +19,11 @@ Sed also uses its upstream parser and editor, plus upstream getopt32, linked
 lists and line readers. Windows native checks pass 23 semantic/error cases
 and temporary-file cleanup. In-place content/backup behavior is verified;
 mode preservation still requires an effective guest metadata interface.
+Grep now uses upstream regex/options/context/recursive traversal. Windows
+native integration passes 33 cases, including limits, failures and long lines.
+Staged corrections reject -m 0 before reading and report input/output failures.
+Recursive grep exposed virtual mount names in ordinary child directory views;
+those views now retain their underlying namespace anchor without root mounts.
 
 The common no_std efi-agent-filesystem crate now owns provider interfaces and
 a persistent inode namespace. Two checksummed metadata generations preserve

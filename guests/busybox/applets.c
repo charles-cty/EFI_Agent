@@ -151,35 +151,7 @@ static int applet_yes(int argc, char **argv)
     }
 }
 
-static int applet_grep(int argc, char **argv)
-{
-    if (argc < 2) {
-        fputs("grep: missing pattern\n", stderr);
-        return 2;
-    }
-    const char *pattern = argv[1];
-    FILE *input = stdin;
-    if (argc > 2) {
-        input = fopen(argv[2], "rb");
-        if (!input) {
-            bb_simple_perror_msg(argv[2]);
-            return 2;
-        }
-    }
-    char *line = NULL;
-    size_t capacity = 0;
-    int found = 1;
-    while (getline(&line, &capacity, input) >= 0) {
-        if (strstr(line, pattern)) {
-            fputs(line, stdout);
-            found = 0;
-        }
-    }
-    free(line);
-    if (input != stdin)
-        fclose(input);
-    return found;
-}
+int grep_main(int argc, char **argv);
 
 static int applet_mkdir(int argc, char **argv)
 {
@@ -256,7 +228,7 @@ int efi_busybox_applet(int argc, char **argv)
     if (strcmp(name, "ls") == 0) return applet_ls(argc, argv);
     if (strcmp(name, "env") == 0) return applet_env();
     if (strcmp(name, "yes") == 0) return applet_yes(argc, argv);
-    if (strcmp(name, "grep") == 0) return applet_grep(argc, argv);
+    if (strcmp(name, "grep") == 0) return grep_main(argc, argv);
     if (strcmp(name, "mkdir") == 0) return applet_mkdir(argc, argv);
     if (strcmp(name, "rm") == 0) return applet_rm(argc, argv);
     if (strcmp(name, "cp") == 0) return applet_cp_mv(argc, argv, 0);
