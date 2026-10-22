@@ -140,6 +140,9 @@ struct Context {
     stderr: Rc<RefCell<Vec<u8>>>,
     descriptors: io::Table,
     close_on_exec: BTreeSet<u32>,
+    umask: u16,
+    creation_mode: Option<u16>,
+    cwd: String,
     clock: Option<Rc<dyn clock::Clock>>,
     limits: StoreLimits,
     random: Option<Rc<dyn random::Random>>,
@@ -218,6 +221,7 @@ impl World {
                 | "sleep"
                 | "yes"
                 | "awk"
+                | "chmod"
         )
     }
 
@@ -571,6 +575,17 @@ impl World {
             stderr: stderr.clone(),
             descriptors,
             close_on_exec: BTreeSet::new(),
+            creation_mode: None,
+            umask: if parent == 0 {
+                0o022
+            } else {
+                self.processes[&parent].execution().store.data().umask
+            },
+            cwd: if parent == 0 {
+                String::from("/")
+            } else {
+                self.processes[&parent].execution().store.data().cwd.clone()
+            },
             clock: self.clock.clone(),
             random: self.random.clone(),
             network: self.network.clone(),

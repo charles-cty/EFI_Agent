@@ -318,7 +318,7 @@ print('FINITE_STDIN_OK')
 
     def test_imports_write_normal_bytecode_caches_and_respect_no_bytecode_flag(self):
         result = self.execute("""
-import importlib, os, subprocess, sys
+import importlib.util, os, subprocess, sys
 assert not sys.dont_write_bytecode
 os.makedirs('import-cache')
 with open('import-cache/cached_module.py', 'w') as target:
@@ -326,10 +326,20 @@ with open('import-cache/cached_module.py', 'w') as target:
 sys.path.insert(0, 'import-cache')
 import cached_module
 assert cached_module.value == 731
-cache = importlib.util.cache_from_source('import-cache/cached_module.py')
+cache = importlib.util.cache_from_source(os.path.abspath('import-cache/cached_module.py'))
 assert cached_module.__cached__ == cache and os.path.isfile(cache)
 with open(cache, 'rb') as source:
     assert source.read(4) == importlib.util.MAGIC_NUMBER
+original = os.stat('import-cache/cached_module.py')
+with open('import-cache/cached_module.py', 'w') as source:
+    source.write('value = ???\\n')
+os.utime('import-cache/cached_module.py', ns=(original.st_atime_ns, original.st_mtime_ns))
+# Timestamp caches must be reused when source size and mtime still match.
+# Parsing the changed source instead would raise SyntaxError.
+r = subprocess.run(['python', '-c',
+    "import sys;sys.path.insert(0,'import-cache');import cached_module;assert cached_module.value==731"],
+    capture_output=True)
+assert (r.returncode, r.stdout, r.stderr) == (0, b'', b''), r
 with open('import-cache/uncached_module.py', 'w') as target:
     target.write('value = 193\\n')
 r = subprocess.run(['python', '-B', '-c',

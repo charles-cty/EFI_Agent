@@ -347,9 +347,12 @@ print(result.stdout, end="")
 Executables must be registered. The backend maps `/bin/sh` to `ash`, and accepts
 registry names with `/bin/`, `/usr/bin/` or `./` prefixes. Filesystem PATH
 execution and a distinct custom `argv[0]` are unavailable. `cwd`, pre-exec
-callbacks, sessions/groups, credentials and umask changes raise `ENOTSUP`.
+callbacks, sessions/groups, credentials and per-child umask changes raise `ENOTSUP`.
+Ordinary children inherit the current directory and process umask. `os.chdir`
+and `os.umask` update that state through the private startup adapter. Current
+directory tracking is still path based and does not follow ancestor rename.
 Timeouts and process signals also raise `ENOTSUP`; firmware has no monotonic
-clock provider. `subprocess.DEVNULL` requires the currently absent `/dev/null`.
+clock provider. `subprocess.DEVNULL` uses the virtual `/dev/null` device.
 Descriptor 3 is reserved for the workspace, and user descriptors end at 127.
 See [the transparency audit](port-transparency-audit.md) for remaining gaps.
 
@@ -515,7 +518,7 @@ boundaries and QuickJS binary capture in actual QEMU/OVMF.
 ## Guest files
 
 `World::set_filesystem` installs a provider before the first process starts.
-Each process receives fd 3 as a preopened directory named `.`. The firmware
+Each process receives fd 3 as a preopened directory named `/`. The firmware
 provider opens files on the boot volume inside the configured workspace. Without
 model configuration, its workspace is `\work`. The host example uses its supplied
 program directory as the file root. Providers retain actual open file objects.
@@ -526,9 +529,10 @@ The imports include `fd_prestat_get`, `fd_prestat_dir_name`, `path_open`,
 Existing read/write/seek/poll imports also handle regular files. Open supports
 create, exclusive create, truncate, append and directory handles. Paths are
 relative to a directory descriptor. Each intermediate component must exist and
-be a directory, including components before `..`. Absolute paths, backslashes,
-NULs and traversal above the supplied directory return errors. Symlinks are not
-implemented. WASI rights constrain each operation; rights not applicable to the
+be a directory, including components before `..`. Absolute paths at the root
+preopen use the workspace root. Backslashes, NULs and traversal above the
+supplied directory return errors. The namespace resolves symlinks and rejects
+loops. WASI rights constrain each operation; rights not applicable to the
 opened file type are removed from its descriptor. File readiness reports the
 bytes remaining at the current cursor and remains ready at EOF.
 
@@ -556,12 +560,28 @@ driver compares saved file bytes with an independently computed bytearray.
 `path_create_directory` creates a single directory on both providers. Missing
 parents, existing entries, non-directory components and capability violations
 return distinct errors. The model `write` tool creates missing parents.
-Native `path_rename` reaches the host provider, which also enables explicit
-Python bytecode compilation. Firmware rename/removal, timestamps, symlinks,
-filesystem PATH and complete working-directory state remain pending.
+Rename/removal, timestamps and symlinks use the shared persistent namespace
+on native and firmware targets. Normal Python imports, py_compile and compileall
+can write bytecode caches; `-B` retains its standard meaning. Filesystem PATH
+and complete working-directory state remain pending.
 Finite input and captured output use WASI UNKNOWN stream type. They are not
 terminals. Unchanged CPython `python -` executes redirected scripts and empty
 stdin without starting a REPL.
+
+WASI Preview 1 does not encode POSIX mode bits. The private `.efi-process`
+endpoint supplies path/fd mode get/set, process umask, inherited cwd and a
+directory-fd name snapshot. A scoped creation-mode setting carries the mode
+omitted by Preview 1; clients restore it after success or failure. It applies
+only to new entries, including targets created through dangling links, and is
+not inherited by child processes. Metadata replies retain positive WASI errno values;
+process replies retain negative POSIX errors. Snapshot descriptors are private
+and close on spawn. BusyBox libc wrappers and Python's private startup adapter
+use these operations behind standard stat/chmod/open/mkdir/scandir methods.
+Creation applies the process umask; changing a mode affects later opens and
+directory traversal while existing file handles retain their granted access.
+The single guest owner/group is uid/gid 1. Symlink mode mutation without
+following the link returns ENOTSUP. Python scandir entries preserve methods,
+bytes paths and fd lifetime, but their private proxy type differs from DirEntry.
 
 Before model code runs, the firmware discovers root workspace `.wasm` files.
 It validates command names, binary headers and the 48 MiB module size bound.

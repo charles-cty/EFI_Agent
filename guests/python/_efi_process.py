@@ -150,6 +150,8 @@ def _system(command):
 def install():
     import posix
     import subprocess
+    from _efi_filesystem import install as install_filesystem
+    install_filesystem(_request)
     methods = {
         'pipe': _pipe, 'dup': _dup, 'dup2': _dup2,
         'get_inheritable': _get_inheritable, 'set_inheritable': _set_inheritable,

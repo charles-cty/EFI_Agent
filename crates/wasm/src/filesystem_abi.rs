@@ -18,6 +18,91 @@ fn time_update(value: u64, flags: u32) -> TimeUpdate {
     }
 }
 
+/// Private metadata extension for interpreters whose Preview 1 libc has no
+/// permission operations. Results use WASI errno values, like file syscalls.
+pub(super) fn control_mode(
+    context: &Context,
+    operation: u32,
+    fd: u32,
+    flags: u32,
+    mode: u32,
+    path: &str,
+) -> Result<u16, i32> {
+    if flags & !1 != 0 || mode & !0o7777 != 0 {
+        return Err(28);
+    }
+    let descriptor = context.descriptors.get(&fd).ok_or(io::BADF)?;
+    let set = operation == 12 || operation == 14;
+    if operation == 11 || operation == 12 {
+        let Descriptor::Directory(directory) = descriptor else {
+            return Err(54);
+        };
+        let right = if set { 1 << 20 } else { 1 << 18 };
+        if directory.rights & right == 0 {
+            return Err(76);
+        }
+        let path = if directory.preopen && !path.is_empty() && path.trim_matches('/').is_empty() {
+            directory.path.clone()
+        } else {
+            directory.resolve(path)?
+        };
+        let metadata = if flags == 1 {
+            directory.filesystem.metadata(&path)
+        } else {
+            directory.filesystem.symlink_metadata(&path)
+        }
+        .map_err(FileError::errno)?;
+        if set {
+            if metadata.kind == EntryType::Symlink {
+                return Err(58);
+            }
+            directory
+                .filesystem
+                .set_mode(&path, mode as u16)
+                .map_err(FileError::errno)?;
+            Ok(0)
+        } else {
+            Ok(metadata.mode)
+        }
+    } else {
+        let right = if set { 1 << 23 } else { 1 << 21 };
+        match descriptor {
+            Descriptor::File { handle, rights, .. } => {
+                if rights & right == 0 {
+                    return Err(76);
+                }
+                let mut handle = handle.borrow_mut();
+                if set {
+                    handle.set_mode(mode as u16).map_err(FileError::errno)?;
+                    Ok(0)
+                } else {
+                    Ok(handle.metadata().map_err(FileError::errno)?.mode)
+                }
+            }
+            Descriptor::Directory(directory) => {
+                if directory.rights & right == 0 {
+                    return Err(76);
+                }
+                if set {
+                    directory
+                        .filesystem
+                        .set_mode(&directory.path, mode as u16)
+                        .map_err(FileError::errno)?;
+                    Ok(0)
+                } else {
+                    Ok(directory
+                        .filesystem
+                        .metadata(&directory.path)
+                        .map_err(FileError::errno)?
+                        .mode)
+                }
+            }
+            _ if !set => Ok(0o666),
+            _ => Err(58),
+        }
+    }
+}
+
 fn directory(caller: &Caller<'_, Context>, fd: u32, right: u64) -> Result<Directory, i32> {
     match caller.data().descriptors.get(&fd).ok_or(io::BADF)? {
         Descriptor::Directory(directory) if directory.rights & right == right => {
@@ -129,11 +214,14 @@ fn open(
                 Err(error) => return Err(error.errno()),
             }
         }
-        let target_is_directory = match directory.filesystem.metadata(&path) {
-            Ok(metadata) => metadata.is_directory(),
-            Err(FileError::NotFound) if oflags & 1 != 0 && oflags & 2 == 0 => false,
+        let (target_exists, target_is_directory) = match directory.filesystem.metadata(&path) {
+            Ok(metadata) => (true, metadata.is_directory()),
+            Err(FileError::NotFound) if oflags & 1 != 0 && oflags & 2 == 0 => (false, false),
             Err(failure) => return Err(failure.errno()),
         };
+        if target_exists && oflags & 5 == 5 {
+            return Err(20);
+        }
         let descriptor = if oflags & 2 != 0 || target_is_directory {
             if oflags & !2 != 0 {
                 return Err(28);
@@ -181,10 +269,17 @@ fn open(
             if options.exclusive && !options.create {
                 return Err(28);
             }
-            let handle = directory
+            let mut handle = directory
                 .filesystem
                 .open(&path, options)
                 .map_err(FileError::errno)?;
+            if !target_exists
+                && (caller.data().creation_mode.is_some() || caller.data().umask != 0o022)
+            {
+                handle
+                    .set_mode(caller.data().creation_mode.unwrap_or(0o666) & !caller.data().umask)
+                    .map_err(FileError::errno)?;
+            }
             Descriptor::File {
                 handle: Rc::new(RefCell::new(handle)),
                 read: options.read,
@@ -221,7 +316,17 @@ pub(crate) fn link(linker: &mut Linker<Context>) {
                     directory
                         .filesystem
                         .create_directory(&path)
-                        .map_err(FileError::errno)
+                        .map_err(FileError::errno)?;
+                    if caller.data().creation_mode.is_some() || caller.data().umask != 0o022 {
+                        directory
+                            .filesystem
+                            .set_mode(
+                                &path,
+                                caller.data().creation_mode.unwrap_or(0o777) & !caller.data().umask,
+                            )
+                            .map_err(FileError::errno)?;
+                    }
+                    Ok(())
                 })();
                 result.err().unwrap_or(0)
             },
@@ -575,7 +680,7 @@ pub(crate) fn link(linker: &mut Linker<Context>) {
                         return Err(37);
                     }
                     memory(&caller)?
-                        .write(&mut caller, ptr as usize, b".")
+                        .write(&mut caller, ptr as usize, b"/")
                         .map_err(|_| 21)
                 })();
                 result.err().unwrap_or(0)

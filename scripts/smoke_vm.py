@@ -291,7 +291,7 @@ def main():
             ("shell", {"command": "python - <<'PY'\nimport os\nassert not os.isatty(0)\nprint('HEREDOC_SCRIPT_OK')\nPY\n"}),
             ("python", {"code": "import os, subprocess\nassert not any(os.isatty(fd) for fd in (0, 1, 2))\nfor source, expected in [(b'', b''), (b'print(731)\\n', b'731\\n')]:\n    r = subprocess.run(['python', '-'], input=source, capture_output=True)\n    assert (r.returncode, r.stdout, r.stderr) == (0, expected, b''), r\nprint('FINITE_STDIN_OK')"}),
             ("python", {"code": dedent("""
-                import os
+                import errno, os, stat, subprocess
                 os.makedirs('mutation/empty')
                 with open('mutation/original', 'wb') as f:
                     f.write(b'original bytes')
@@ -314,10 +314,38 @@ def main():
                 with open('moved-mutation/result', 'w') as f:
                     f.write('MUTATION_SHARED_OK\\n')
                 print('MUTATION_IDENTITY_OK')
+                os.chmod('moved-mutation/result', 0o400)
+                try:
+                    open('moved-mutation/result', 'wb')
+                except PermissionError as error:
+                    assert error.errno == errno.EACCES
+                else:
+                    raise AssertionError('Read-only mode did not deny a new writer')
+                os.chmod('moved-mutation/result', 0o640)
+                fd = os.open('moved-mutation', os.O_RDONLY)
+                with os.scandir(fd) as entries:
+                    entry = next(item for item in entries if item.name == 'result')
+                os.close(fd)
+                assert stat.S_IMODE(entry.stat().st_mode) == 0o640
+                os.chdir('moved-mutation')
+                subprocess.run('chmod u=rw,g=r,o= result; sed -i.bak s/SHARED/SHARED/ result', shell=True, check=True)
+                assert stat.S_IMODE(os.stat('result').st_mode) == 0o640
+                assert stat.S_IMODE(os.stat('result.bak').st_mode) == 0o640
+                assert os.umask(0o077) == 0o022
+                os.symlink('new-mode-target', 'create-link')
+                fd = os.open('create-link', os.O_WRONLY | os.O_CREAT, 0o400)
+                os.close(fd)
+                assert stat.S_IMODE(os.stat('new-mode-target').st_mode) == 0o400
+                subprocess.run('test "$(umask)" = 0077; : > mask-file; mkdir mask-dir', shell=True, check=True)
+                assert stat.S_IMODE(os.stat('mask-file').st_mode) == 0o600
+                assert stat.S_IMODE(os.stat('mask-dir').st_mode) == 0o700
+                os.umask(0o022)
+                os.chdir('/')
+                print('PERMISSIONS_CWD_OK')
                 """)}),
             ("shell", {"command": "read -r result < moved-mutation/result; printf '%s\\n' \"$result\""}),
         ]
-        Provider.code_expected = ["File saved", "NESTED_SCRIPT_OK", "FILESYSTEM_WRITES_OK", "HEREDOC_SCRIPT_OK", "FINITE_STDIN_OK", "MUTATION_IDENTITY_OK", "MUTATION_SHARED_OK"]
+        Provider.code_expected = ["File saved", "NESTED_SCRIPT_OK", "FILESYSTEM_WRITES_OK", "HEREDOC_SCRIPT_OK", "FINITE_STDIN_OK", "PERMISSIONS_CWD_OK", "MUTATION_SHARED_OK"]
     args.output.mkdir(parents=True, exist_ok=True)
     Provider.requests.clear()
     Provider.errors.clear()
@@ -438,7 +466,7 @@ def main():
                         wait("CODE_TOOLS_VERIFIED", args.code_timeout)
                         send("/wasm ps")
                         wait("Ready  •")
-                        print("PASS nested file tools, mkdir, 8 MiB writes and finite Python stdin" if args.filesystem_tools else "PASS real model shell/Python tools, cached WASM, source preservation, subprocess, failure, capture boundaries and fresh state", flush=True)
+                        print("PASS file tools, 8 MiB writes, finite stdin, mutations, permissions and inherited cwd/umask" if args.filesystem_tools else "PASS real model shell/Python tools, cached WASM, source preservation, subprocess, failure, capture boundaries and fresh state", flush=True)
                     send("/clear")
                     wait("Conversation cleared")
                     send("/wasm start ash background-loop.sh")
@@ -507,6 +535,11 @@ def main():
                                     expected = (bytes(range(256)) * ((size + 255) // 256))[:size]
                                     assert actual == expected, size
                                 assert workspace.read('moved-mutation/result') == b'MUTATION_SHARED_OK\n'
+                                assert workspace.read('moved-mutation/result.bak') == b'MUTATION_SHARED_OK\n'
+                                for name, mode in [('result', 0o640), ('result.bak', 0o640),
+                                                   ('mask-file', 0o600), ('mask-dir', 0o700),
+                                                   ('new-mode-target', 0o400)]:
+                                    assert workspace.entries['moved-mutation/' + name]['mode'] == mode, name
                                 assert workspace.entries['moved-mutation/link']['target'] == 'replaced'
                                 for removed in ('mutation', 'moved-mutation/empty', 'moved-mutation/original', 'moved-mutation/replaced'):
                                     assert removed not in workspace.entries, removed

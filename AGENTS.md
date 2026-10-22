@@ -18,7 +18,7 @@ replacement. The wider command/mount/session delivery remains incomplete.
 Sed also uses its upstream parser and editor, plus upstream getopt32, linked
 lists and line readers. Windows native checks pass 23 semantic/error cases
 and temporary-file cleanup. In-place content/backup behavior is verified;
-mode preservation still requires an effective guest metadata interface.
+mode preservation now uses the private guest metadata interface described below.
 Grep now uses upstream regex/options/context/recursive traversal. Windows
 native integration passes 33 cases, including limits, failures and long lines.
 Staged corrections reject -m 0 before reading and report input/output failures.
@@ -28,6 +28,25 @@ Runtime lookup/spawn accepts /bin-prefixed registered names and applet aliases.
 Focused host checks cover compiled-only modules, lazy discovered aliases, and
 rejection of absent/incorrect paths. Filesystem PATH and executable bin entries
 still require implementation.
+
+BusyBox now uses upstream chmod/parse_mode, effective stat/chmod/fchmod wrappers,
+and inherited runtime umask/cwd. The private Python filesystem adapter exposes
+the same namespace modes through standard os methods, including fd-relative
+operations and scandir entry metadata. Directory-fd scanning retains an anchor
+after the caller closes its fd or renames the directory. Namespace ownership is
+fixed at uid/gid 1. Windows native integration verifies permissions, open-handle
+lifetime, symbolic/recursive chmod, sed backup modes, umask/cwd inheritance,
+persisted metadata and process restart. The C wrapper fixture distinguishes
+AT_FDCWD from explicit root fd 3. Runtime creation-mode scopes preserve modes
+through dangling links and are restored after errors. Final 512 MiB QEMU/OVMF
+checks pass WHPX/Responses and TCG/Chat Completions with independent saved FAT
+mode/byte checks in artifacts/permissions-whpx-final and permissions-tcg-final.
+All 15 CPython integration cases pass,
+including bytecode cache creation/reuse and -B. Current directory state is still
+path based; rename/unlink tracking and explicit subprocess cwd/umask remain
+pending. Scandir entries are private proxies with the standard methods, rather
+than instances of the built-in DirEntry type. The full mount/session/command
+delivery remains incomplete.
 
 The common no_std efi-agent-filesystem crate now owns provider interfaces and
 a persistent inode namespace. Two checksummed metadata generations preserve
@@ -41,7 +60,7 @@ tools and module loading use that same tree. Launcher staging and export use
 logical snapshots; raw FAT paths are backing storage, not the guest tree.
 The launcher suite verifies FAT stage/export/save/reload with empty directories,
 links, modes, timestamps and deletions. The Release native runner passes all
-14 CPython integration cases. Read-only closes defer access-time persistence;
+15 CPython integration cases. Read-only closes defer access-time persistence;
 explicit file/workspace flush persists it. Writable-close errors are retained
 and reported at the execution boundary. Virtual mounts, applets,
 sessions and the remaining delivery in docs/environment-work.md are incomplete.
@@ -325,7 +344,7 @@ reads pass; UEFI positive timeouts reject the unavailable monotonic clock.
 Terminal echo control (-s) returns an explicit error. Host field-oracle checks
 and QEMU/OVMF actual read/QuickJS pipeline checks pass.
 The world now accepts a host filesystem provider and gives each process a
-preopened directory at fd 3, named dot. UEFI uses the configured boot-volume
+preopened directory at fd 3, named slash. UEFI uses the configured boot-volume
 workspace, or \work when model configuration is absent. File handles support
 read/write, create/exclusive/truncate/append, metadata, seek/tell and sync.
 Duplicates share file cursors; independent opens have separate cursors.

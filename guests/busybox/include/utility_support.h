@@ -5,6 +5,7 @@
 #include <getopt.h>
 
 #define FIX_ALIASING
+#define ALIGN4 __attribute__((aligned(4)))
 #define BUILD_BUG_ON(condition) _Static_assert(!(condition), "invalid BusyBox buffer size")
 #define GETOPT_RESET() (optind = 0)
 #define No_argument "\0"
@@ -70,5 +71,6 @@ int recursive_action(const char *path, unsigned flags,
     void *data);
 char *concat_subpath_file(const char *path, const char *name);
 char *last_char_is(const char *text, int value);
+char *bb_mode_string(char buffer[11], mode_t mode);
 
 #endif

@@ -128,7 +128,7 @@ char **skip_dash_dash(char **arguments);
 void overlapping_strcpy(char *target, const char *source);
 NORETURN void bb_show_usage(void);
 unsigned bb_clk_tck(void);
-mode_t bb_parse_mode(const char *text, mode_t initial);
+int bb_parse_mode(const char *text, unsigned initial);
 const char *get_signame(int number);
 int get_signum(const char *name);
 void fflush_all(void);

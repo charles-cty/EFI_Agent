@@ -1,6 +1,7 @@
 //! Internal process operations for unmodified WASI interpreters over an open descriptor.
 use crate::{Execution, Pid, Status, World, io::Descriptor};
-use alloc::{collections::BTreeSet, string::String, vec::Vec};
+use alloc::{collections::BTreeSet, format, rc::Rc, string::String, vec::Vec};
+use core::cell::RefCell;
 
 fn word(bytes: &[u8], index: usize) -> Result<u32, i32> {
     let start = index.checked_mul(4).ok_or(-22)?;
@@ -71,10 +72,11 @@ impl World {
             }
             let operation = word(bytes, 0)?;
             let expected = match operation {
-                1 | 6 | 7 => 4,
+                1 | 6 | 7 | 16 => 4,
                 2 | 3 | 5 | 10 => 12,
-                4 => 8,
-                8 | 9 => bytes.len(),
+                4 | 13 | 15 | 18 | 19 => 8,
+                14 => 12,
+                8 | 9 | 11 | 12 | 17 => bytes.len(),
                 _ => return Err(-22),
             };
             if bytes.len() != expected {
@@ -239,6 +241,178 @@ impl World {
                         self.processes.remove(&child);
                         Ok((child as i32, status))
                     }
+                }
+                11..=14 => {
+                    let fd = word(bytes, 1)?;
+                    let flags = if operation <= 12 { word(bytes, 2)? } else { 1 };
+                    let mode = match operation {
+                        12 => word(bytes, 3)?,
+                        14 => word(bytes, 2)?,
+                        _ => 0,
+                    };
+                    let start = if operation == 12 { 16 } else { 12 };
+                    let path = if operation <= 12 {
+                        let path = core::str::from_utf8(bytes.get(start..).ok_or(-22)?)
+                            .map_err(|_| -22)?;
+                        if path.is_empty() || path.contains('\0') {
+                            return Err(-22);
+                        }
+                        path
+                    } else {
+                        ""
+                    };
+                    let context = self.processes[&pid].execution().store.data();
+                    // File operations retain WASI errors in the first response
+                    // word. Process operations above retain negative POSIX errors.
+                    Ok(
+                        match crate::filesystem_abi::control_mode(
+                            context, operation, fd, flags, mode, path,
+                        ) {
+                            Ok(mode) => (0, i32::from(mode)),
+                            Err(error) => (error, 0),
+                        },
+                    )
+                }
+                15 => {
+                    let mask = word(bytes, 1)? as u16 & 0o777;
+                    let context = self
+                        .processes
+                        .get_mut(&pid)
+                        .unwrap()
+                        .execution
+                        .as_mut()
+                        .unwrap()
+                        .store
+                        .data_mut();
+                    let previous = core::mem::replace(&mut context.umask, mask);
+                    Ok((i32::from(previous), 0))
+                }
+                19 => {
+                    let mode = word(bytes, 1)?;
+                    if mode != u32::MAX && mode & !0o7777 != 0 {
+                        return Err(-22);
+                    }
+                    let context = self
+                        .processes
+                        .get_mut(&pid)
+                        .unwrap()
+                        .execution
+                        .as_mut()
+                        .unwrap()
+                        .store
+                        .data_mut();
+                    let previous = core::mem::replace(
+                        &mut context.creation_mode,
+                        (mode != u32::MAX).then_some(mode as u16),
+                    );
+                    Ok((0, previous.map_or(-1, i32::from)))
+                }
+                16 => {
+                    let context = self
+                        .processes
+                        .get_mut(&pid)
+                        .unwrap()
+                        .execution
+                        .as_mut()
+                        .unwrap()
+                        .store
+                        .data_mut();
+                    let fd = (4..crate::MAX_DESCRIPTORS)
+                        .find(|fd| !context.descriptors.contains_key(fd))
+                        .ok_or(-24)?;
+                    context.descriptors.insert(
+                        fd,
+                        Descriptor::Input(Rc::new(RefCell::new(
+                            context.cwd.as_bytes().iter().copied().collect(),
+                        ))),
+                    );
+                    context.close_on_exec.insert(fd);
+                    Ok((fd as i32, 0))
+                }
+                17 => {
+                    let path = core::str::from_utf8(&bytes[4..]).map_err(|_| -22)?;
+                    if !path.starts_with('/') || path.contains('\0') {
+                        return Err(-22);
+                    }
+                    let filesystem = self.filesystem.as_ref().ok_or(-2)?;
+                    let result = (|| {
+                        let path = if path.trim_matches('/').is_empty() {
+                            String::new()
+                        } else {
+                            filesystem
+                                .resolve_path("", path.trim_start_matches('/'))
+                                .map_err(crate::filesystem::FileError::errno)?
+                        };
+                        let info = filesystem
+                            .metadata(&path)
+                            .map_err(crate::filesystem::FileError::errno)?;
+                        if !info.is_directory() {
+                            return Err(54);
+                        }
+                        if info.mode & 0o100 == 0 {
+                            return Err(2);
+                        }
+                        Ok(format!("/{path}"))
+                    })();
+                    match result {
+                        Ok(path) => {
+                            self.processes
+                                .get_mut(&pid)
+                                .unwrap()
+                                .execution
+                                .as_mut()
+                                .unwrap()
+                                .store
+                                .data_mut()
+                                .cwd = path;
+                            Ok((0, 0))
+                        }
+                        Err(error) => Ok((error, 0)),
+                    }
+                }
+                18 => {
+                    let source = word(bytes, 1)?;
+                    let context = self
+                        .processes
+                        .get_mut(&pid)
+                        .unwrap()
+                        .execution
+                        .as_mut()
+                        .unwrap()
+                        .store
+                        .data_mut();
+                    let result = (|| {
+                        let directory = match context.descriptors.get(&source) {
+                            Some(Descriptor::Directory(directory)) => directory,
+                            Some(_) => return Err(54),
+                            None => return Err(8),
+                        };
+                        if directory.rights & (1 << 14) == 0 {
+                            return Err(76);
+                        }
+                        let entries = directory
+                            .filesystem
+                            .read_directory(&directory.path)
+                            .map_err(crate::filesystem::FileError::errno)?;
+                        let mut bytes = Vec::new();
+                        // DirectoryEntries bounds the count and encoded name bytes.
+                        for (name, _) in entries.iter() {
+                            bytes.extend((name.len() as u32).to_le_bytes());
+                            bytes.extend(name.as_bytes());
+                        }
+                        let fd = (4..crate::MAX_DESCRIPTORS)
+                            .find(|fd| !context.descriptors.contains_key(fd))
+                            .ok_or(33)?;
+                        context
+                            .descriptors
+                            .insert(fd, Descriptor::Input(Rc::new(RefCell::new(bytes.into()))));
+                        context.close_on_exec.insert(fd);
+                        Ok(fd)
+                    })();
+                    Ok(match result {
+                        Ok(fd) => (0, fd as i32),
+                        Err(error) => (error, 0),
+                    })
                 }
                 _ => unreachable!("Operation checked"),
             }

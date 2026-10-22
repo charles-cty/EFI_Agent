@@ -21,7 +21,7 @@ if (Test-Path -LiteralPath $distribution) {
 }
 Expand-Archive -LiteralPath $Archive -DestinationPath $distribution
 $library = Join-Path $distribution 'lib/python3.14/site-packages'
-Copy-Item -LiteralPath guests/python/sitecustomize.py, guests/python/_efi_process.py -Destination $library
+Copy-Item -LiteralPath guests/python/sitecustomize.py, guests/python/_efi_process.py, guests/python/_efi_filesystem.py -Destination $library
 Copy-Item -LiteralPath (Join-Path $distribution 'python.wasm') -Destination (Join-Path $Output 'python.wasm')
 $outputLibrary = Join-Path $Output 'lib/python3.14'
 if (Test-Path -LiteralPath $outputLibrary) {

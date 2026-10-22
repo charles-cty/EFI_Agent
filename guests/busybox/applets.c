@@ -29,6 +29,7 @@ static int applet_sleep(int argc, char **argv)
 }
 
 int sed_main(int argc, char **argv);
+int chmod_main(int argc, char **argv);
 int awk_main(int argc, char **argv);
 
 static int copy_stream(int input, int output, long limit)
@@ -236,6 +237,7 @@ int efi_busybox_applet(int argc, char **argv)
     if (strcmp(name, "date") == 0) return applet_date();
     if (strcmp(name, "sleep") == 0) return applet_sleep(argc, argv);
     if (strcmp(name, "sed") == 0) return sed_main(argc, argv);
+    if (strcmp(name, "chmod") == 0) return chmod_main(argc, argv);
     if (strcmp(name, "awk") == 0) return awk_main(argc, argv);
     fputs("busybox: applet is unavailable\n", stderr);
     return 127;

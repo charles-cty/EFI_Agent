@@ -350,21 +350,6 @@ unsigned bb_clk_tck(void)
     return 100;
 }
 
-mode_t umask(mode_t mask)
-{
-    (void)mask;
-    errno = ENOTSUP;
-    return (mode_t)-1;
-}
-
-mode_t bb_parse_mode(const char *text, mode_t initial)
-{
-    (void)text;
-    (void)initial;
-    errno = ENOTSUP;
-    return (mode_t)-1;
-}
-
 const char *get_signame(int number)
 {
     return number == 0 ? "EXIT" : "UNSUPPORTED";

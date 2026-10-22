@@ -4067,3 +4067,94 @@ Clippy with warnings denied, and formatting checks pass. Evidence:
 `artifacts/grep-format-final.log`. These checks do not replace actual firmware
 or WHPX verification of the new applets.
 
+## Guest permissions, creation modes and inherited working directories
+
+BusyBox now uses upstream chmod/parse_mode/mode_string. Its libc wrappers and
+the private CPython startup adapter expose namespace permissions through
+stat/lstat/fstat/fstatat, chmod/fchmod, creation modes and umask. The root
+preopen is named `/`, matching the workspace namespace. A process-local
+creation-mode scope applies the POSIX mode omitted by Preview 1 during file
+or directory creation, including through dangling links. Both clients restore
+the previous scope on success and failure; existing files retain their modes.
+Children inherit umask and cwd, and do not inherit a temporary creation scope.
+
+`scripts/test_guest_permissions.py` runs unchanged CPython and actual BusyBox
+against an isolated namespace. It verifies access denial for new opens,
+retained access after chmod/unlink, directory search permission, symlink
+following, explicit nofollow errors, fd-relative metadata after rename,
+string/bytes/fd/None scandir, retained directory anchors after close/rename,
+symbolic and recursive chmod, sed in-place/backup modes, cwd/umask inheritance,
+explicit creation modes, dangling-link creation, error-scope restoration,
+24 deterministic mode combinations, access bits, and nanosecond stat fields.
+The independent namespace reader verifies saved modes/bytes and a second
+Python root verifies persisted modes after restart. `-BuildFixtures` on
+build_busybox.ps1 also builds the real metadata wrappers with a C integration
+entry point; the permission suite checks explicit root fd 3 versus cwd,
+ordinary directory fds, fchmod and dangling-link creation. Evidence:
+`artifacts/permissions-scandir-integration.log` and
+`artifacts/permissions-busybox-fixture-build.log`.
+
+The CPython suite verifies normal cache creation, timestamp/size-based reuse
+against deliberately invalid replacement source, and suppression under `-B`.
+It retains the interpreter binary and upstream standard library unchanged.
+Evidence: `artifacts/permissions-python-final.log`. Runtime ABI cases verify
+mode layout/flags/fds, umask, creation-scope restoration, cwd validation,
+directory snapshot rights/types, UTF-8 byte lengths, EOF, private descriptor
+flags and descriptor reuse. Evidence: `artifacts/permissions-control-scandir.log`.
+The final runtime suite includes all seven control cases and passes all 81
+WASM tests in `artifacts/permissions-wasm-final.log`. Test-target Clippy with
+warnings denied passes in `artifacts/permissions-clippy-final.log`. The final
+BusyBox image passes ten descriptor cases, 20 awk cases plus a pipe oracle,
+23 sed cases plus cleanup, and 33 grep cases in the corresponding
+`artifacts/permissions-{descriptor,awk,sed,grep}-final.log` files. Windows
+Release EFI/launcher builds and packaging pass in
+`artifacts/permissions-firmware-final-build.log`.
+
+Actual QEMU/OVMF with 512 MiB passes Windows WHPX with Responses and TCG
+with Chat Completions on the final build. Both execute model write/shell/Python
+tools, nested paths, all write boundaries through an 8 MiB call, finite Python
+stdin, rename/unlink with live handles, symlinks, effective read-only modes,
+fd scandir after caller close, inherited cwd, upstream symbolic chmod and sed
+backup mode preservation, inherited umask, and explicit dangling-link target
+creation mode. Independent reads of the saved FAT namespace verify bytes,
+deleted names, link targets, result/backup modes, 0600 files, 0700 directories
+and the 0400 link-created target. Both also pass verified HTTPS/DNS, cancellation
+with child-tree reap, independent background-root preservation, truncation and
+subsequent requests. Evidence: `artifacts/permissions-whpx-final.log`,
+`artifacts/permissions-whpx-final`, `artifacts/permissions-tcg-final.log`, and
+`artifacts/permissions-tcg-final`. The full curl/SSH/application combination
+and focused 256 MiB resource gate were not rerun for this permission change.
+
+Implementation and test issues resolved during this change:
+
+- BusyBox symbolic parsing returns type bits as well as permissions. Wrappers
+  now pass only permission bits to the metadata interface.
+- A root path join produced `//renamed` and capability errors. Root joins and
+  preopen slash normalization now agree. The earlier dot-preopen documentation
+  was outdated and now describes the slash preopen.
+- A persistent C control descriptor could occupy a user fd; C requests now
+  open/close their endpoint. Raw WASI endpoint opening avoids reentering libc's
+  shared path scratch buffer during chdir/fstatat.
+- Explicit fstatat fd 3 was confused with AT_FDCWD. Only AT_FDCWD now adds cwd;
+  the real C wrapper fixture distinguishes the two anchors.
+- An exclusive-open probe lost explicit modes for dangling symlink targets.
+  The runtime creation-mode scope removes that probe and preserves normal
+  O_CREAT/O_EXCL semantics.
+- Prebuilt CPython lacks scandir(fd). The private adapter now enumerates an
+  anchored name snapshot, filters dot entries, and preserves entry lifetimes.
+  A bytearray/fsdecode mismatch in its first version was corrected to bytes.
+- The cache test omitted `importlib.util` and compared an absolute imported
+  cache path with a relative expected path. Explicit import and absolute path
+  derivation fix the test; the added reuse oracle checks actual cache behavior.
+- An old ash_child fixture lacked the current descriptor command and exited
+  99. Rebuilding the fixture restores the descriptor integration.
+- The initial directory ABI test imported unsupported fd_fdstat_set_rights.
+  It now opens a directory with restricted rights and verifies rejection
+  without depending on an unrelated syscall.
+
+Current directory inheritance is still path based. Ancestor rename/unlink
+tracking and explicit subprocess cwd/umask are pending. Python scandir entries
+are method-compatible private proxies, with a type identity difference from
+the built-in DirEntry. Virtual mount completeness, other upstream applets,
+filesystem PATH and persistent sessions remain pending. These permission
+checks do not establish complete environment delivery.

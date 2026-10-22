@@ -1,6 +1,6 @@
 # Application port transparency audit
 
-Date: 2026-10-21. Scope: guest entry points, Python and JavaScript libraries,
+Date: 2026-10-22. Scope: guest entry points, Python and JavaScript libraries,
 process adapters, executable lookup, and the firmware command frontend.
 
 The requirement is that applications use their standard public interfaces.
@@ -39,7 +39,8 @@ Python options now determine shell use, decoding and nonzero-exit handling.
 | High | The prebuilt `_socket` module is present, but its socket creation backend remains unavailable. Runtime WASI socket imports reject unsupported operations explicitly. | Standard Python socket clients cannot use existing client TCP/DNS operations. Add the backend below standard socket interfaces. |
 | High | `scripts/prepare_busybox.py` checks the program registry before upstream PATH lookup; `guests/busybox/exec.c` selects modules by the registered name. Python uses that same namespace. | A file placed in PATH does not become executable. Add executable-file loading behind normal lookup. Manual registration remains a runtime constraint. |
 | Medium | `crates/uefi/src/wasm.rs` uses `split_whitespace`. | Quoted source code, filenames with spaces and empty arguments cannot pass through `/wasm run/start` normally. Add a defined quoting grammar without invoking a shell implicitly. Script-file invocation currently avoids source-code quoting. |
-| Medium | The Python adapter explicitly rejects cwd, custom argv[0], pre-exec callbacks, process groups, credentials and umask changes. Signals and timeouts are unavailable. `/dev/null` is absent. | Some standard subprocess options still fail. Add each capability below the API, and retain explicit errors until verified. Infinite `communicate`/wait and `poll()` are supported; this does not establish process termination or timeout support. |
+| Medium | The Python adapter explicitly rejects per-child cwd/umask, custom argv[0], pre-exec callbacks, process groups and credentials. Signals and timeouts are unavailable. Current cwd inheritance is path based and does not follow ancestor rename/unlink. | Ordinary children inherit cwd/umask, and virtual `/dev/null` works. Complete anchored cwd and explicit child settings below standard APIs. Infinite `communicate`/wait and `poll()` are supported. |
+| Medium | Private Python scandir entry proxies expose the standard methods and correct modes, including fd anchors, but are not instances of built-in `os.DirEntry`. | Type identity remains an interface difference. Preserve the upstream binary and resolve the missing Preview 1 mode representation below the public API where feasible. |
 | Medium | The full standard library is packaged, but its OS-dependent operations require runtime support. Dynamic extensions and native threads remain unavailable. | Module presence alone does not establish every operation. Validate each required capability through standard imports and calls. |
 | Medium | WASI libc does not propagate CPython's internal close-on-exec setting for ordinary file opens. A native probe reports `os.get_inheritable(open(...).fileno()) == True`. | With `close_fds=False` or `os.system`, a file can cross spawn unless the caller clears inheritance with `os.set_inheritable(fd, False)`. Default `subprocess` descriptor filtering and explicit `pass_fds` are tested. Resolve default file inheritance below the standard API. |
 
@@ -56,16 +57,21 @@ recovery. Firmware and the native runner now mount this namespace, shared with
 model file tools and module loading. Launcher logical staging/export/save has
 an actual FAT round-trip test. Focused QEMU evidence verifies Python unlink,
 rename, symlinks, open-file identity and directory mutations against saved
-logical FAT bytes. Python mode reporting and mutation adaptation remain
-incomplete; these checks do not establish the chmod defect as resolved.
+logical FAT bytes. The private metadata adapter now supplies Python and BusyBox
+mode reporting/mutation, single-owner access checks and inherited umask/cwd.
+Windows native checks verify real denial, retained file access, fd-relative
+metadata after rename, symbolic/recursive chmod and sed mode preservation.
+The dedicated permission integration independently verifies saved modes and
+process restart. Firmware evidence is recorded separately in verification.md.
 
 The 2026-10-22 filesystem expansion connects directory creation to native and
 firmware providers, and rename to the native provider. File writes now use
 64 KiB chunks after complete iovec validation, including calls above 512 KiB.
 Finite stdin and captured output no longer report character-device types.
 Native unchanged CPython verifies `python -`, nested directories, 8 MiB writes,
-py_compile and compileall. Automatic import bytecode writes remain disabled
-until firmware rename and deletion support is complete.
+py_compile and compileall. Automatic import bytecode writes are enabled.
+Native integration verifies cache creation, reuse with unchanged size/mtime,
+and suppression under `-B`.
 
 Native integration uses actual prebuilt CPython 3.14.7, actual ash and the wasmi runner.
 Firmware integration uses actual QEMU/OVMF, standard script files, imports,

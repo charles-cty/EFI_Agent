@@ -15,6 +15,7 @@ ENABLED = {
     "AWK", "FEATURE_AWK_LIBM", "FEATURE_AWK_GNU_EXTENSIONS", "FEATURE_ALLOW_EXEC",
     "SED", "LONG_OPTS",
     "GREP", "FEATURE_GREP_CONTEXT",
+    "CHMOD",
 }
 
 
@@ -82,7 +83,7 @@ def main():
              args.source / "coreutils/test.c", args.source / "shell/math.c",
              args.source / "include/unicode.h", args.source / "editors/awk.c",
              args.source / "editors/sed.c", args.source / "libbb/getopt32.c",
-             args.source / "findutils/grep.c"]
+             args.source / "findutils/grep.c", args.source / "coreutils/chmod.c"]
     names = set(ENABLED)
     for path in files:
         text = path.read_text(encoding="utf-8")

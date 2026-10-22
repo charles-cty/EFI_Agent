@@ -526,7 +526,12 @@ impl Directory {
 
     pub fn resolve(&self, path: &str) -> Result<String, i32> {
         let path = if self.preopen {
-            path.strip_prefix('/').unwrap_or(path)
+            let relative = path.trim_start_matches('/');
+            if !path.is_empty() && relative.is_empty() {
+                "."
+            } else {
+                relative
+            }
         } else {
             path
         };
