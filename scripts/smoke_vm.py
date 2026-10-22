@@ -26,6 +26,8 @@ from wasm_mutation_applets_fixture import MUTATION_APPLETS_CHECK
 from test_busybox_mutations import verify_mutation_applets
 from wasm_date_fixture import DATE_CHECK
 from test_busybox_date import verify_date
+from wasm_text_applets_fixture import TEXT_APPLETS_CHECK
+from test_busybox_text import verify_text_applets
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -268,6 +270,7 @@ def main():
     parser.add_argument("--code-timeout", type=float, default=480, help="Maximum seconds for the complete code-tool sequence under TCG")
     parser.add_argument("--code-cancel-only", action="store_true", help="Run only code cancellation/isolation checks; requires --code-workspace")
     parser.add_argument("--filesystem-tools", action="store_true", help="Verify nested file-tool writes, mkdir, large writes and finite Python stdin")
+    parser.add_argument("--text-applets", action="store_true", help="Run only the upstream sort/uniq/cut/tr WHPX check")
     args = parser.parse_args()
     if args.code_cancel_only and not args.code_workspace:
         parser.error("--code-cancel-only requires --code-workspace")
@@ -392,6 +395,12 @@ def main():
         Provider.code_expected.append('UPSTREAM_BASIC_APPLETS_OK')
         Provider.code_steps.append(('python', {'code': MUTATION_APPLETS_CHECK + DATE_CHECK}))
         Provider.code_expected.append('UPSTREAM_DATE_OK')
+    if args.text_applets:
+        if not args.code_workspace or args.filesystem_tools or args.code_cancel_only:
+            parser.error("--text-applets requires --code-workspace and excludes other code modes")
+        Provider.code_steps = [('python', {'code': TEXT_APPLETS_CHECK})]
+        Provider.code_expected = ['UPSTREAM_TEXT_APPLETS_OK']
+        Provider.filesystem_tools = False
     for index, (name, arguments) in enumerate(Provider.code_steps, 1):
         if name == 'python':
             compile(arguments['code'], f'guest-tool-step-{index}', 'exec')
@@ -494,6 +503,17 @@ def main():
                 wait("Extra drivers started: 1")
                 send("/clear")
                 wait("Conversation cleared")
+            if args.text_applets:
+                send("Exercise code tools")
+                wait("CODE_TOOLS_VERIFIED", args.code_timeout)
+                send("/exit")
+                qemu.wait(timeout=15)
+                assert qemu.returncode == 0
+                with image.open("rb") as disk:
+                    fs = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
+                    verify_text_applets(FatWorkspace(fs))
+                print("PASS WHPX upstream text applets and saved FAT bytes", flush=True)
+                return
             send("Stream text")
             if args.tls_failure:
                 wait("TLS random generator: Unsupported" if args.tls_failure == "random" else "TLS:")

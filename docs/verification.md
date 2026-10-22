@@ -4491,7 +4491,10 @@ boundaries cross signs, zero, long fractions, adjacent 64-bit integers and
 powers of ten up to 40 digits. Stream lengths cross 65535/65536/65537 and
 196613 bytes. Same-file sort output, file uniq output, error continuation and
 the complete cat/sort/uniq/tr/cut chain have independent saved-byte checks.
-Evidence: `artifacts/text-applets-integration-final-all.log`.
+Evidence: `artifacts/text-applets-integration-final-all.log`. The focused
+WHPX path uses `scripts/smoke_vm.py --text-applets` with `--code-workspace`;
+it runs only this fixture and checks the saved FAT bytes in
+`artifacts/text-applets-whpx`.
 
 Corrections and resolved issues:
 
