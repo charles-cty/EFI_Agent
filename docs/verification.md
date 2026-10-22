@@ -4590,3 +4590,13 @@ shared dump engine already used by od. The shared image exposes `hexdump`; the
 focused path fixture covers canonical `-C` output, finite stdin and malformed
 options. Windows WASI SDK/Binaryen compilation and WHPX execution remain
 pending because those tools were not configured in the current environment.
+
+## 2026-10-23 upstream xargs
+
+BusyBox xargs now uses the upstream parser and argument batching logic. The
+shared image enables quoting, NUL-delimited input and replacement strings while
+using the cooperative ash child runner for each non-parallel invocation. The
+focused path fixture covers quoted arguments, `-0`, `-n` batching and child
+status propagation. Parallel, interactive and `-a` input modes remain disabled.
+Windows WASI SDK/Binaryen compilation and WHPX execution remain pending because
+those tools were not configured in the current environment.

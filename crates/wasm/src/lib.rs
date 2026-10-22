@@ -229,6 +229,7 @@ impl World {
                 | "sha256sum"
                 | "ln"
                 | "hexdump"
+                | "xargs"
                 | "sed"
                 | "sleep"
                 | "yes"

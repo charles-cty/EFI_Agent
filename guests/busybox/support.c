@@ -1,5 +1,6 @@
 #include "busybox.h"
 #include "shell_common.h"
+#include "efi_process.h"
 #include <sys/times.h>
 
 const char bb_PATH_root_path[] = "PATH=/bin";
@@ -95,6 +96,12 @@ int fflush_all(void)
 {
     int result = fflush(NULL);
     return result == EOF || ferror(stdout) || ferror(stderr) ? EOF : 0;
+}
+
+int spawn_and_wait(char **arguments)
+{
+    extern char **environ;
+    return efi_ash_run(arguments, environ);
 }
 
 ssize_t nonblock_immune_read(int fd, void *bytes, size_t size)

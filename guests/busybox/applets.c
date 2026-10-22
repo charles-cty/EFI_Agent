@@ -41,6 +41,7 @@ int baseNUM_main(int argc, char **argv);
 int md5_sha1_sum_main(int argc, char **argv);
 int ln_main(int argc, char **argv);
 int hexdump_main(int argc, char **argv);
+int xargs_main(int argc, char **argv);
 
 static int copy_stream(int input, int output, long limit)
 {
@@ -144,6 +145,7 @@ int efi_busybox_applet(int argc, char **argv)
     if (strcmp(name, "sha256sum") == 0) return md5_sha1_sum_main(argc, argv);
     if (strcmp(name, "ln") == 0) return ln_main(argc, argv);
     if (strcmp(name, "hexdump") == 0) return hexdump_main(argc, argv);
+    if (strcmp(name, "xargs") == 0) return xargs_main(argc, argv);
     if (strcmp(name, "rm") == 0) return rm_main(argc, argv);
     if (strcmp(name, "cp") == 0) return applet_cp_mv(argc, argv, 0);
     if (strcmp(name, "mv") == 0) return applet_cp_mv(argc, argv, 1);
