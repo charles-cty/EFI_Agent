@@ -428,7 +428,7 @@ impl World {
             self.processes.is_empty(),
             "Cannot replace a live world's filesystem"
         );
-        self.filesystem = Some(filesystem);
+        self.filesystem = Some(filesystem::VirtualFileSystem::new(filesystem));
     }
 
     pub fn spawn(&mut self, args: Vec<String>, stdin: Vec<u8>) -> Result<Pid, Error> {

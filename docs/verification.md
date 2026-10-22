@@ -3953,3 +3953,8 @@ the registered `ash.wasm` image. The guest keeps the requested name in
 BusyBox build completes successfully. The remaining applets have only build
 coverage until a dedicated firmware regression is run.
 
+The WASI preopen also exposes virtual `bin`, `dev`, `proc`, and `tmp`
+directories. `/dev/null` discards writes, `/dev/zero` supplies zero bytes, and
+`/proc/uptime` returns a bounded text snapshot. These entries are not exported
+as workspace files.
+

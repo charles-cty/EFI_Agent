@@ -136,8 +136,10 @@ static int applet_head(int argc, char **argv)
 {
     long lines = 10;
     int index = 1;
-    if (index + 1 < argc && strcmp(argv[index], "-n") == 0)
-        lines = strtol(argv[index++ + 1], NULL, 10);
+    if (index + 1 < argc && strcmp(argv[index], "-n") == 0) {
+        lines = strtol(argv[index + 1], NULL, 10);
+        index += 2;
+    }
     if (lines < 0)
         lines = 0;
     if (index == argc)
