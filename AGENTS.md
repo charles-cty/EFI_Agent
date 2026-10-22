@@ -9,6 +9,18 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+BusyBox mkdir/rmdir/rm/touch now use upstream applets and shared make-directory,
+recursive-remove, confirmation and time helpers. Staged corrections report
+directory traversal errors and new-file timestamp errors, preserve nonzero
+status for verbose output failures, reject mkdir / or . without -p, and omit
+false removal success messages. Native integration passes 63 command cases
+and independently checks saved names, bytes and timestamps. The mount,
+PATH, remaining applet inventory and retained-session gates remain incomplete.
+Actual 512 MiB WHPX/Responses and TCG/Chat Completions pass the full current
+file/code-tool sequence and independent FAT checks in
+artifacts/mutation-applets-whpx and mutation-applets-tcg. All 85 WASM tests,
+Clippy, formatting, Release packaging and shared-image guest regressions pass.
+
 Upstream BusyBox basename/dirname/pwd/env/printenv/seq/yes/true/false now
 build into the shared image. Local copies of path/single-argv/getcwd helpers
 were replaced by upstream helpers. Pwd enables -L/-P; env uses cooperative

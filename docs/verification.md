@@ -4373,3 +4373,54 @@ cancellation and independent background roots. Evidence:
 `artifacts/basic-applets-tcg-fixed.log`, and
 `artifacts/basic-applets-tcg-fixed`. The wider full application and 256 MiB
 resource regressions remain pending.
+
+## 2026-10-22 upstream filesystem mutation applets
+
+The shared image now builds upstream BusyBox 1.37.0 mkdir, rmdir, rm and touch,
+with libbb make_directory, remove_file, ask_confirmation and time helpers.
+The full upstream FILEUTILS flag layout is retained for subsequent copy/move
+ports. Monotonic helper selection uses the actual monotonic clock.
+
+Windows-native integration passes 63 command cases through unchanged CPython
+subprocess and real ash. The independent committed-workspace reader verifies
+removed names, result bytes, reference-file times and symbolic-link metadata.
+Cases cover explicit/symbolic modes, umask and intermediate parents, existing
+directory modes, Unicode names, multiple operands after errors, rmdir parents
+and nonempty handling, recursive removal with symlinks and permissions,
+interactive acceptance/rejection, retained open-file identity, verbose output
+errors, touch creation/no-create, epoch/calendar/reference dates, nanosecond
+precision, access-only/modify-only changes and dangling-link nofollow behavior.
+Evidence: `artifacts/mutation-applets-regression.log`.
+
+Staged upstream corrections propagate directory open/read/close failures,
+avoid false verbose success after failed recursive removal, and check futimens
+after file creation. The three verbose mutation applets flush/check stdout
+before returning status. Mkdir rejects literal / and . without -p at the
+applet boundary; its shared helper retains parent-creation semantics.
+
+Resolved verification issues: the saved-metadata oracle initially used field
+names with an incorrect _ns suffix, then expected an old atime after a later
+ordinary touch had updated both times. Both expectations were corrected;
+guest and independent saved checks now agree. Initial searches used absent
+fixture/header names; bounded source searches found the correct files.
+Upstream time parsing emits four nonfatal Clang string-pointer arithmetic
+warnings; these are intentional offsets into format strings. No dependency
+or Windows/WSL boundary change was required.
+
+All 85 WASM tests, host/UEFI Clippy, formatting and Windows Release packaging
+pass in `artifacts/mutation-applets-checks.log` and
+`artifacts/mutation-applets-package.log`. The same final guest image passes
+65 basic cases, 112 stream cases, monotonic/time/follow checks, awk/sed/grep,
+permission/C wrappers, all 15 CPython cases and 10 descriptor-inheritance
+cases. Evidence: `artifacts/mutation-applets-regression.log` and
+`artifacts/mutation-applets-shared-regression.log`.
+
+Actual 512 MiB QEMU/OVMF passes WHPX with Responses and TCG with Chat
+Completions. Both execute all 63 new cases through model Python subprocess,
+check persisted names and times independently from FAT, and pass existing
+8 MiB writes, permissions/mutations, stream, clock, HTTPS/DNS, cancellation
+and background-isolation checks. Evidence:
+`artifacts/mutation-applets-whpx.log`, `artifacts/mutation-applets-whpx`,
+`artifacts/mutation-applets-tcg.log`, `artifacts/mutation-applets-tcg`.
+The full network/application combination, 256 MiB gate and remaining
+command/mount/PATH/session delivery remain pending.

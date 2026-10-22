@@ -22,6 +22,8 @@ from textwrap import dedent
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from wasm_time_fixture import TIME_CHECK
 from wasm_basic_applets_fixture import BASIC_APPLETS_CHECK
+from wasm_mutation_applets_fixture import MUTATION_APPLETS_CHECK
+from test_busybox_mutations import verify_mutation_applets
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -386,6 +388,8 @@ def main():
         Provider.code_expected.append('MONOTONIC_WAIT_OK')
         Provider.code_steps.append(('python', {'code': BASIC_APPLETS_CHECK}))
         Provider.code_expected.append('UPSTREAM_BASIC_APPLETS_OK')
+        Provider.code_steps.append(('python', {'code': MUTATION_APPLETS_CHECK}))
+        Provider.code_expected.append('UPSTREAM_MUTATION_APPLETS_OK')
     for index, (name, arguments) in enumerate(Provider.code_steps, 1):
         if name == 'python':
             compile(arguments['code'], f'guest-tool-step-{index}', 'exec')
@@ -598,6 +602,7 @@ def main():
                                 assert workspace.read('stream-long') == b'x' * 1100003
                                 assert workspace.read('monotonic-result') == b'MONOTONIC_WAIT_OK\n'
                                 assert workspace.read('basic-applets-result') == b'UPSTREAM_BASIC_APPLETS_OK\n'
+                                verify_mutation_applets(workspace)
                                 for removed in ('mutation', 'moved-mutation/empty', 'moved-mutation/original', 'moved-mutation/replaced'):
                                     assert removed not in workspace.entries, removed
                             else:

@@ -51,6 +51,10 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $Source 'coreutils/false.c'),
     (Join-Path $Source 'libbb/get_last_path_component.c'),
     (Join-Path $Source 'libbb/single_argv.c'), (Join-Path $Source 'libbb/xgetcwd.c'),
+    (Join-Path $build 'mkdir.c'), (Join-Path $build 'rmdir.c'),
+    (Join-Path $build 'rm.c'), (Join-Path $build 'touch.c'),
+    (Join-Path $Source 'libbb/make_directory.c'), (Join-Path $build 'remove_file.c'),
+    (Join-Path $Source 'libbb/ask_confirmation.c'), (Join-Path $Source 'libbb/time.c'),
     'guests/busybox/main.c', 'guests/busybox/support.c', 'guests/busybox/awk_support.c', 'guests/busybox/applets.c', 'guests/busybox/exec.c',
     'guests/lib/process.c', 'guests/sjlj/runtime.c', 'guests/sjlj/stack.s'
 $raw = Join-Path $build 'ash.raw.wasm'

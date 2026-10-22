@@ -2,6 +2,19 @@
 
 const char bb_msg_standard_output[] = "standard output";
 const char bb_msg_read_error[] = "read error";
+const char bb_msg_invalid_date[] = "invalid date '%s'";
+
+void xstat(const char *path, struct stat *metadata)
+{
+    if (stat(path, metadata) < 0)
+        bb_simple_perror_msg_and_die(path);
+}
+
+void xclose(int fd)
+{
+    if (close(fd) < 0)
+        bb_simple_perror_msg_and_die("close");
+}
 
 int fputs_stdout(const char *text)
 {

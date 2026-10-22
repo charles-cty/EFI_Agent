@@ -67,6 +67,16 @@ multiword pipelines terminate after the reader closes. WASI returns EPIPE
 without SIGPIPE delivery; upstream yes reports Broken pipe before exiting
 with failure. The pipeline retains the final stage's status.
 
+Mkdir, rmdir, rm and touch also use their upstream BusyBox implementations.
+Mkdir preserves existing modes under -p and applies explicit modes to new final
+directories. Recursive rm uses lstat and does not descend through symbolic
+links. Interactive prompts consume finite stdin. Directory open/read/close
+errors fail with diagnostics; failed removal does not print a success line.
+Verbose output failures affect status. Touch supports -c/-h/-a/-m/-r/-d/-t,
+including nanosecond reference times and link-local timestamps. A new-file
+timestamp failure is reported. Time parsing uses upstream libbb; CPU-time
+clocks, signals and clock setting remain outside these applets.
+
 The model receives `shell(command)` and `python(code)` in addition to the
 read/write/edit file tools. Shell code runs as `ash -c`; Python code runs as
 `python -c`. Source is passed as one unchanged argument, including whitespace,

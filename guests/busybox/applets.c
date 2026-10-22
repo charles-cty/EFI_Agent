@@ -36,6 +36,10 @@ int seq_main(int argc, char **argv);
 int yes_main(int argc, char **argv);
 int true_main(int argc, char **argv);
 int false_main(int argc, char **argv);
+int mkdir_main(int argc, char **argv);
+int rmdir_main(int argc, char **argv);
+int rm_main(int argc, char **argv);
+int touch_main(int argc, char **argv);
 
 static int copy_stream(int input, int output, long limit)
 {
@@ -83,50 +87,6 @@ static int applet_ls(int argc, char **argv)
 
 int grep_main(int argc, char **argv);
 
-static int applet_mkdir(int argc, char **argv)
-{
-    int parents = argc > 1 && strcmp(argv[1], "-p") == 0;
-    int first = parents ? 2 : 1;
-    int status = 0;
-    for (int i = first; i < argc; ++i) {
-        if (parents) {
-            char path[4096];
-            size_t length = strlen(argv[i]);
-            if (length >= sizeof(path)) {
-                status = 1;
-                continue;
-            }
-            memcpy(path, argv[i], length + 1);
-            for (char *cursor = path + 1; *cursor; ++cursor) {
-                if (*cursor != '/')
-                    continue;
-                *cursor = '\0';
-                if (*path && mkdir(path, 0777) < 0 && errno != EEXIST)
-                    status = 1;
-                *cursor = '/';
-            }
-            if (mkdir(path, 0777) < 0 && errno != EEXIST)
-                status = 1;
-        } else if (mkdir(argv[i], 0777) < 0) {
-            bb_simple_perror_msg(argv[i]);
-            status = 1;
-        }
-    }
-    return status;
-}
-
-static int applet_rm(int argc, char **argv)
-{
-    int status = 0;
-    for (int i = 1; i < argc; ++i) {
-        if (unlink(argv[i]) < 0) {
-            bb_simple_perror_msg(argv[i]);
-            status = 1;
-        }
-    }
-    return status;
-}
-
 static int applet_cp_mv(int argc, char **argv, int move)
 {
     if (argc != 3) {
@@ -170,8 +130,10 @@ int efi_busybox_applet(int argc, char **argv)
     if (strcmp(name, "true") == 0) return true_main(argc, argv);
     if (strcmp(name, "false") == 0) return false_main(argc, argv);
     if (strcmp(name, "grep") == 0) return grep_main(argc, argv);
-    if (strcmp(name, "mkdir") == 0) return applet_mkdir(argc, argv);
-    if (strcmp(name, "rm") == 0) return applet_rm(argc, argv);
+    if (strcmp(name, "mkdir") == 0) return mkdir_main(argc, argv);
+    if (strcmp(name, "rmdir") == 0) return rmdir_main(argc, argv);
+    if (strcmp(name, "touch") == 0) return touch_main(argc, argv);
+    if (strcmp(name, "rm") == 0) return rm_main(argc, argv);
     if (strcmp(name, "cp") == 0) return applet_cp_mv(argc, argv, 0);
     if (strcmp(name, "mv") == 0) return applet_cp_mv(argc, argv, 1);
     if (strcmp(name, "date") == 0) return applet_date();

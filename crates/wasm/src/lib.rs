@@ -217,6 +217,8 @@ impl World {
                 | "mkdir"
                 | "mv"
                 | "rm"
+                | "rmdir"
+                | "touch"
                 | "sed"
                 | "sleep"
                 | "yes"

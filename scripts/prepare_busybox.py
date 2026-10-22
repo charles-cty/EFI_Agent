@@ -21,6 +21,8 @@ ENABLED = {
     "TEE", "FEATURE_TEE_USE_BLOCK_IO",
     "SLEEP", "FEATURE_FANCY_SLEEP", "FLOAT_DURATION",
     "BASENAME", "DIRNAME", "PWD", "ENV", "PRINTENV", "SEQ", "YES", "TRUE", "FALSE",
+    "MKDIR", "RMDIR", "RM", "TOUCH", "FEATURE_TOUCH_SUSV3", "FEATURE_VERBOSE",
+    "MONOTONIC_SYSCALL",
 }
 
 
@@ -188,6 +190,50 @@ def prepare_streams(source: Path, output: Path):
     (output / "fflush_stdout_and_exit.c").write_text(flush, encoding="utf-8")
 
 
+def prepare_mutations(source: Path, output: Path):
+    """Use upstream traversal, parsing and prompts with explicit I/O failures."""
+    for name in ("mkdir", "rmdir", "rm"):
+        text = (source / f"coreutils/{name}.c").read_text(encoding="utf-8")
+        text = replace_once(text, '\treturn status;', '\tfflush_stdout_and_exit(status);')
+        if name == "mkdir":
+            text = replace_once(text, '\t\tif (bb_make_directory(*argv, mode, flags)) {', '''        if (!(flags & FILEUTILS_RECUR)
+            && (LONE_CHAR(*argv, '/') || LONE_CHAR(*argv, '.'))) {
+            errno = EEXIST;
+            bb_simple_perror_msg(*argv);
+            status = EXIT_FAILURE;
+        } else if (bb_make_directory(*argv, mode, flags)) {''')
+        (output / f"{name}.c").write_text(text, encoding="utf-8")
+
+    remove = (source / "libbb/remove_file.c").read_text(encoding="utf-8")
+    remove = replace_once(remove, '\t\tif (dp == NULL) {\n\t\t\treturn -1;', '''        if (dp == NULL) {
+            bb_perror_msg("can't open '%s'", path);
+            return -1;''')
+    remove = replace_once(remove, '\t\twhile ((d = readdir(dp)) != NULL) {', '''        for (;;) {
+            errno = 0;
+            d = readdir(dp);
+            if (d == NULL) {
+                if (errno) {
+                    bb_perror_msg("can't read '%s'", path);
+                    status = -1;
+                }
+                break;
+            }''')
+    remove = replace_once(remove, '\t\tclosedir(dp);', '''        if (closedir(dp) < 0) {
+            bb_perror_msg("can't close '%s'", path);
+            status = -1;
+        }''')
+    remove = replace_once(remove, '\t\tif (flags & FILEUTILS_VERBOSE) {', '\t\tif (status == 0 && (flags & FILEUTILS_VERBOSE)) {')
+    (output / "remove_file.c").write_text(remove, encoding="utf-8")
+
+    touch = (source / "coreutils/touch.c").read_text(encoding="utf-8")
+    touch = replace_once(touch, '''\t\t\t\t\tif (opts & (OPT_r|OPT_d|OPT_t))
+\t\t\t\t\t\tfutimens(fd, timebuf);''', '''                    if ((opts & (OPT_r|OPT_d|OPT_t)) && futimens(fd, timebuf) < 0) {
+                        status = EXIT_FAILURE;
+                        bb_simple_perror_msg(*argv);
+                    }''')
+    (output / "touch.c").write_text(touch, encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
@@ -203,8 +249,10 @@ def main():
              args.source / "findutils/grep.c", args.source / "coreutils/chmod.c",
              *(args.source / f"coreutils/{name}.c" for name in (
                  "cat", "head", "tail", "wc", "tee", "sleep", "basename",
-                 "dirname", "pwd", "env", "printenv", "seq", "yes", "true", "false")),
-             args.source / "libbb/copyfd.c", args.source / "libbb/duration.c"]
+                 "dirname", "pwd", "env", "printenv", "seq", "yes", "true", "false",
+                 "mkdir", "rmdir", "rm", "touch")),
+             *(args.source / f"libbb/{name}.c" for name in (
+                 "copyfd", "duration", "make_directory", "remove_file", "time"))]
     names = set(ENABLED)
     for path in files:
         text = path.read_text(encoding="utf-8")
@@ -223,6 +271,7 @@ def main():
     (args.output / "ash_config.h").write_text("\n".join(lines), encoding="utf-8")
     (args.output / "NUM_APPLETS.h").write_text("#define NUM_APPLETS 1\n", encoding="utf-8")
     prepare_streams(args.source, args.output)
+    prepare_mutations(args.source, args.output)
     sleep = (args.source / "coreutils/sleep.c").read_text(encoding="utf-8")
     sleep = replace_once(sleep, '\t\t\tsleep(INT_MAX);', '''            if (sleep(INT_MAX) != 0)
                 bb_simple_perror_msg_and_die("sleep");''')
