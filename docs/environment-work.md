@@ -5,8 +5,8 @@ expansion. Initial native/firmware interfaces do not establish full completion.
 
 The shared image currently uses upstream awk, sed, grep, chmod, cat, head,
 tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true
-and false, plus mkdir, rmdir, rm, touch and date. Other utility applets still need
-upstream replacement or addition.
+and false, plus mkdir, rmdir, rm, touch, date, sort, uniq, cut and tr. Other
+utility applets still need upstream replacement or addition.
 Date currently supports UTC; other TZ values fail explicitly and timezone
 support remains pending.
 Firmware monotonic waits now use a reported hardware-counter rate. The mount,

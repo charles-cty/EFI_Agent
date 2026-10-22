@@ -65,6 +65,13 @@ int index_in_substrings(const char *strings, const char *key);
 time_t validate_tm_time(const char *text, struct tm *value);
 extern const char bb_msg_invalid_date[];
 typedef smalluint exitcode_t;
+char *bb_read_record(FILE *stream, int delimiter, size_t *length);
+int bb_compare_decimal(const char *left, const char *right);
+int bb_compare_human(const char *left, const char *right);
+int bb_compare_record(const char *left, const char *right, size_t length, int fold);
+#define xrealloc_vector(vector, shift, index) \
+    xrealloc_vector_helper((vector), (sizeof((vector)[0]) << 8) + (shift), (index))
+void *xrealloc_vector_helper(void *vector, unsigned size_and_shift, int index);
 typedef double duration_t;
 duration_t parse_duration_str(char *text);
 void sleep_for_duration(duration_t duration);
@@ -134,6 +141,7 @@ extern const char bb_msg_read_error[];
 extern const char *const bb_argv_dash[];
 ssize_t full_read(int fd, void *buffer, size_t size);
 int open_or_warn(const char *path, int flags);
+int xopen(const char *path, int flags);
 int open_or_warn_stdin(const char *path);
 FILE *fopen_or_warn_stdin(const char *path);
 off_t xlseek(int fd, off_t offset, int whence);

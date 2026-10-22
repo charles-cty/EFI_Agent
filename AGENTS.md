@@ -9,6 +9,16 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Upstream BusyBox sort/uniq/cut/tr now build into the shared image. Length-aware
+records preserve NUL and -z data. Sort fixes field-relative offsets, stable
+record positions, large decimal precision, negative/zero human suffixes and
+read failures. Uniq bounds skipped fields by actual input. Cut fixes positive
+ranges, empty-line suppression, binary ordinary fields and read errors; regex
+NUL or zero-length matches fail explicitly. Tr uses upstream byte classes and
+equivalence sets. Native integration passes 142 semantic/property/boundary
+cases and independent saved bytes. Wider command/mount/PATH/session delivery
+remains incomplete.
+
 Upstream BusyBox date now replaces its handwritten subset. It provides UTC
 epoch/calendar/strptime parsing, RFC/ISO output, nanoseconds and file reference
 times. Clock setting rejects ENOTSUP; non-UTC TZ values reject explicitly

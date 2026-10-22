@@ -83,6 +83,19 @@ clock reads, oversized formatted output and closed stdout fail explicitly.
 Setting the system clock fails with ENOTSUP. WASI libc supplies UTC only;
 date rejects other TZ values and accepts -u to select UTC explicitly.
 
+Sort, uniq, cut and tr use upstream BusyBox parsers and algorithms. Sort and
+uniq retain record lengths across embedded NUL bytes; -z reads and writes NUL
+records. Sort stores original positions separately for stable ordering, uses
+exact decimal-prefix comparison for -n, and orders human suffixes with sign
+and zero handling for -h. Key character offsets are relative to their selected
+field and bounded before addition. Read errors retain sort status 2. Uniq
+retains binary bytes while skipping fields/characters or folding ASCII case.
+Cut byte/ordinary-field output preserves NUL, validates positive positions and
+one-byte field delimiters, and implements empty-line suppression. Its optional
+regex mode rejects NUL and empty-string matches explicitly. Cut -c remains
+byte-oriented as in upstream BusyBox. Tr enables classes and equivalence sets
+and operates on all byte values. All four propagate input/output errors.
+
 The model receives `shell(command)` and `python(code)` in addition to the
 read/write/edit file tools. Shell code runs as `ash -c`; Python code runs as
 `python -c`. Source is passed as one unchanged argument, including whitespace,

@@ -39,6 +39,14 @@ int open_or_warn(const char *path, int flags)
     return fd;
 }
 
+int xopen(const char *path, int flags)
+{
+    int fd = open(path, flags, 0666);
+    if (fd < 0)
+        bb_simple_perror_msg_and_die(path);
+    return fd;
+}
+
 off_t xlseek(int fd, off_t offset, int whence)
 {
     off_t result = lseek(fd, offset, whence);

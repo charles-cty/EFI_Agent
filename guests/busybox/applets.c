@@ -31,6 +31,10 @@ int mkdir_main(int argc, char **argv);
 int rmdir_main(int argc, char **argv);
 int rm_main(int argc, char **argv);
 int touch_main(int argc, char **argv);
+int sort_main(int argc, char **argv);
+int uniq_main(int argc, char **argv);
+int cut_main(int argc, char **argv);
+int tr_main(int argc, char **argv);
 
 static int copy_stream(int input, int output, long limit)
 {
@@ -124,6 +128,10 @@ int efi_busybox_applet(int argc, char **argv)
     if (strcmp(name, "mkdir") == 0) return mkdir_main(argc, argv);
     if (strcmp(name, "rmdir") == 0) return rmdir_main(argc, argv);
     if (strcmp(name, "touch") == 0) return touch_main(argc, argv);
+    if (strcmp(name, "sort") == 0) return sort_main(argc, argv);
+    if (strcmp(name, "uniq") == 0) return uniq_main(argc, argv);
+    if (strcmp(name, "cut") == 0) return cut_main(argc, argv);
+    if (strcmp(name, "tr") == 0) return tr_main(argc, argv);
     if (strcmp(name, "rm") == 0) return rm_main(argc, argv);
     if (strcmp(name, "cp") == 0) return applet_cp_mv(argc, argv, 0);
     if (strcmp(name, "mv") == 0) return applet_cp_mv(argc, argv, 1);

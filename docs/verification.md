@@ -4469,3 +4469,53 @@ HTTPS/DNS, cancellation and background-root checks. Evidence:
 `artifacts/date-applet-tcg.log`, `artifacts/date-applet-tcg`.
 Full timezone, remaining commands, mounts, PATH, persistent sessions, the
 full network/application regression and the 256 MiB gate remain incomplete.
+
+## 2026-10-22 upstream sort, uniq, cut and tr
+
+The shared image now builds upstream BusyBox 1.37.0 sort, uniq, cut and tr,
+plus its vector-growth helper. Sort enables BIG and version comparison;
+memory-sharing optimization is disabled. Cut enables regex fields; tr enables
+classes and equivalence sets. New bounded record helpers adapt upstream
+algorithms to byte lengths, original record positions and decimal prefixes.
+
+Native integration passes 142 checks through actual Python subprocess and
+ash, plus independent committed-workspace bytes. Fixed cases cover sort
+numeric/general/human/month/version modes, multiple keys, field-relative
+character offsets and blanks, stable/reverse/unique order, checks and errors;
+uniq counts/filters/fields/characters/width/case; cut ranges/order/fields/regex
+and suppression; and tr translation/deletion/complement/squeeze/classes.
+Binary and NUL-delimited records include empty, NUL and high-byte values.
+Structured random oracles compare sort against Python byte ordering and exact
+Decimal values, stable key sorting against independent integer keys, uniq
+against groupby and cut against independently selected positions. Decimal
+boundaries cross signs, zero, long fractions, adjacent 64-bit integers and
+powers of ten up to 40 digits. Stream lengths cross 65535/65536/65537 and
+196613 bytes. Same-file sort output, file uniq output, error continuation and
+the complete cat/sort/uniq/tr/cut chain have independent saved-byte checks.
+Evidence: `artifacts/text-applets-integration-final-all.log`.
+
+Corrections and resolved issues:
+
+- Upstream C-string lengths truncated embedded NUL records. Length-bearing
+  sort/uniq records and length-aware cut output retain all bytes. Uniq -z
+  now selects its input delimiter as well as output delimiter.
+- Sort stable positions previously followed the first NUL. They now belong
+  to each record; comparator self-comparison returns zero. Sort -n avoids
+  floating-point rounding and handles decimal prefixes without exponents;
+  -g retains floating-point semantics. Human sorting orders negative suffixes
+  and zero correctly. Invalid month input no longer reads an uninitialized tm.
+- Key end-character offsets were absolute; they now use the selected field.
+  Explicit end-blank handling precedes its offset. Large positions are checked
+  before addition and key fields stop at the actual end of input.
+- Uniq large skip counts now stop at the end of a record. Cut rejects zero
+  and reversed ranges, multibyte field separators, regex NUL input and empty
+  regex matches. Empty-line suppression and regex errors are handled before
+  output. Sort/cut report read/close failures rather than accepting EOF.
+- The first build lacked xopen. The shared helper now opens with mode 0666
+  through the existing permission wrapper and reports failure. One test
+  incorrectly assumed global -r overrode a key-local n option; a host sort
+  comparison established the option scope, and the test now requests explicit
+  key-local reverse order and stable duplicate selection.
+- Existing nonfatal upstream time.c format-string offset warnings remain.
+  Regex cut is byte-oriented and rejects embedded NUL explicitly; full
+  timezone and the wider delivery gates remain pending.

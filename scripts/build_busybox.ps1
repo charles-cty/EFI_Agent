@@ -56,6 +56,9 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $Source 'libbb/make_directory.c'), (Join-Path $build 'remove_file.c'),
     (Join-Path $Source 'libbb/ask_confirmation.c'), (Join-Path $Source 'libbb/time.c'),
     (Join-Path $build 'date.c'), (Join-Path $Source 'libbb/compare_string_array.c'),
+    (Join-Path $build 'sort.c'), (Join-Path $build 'uniq.c'), (Join-Path $build 'cut.c'),
+    (Join-Path $Source 'coreutils/tr.c'), (Join-Path $Source 'libbb/xrealloc_vector.c'),
+    'guests/busybox/text_support.c',
     'guests/busybox/main.c', 'guests/busybox/support.c', 'guests/busybox/awk_support.c', 'guests/busybox/applets.c', 'guests/busybox/exec.c',
     'guests/lib/process.c', 'guests/sjlj/runtime.c', 'guests/sjlj/stack.s'
 $raw = Join-Path $build 'ash.raw.wasm'
