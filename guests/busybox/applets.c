@@ -39,6 +39,7 @@ int realpath_main(int argc, char **argv);
 int od_main(int argc, char **argv);
 int baseNUM_main(int argc, char **argv);
 int md5_sha1_sum_main(int argc, char **argv);
+int ln_main(int argc, char **argv);
 
 static int copy_stream(int input, int output, long limit)
 {
@@ -140,6 +141,7 @@ int efi_busybox_applet(int argc, char **argv)
     if (strcmp(name, "od") == 0) return od_main(argc, argv);
     if (strcmp(name, "base64") == 0) return baseNUM_main(argc, argv);
     if (strcmp(name, "sha256sum") == 0) return md5_sha1_sum_main(argc, argv);
+    if (strcmp(name, "ln") == 0) return ln_main(argc, argv);
     if (strcmp(name, "rm") == 0) return rm_main(argc, argv);
     if (strcmp(name, "cp") == 0) return applet_cp_mv(argc, argv, 0);
     if (strcmp(name, "mv") == 0) return applet_cp_mv(argc, argv, 1);
