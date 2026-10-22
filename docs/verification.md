@@ -3786,6 +3786,14 @@ and independent FAT verification of all seven transfer sizes. Evidence:
 these interfaces; the complete network application combination is still pending.
 Actual 512 MiB QEMU TCG also passes the same filesystem, cancellation and FAT
 checks through the Responses API in `artifacts/filesystem-tools-tcg-512`.
+After the spawn-error correction, the final Release EFI passes the complete
+512 MiB WHPX filesystem sequence again in
+`artifacts/filesystem-tools-whpx-512-final`. The existing model-tool sequence
+also passes final-EFI WHPX at 256 MiB in
+`artifacts/model-tools-whpx-256-final`, including module reuse after source
+replacement, subprocess, capture bounds, fresh interpreter state and tree
+cancellation. This focused result does not resolve the larger 256 MiB
+file-write/Python-to-Python combination described below.
 
 Remaining delivery includes the common mounted namespace, virtual devices and
 temporary/process files, complete firmware rename/delete/link/mode/time

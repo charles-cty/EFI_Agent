@@ -314,6 +314,11 @@ WHPX/Chat Completions, including saved FAT byte checks. The 256 MiB sequence
 writes 8 MiB but fails later at Python-to-Python spawn; that memory boundary
 is unresolved. Allocation failures now map to ENOMEM rather than ENOEXEC,
 with a deterministic guest memory-quota check.
+The final Release EFI passes the new 512 MiB WHPX filesystem sequence in
+artifacts/filesystem-tools-whpx-512-final and the existing 256 MiB WHPX
+model-tool regression in artifacts/model-tools-whpx-256-final. All 121
+core/wasm tests and host/UEFI Clippy pass. The full environment expansion
+remains in progress; docs/environment-work.md retains the completion scope.
 File resizing now implements fd_filestat_set_size with writable-descriptor and
 resize-right checks, a 48 MiB limit, zero-filled growth and preserved shared
 cursors. Firmware reads beyond a truncated EOF return zero bytes without
