@@ -239,9 +239,29 @@ static int applet_grep(int argc, char **argv)
 
 static int applet_mkdir(int argc, char **argv)
 {
+    int parents = argc > 1 && strcmp(argv[1], "-p") == 0;
+    int first = parents ? 2 : 1;
     int status = 0;
-    for (int i = 1; i < argc; ++i) {
-        if (mkdir(argv[i], 0777) < 0) {
+    for (int i = first; i < argc; ++i) {
+        if (parents) {
+            char path[4096];
+            size_t length = strlen(argv[i]);
+            if (length >= sizeof(path)) {
+                status = 1;
+                continue;
+            }
+            memcpy(path, argv[i], length + 1);
+            for (char *cursor = path + 1; *cursor; ++cursor) {
+                if (*cursor != '/')
+                    continue;
+                *cursor = '\0';
+                if (*path && mkdir(path, 0777) < 0 && errno != EEXIST)
+                    status = 1;
+                *cursor = '/';
+            }
+            if (mkdir(path, 0777) < 0 && errno != EEXIST)
+                status = 1;
+        } else if (mkdir(argv[i], 0777) < 0) {
             bb_simple_perror_msg(argv[i]);
             status = 1;
         }
