@@ -9,6 +9,13 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+BusyBox awk now uses the upstream 1.37.0 translation unit with SDK regex/math
+and cooperative ash-backed system/popen/pclose. Windows native integration
+checks 20 semantic cases and an independent 195000-byte pipe oracle; existing
+ash math/test regression passes. This does not establish firmware awk behavior.
+Other utility applets still include handwritten subsets and need upstream
+replacement. The wider command/mount/session delivery remains incomplete.
+
 The common no_std efi-agent-filesystem crate now owns provider interfaces and
 a persistent inode namespace. Two checksummed metadata generations preserve
 directory entries, symlinks, modes and times above FAT backing files. Anchored

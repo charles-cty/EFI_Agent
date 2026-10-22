@@ -12,6 +12,7 @@ ENABLED = {
     "ASH_INTERNAL_GLOB", "ASH_ECHO", "ASH_PRINTF", "ASH_TEST", "FEATURE_TEST_64",
     "FEATURE_SH_MATH", "FEATURE_SH_MATH_64", "FEATURE_SH_MATH_BASE",
     "FEATURE_FANCY_ECHO", "FEATURE_SH_NOFORK",
+    "AWK", "FEATURE_AWK_LIBM", "FEATURE_AWK_GNU_EXTENSIONS", "FEATURE_ALLOW_EXEC",
 }
 
 
@@ -77,7 +78,7 @@ def main():
              args.source / "shell/shell_common.c",
              args.source / "coreutils/printf.c",
              args.source / "coreutils/test.c", args.source / "shell/math.c",
-             args.source / "include/unicode.h"]
+             args.source / "include/unicode.h", args.source / "editors/awk.c"]
     names = set(ENABLED)
     for path in files:
         text = path.read_text(encoding="utf-8")
@@ -94,6 +95,9 @@ def main():
     lines.extend(["#define HAVE_DEV_FD 0", "#define CONFIG_FEATURE_EDITING_MAX_LEN 1024", "#endif", ""])
     (args.output / "ash_config.h").write_text("\n".join(lines), encoding="utf-8")
     (args.output / "NUM_APPLETS.h").write_text("#define NUM_APPLETS 1\n", encoding="utf-8")
+    awk = (args.source / "editors/awk.c").read_text(encoding="utf-8")
+    awk = replace_once(awk, '#include "libbb.h"', '#include "libbb.h"\n#include "awk_support.h"\nstruct globals;\nstatic struct globals *ptr_to_globals;')
+    (args.output / "awk.c").write_text(awk, encoding="utf-8")
     ash = (args.source / "shell/ash.c").read_text(encoding="utf-8")
     printf = (args.source / "coreutils/printf.c").read_text(encoding="utf-8")
     # Successful stdio output can change errno. Keep numeric conversion

@@ -67,25 +67,7 @@ static int applet_sed(int argc, char **argv)
     return 0;
 }
 
-static int applet_awk(int argc, char **argv)
-{
-    if (argc < 2)
-        return 2;
-    const char *program = argv[1];
-    FILE *input = argc > 2 ? fopen(argv[2], "rb") : stdin;
-    if (!input)
-        return 2;
-    char *line = NULL;
-    size_t capacity = 0;
-    while (getline(&line, &capacity, input) >= 0) {
-        if (strstr(program, "$0") || strstr(program, "print"))
-            fputs(line, stdout);
-    }
-    free(line);
-    if (input != stdin)
-        fclose(input);
-    return 0;
-}
+int awk_main(int argc, char **argv);
 
 static int copy_stream(int input, int output, long limit)
 {
@@ -306,6 +288,7 @@ static int applet_cp_mv(int argc, char **argv, int move)
 int efi_busybox_applet(int argc, char **argv)
 {
     const char *name = bb_basename(argv[0]);
+    applet_name = name;
     if (strcmp(name, "cat") == 0) return applet_cat(argc, argv);
     if (strcmp(name, "head") == 0) return applet_head(argc, argv);
     if (strcmp(name, "ls") == 0) return applet_ls(argc, argv);
@@ -319,7 +302,7 @@ int efi_busybox_applet(int argc, char **argv)
     if (strcmp(name, "date") == 0) return applet_date();
     if (strcmp(name, "sleep") == 0) return applet_sleep(argc, argv);
     if (strcmp(name, "sed") == 0) return applet_sed(argc, argv);
-    if (strcmp(name, "awk") == 0) return applet_awk(argc, argv);
+    if (strcmp(name, "awk") == 0) return awk_main(argc, argv);
     fputs("busybox: applet is unavailable\n", stderr);
     return 127;
 }

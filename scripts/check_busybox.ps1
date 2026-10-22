@@ -19,6 +19,6 @@ $clang = Join-Path $WasiSdk 'bin/clang.exe'
 $sysroot = Join-Path $WasiSdk 'share/wasi-sysroot'
 $compile = '--target=wasm32-wasip1', "--sysroot=$sysroot", '-O2',
     '-fno-optimize-sibling-calls', '-D_GNU_SOURCE', '-Iguests/busybox/include',
-    '-Iguests/sjlj/include', '-Iguests/include', '-Iguests/busybox', "-I$Output", "-I$Source/include", "-I$Source/shell",
+    '-Iguests/sjlj/include', '-Iguests/include', '-Iguests/busybox', "-I$Output", "-I$Source/include", '-iquote', "$Source/shell",
     '-Werror=return-type', '-Werror=implicit-function-declaration', '-ferror-limit=20', '-c'
 & $clang @compile (Join-Path $Output 'ash.c') -o (Join-Path $Output 'ash.o')

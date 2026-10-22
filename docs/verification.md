@@ -3951,6 +3951,11 @@ Issues encountered and corrected:
   relevant crate's source located the current error definitions.
 ## BusyBox command registration
 
+The command registration checks below establish basic invocation only. Most
+utility implementations are handwritten subsets; their complete upstream
+options and algorithms remain pending. In particular, their earlier passing
+examples do not establish full sed, grep, ls, or cp behavior.
+
 The WASM world resolves the BusyBox applet names `cat`, `cp`, `date`, `env`,
 `grep`, `head`, `ls`, `mkdir`, `mv`, `rm`, `sed`, `sleep`, `yes`, and `awk` to
 the registered `ash.wasm` image. The guest keeps the requested name in
@@ -3963,4 +3968,29 @@ The WASI preopen also exposes virtual `bin`, `dev`, `proc`, and `tmp`
 directories. `/dev/null` discards writes, `/dev/zero` supplies zero bytes, and
 `/proc/uptime` returns a bounded text snapshot. These entries are not exported
 as workspace files.
+
+## Upstream BusyBox awk integration
+
+BusyBox 1.37.0 `editors/awk.c` now replaces the handwritten print-only applet.
+The Windows WASI SDK 34/Binaryen 133 build passes. It uses SDK regex/math,
+the upstream regex compiler helper, and cooperative ash-backed system/popen/
+pclose with explicit descriptor mapping. Other applets remain incomplete.
+
+`scripts/test_busybox_awk.py` passes 20 actual WASM cases on the rebuilt Windows
+Release native runner: loop/field/array/regex/math semantics, program files,
+stdin, system exit status, read/write pipes, raw pclose wait status, streams
+above pipe capacity, simultaneous writers, closed stdin, explicit exit, and
+regex/syntax/missing-file errors. An independent readback also matches all
+195000 expected bytes. Evidence: `artifacts/awk-integration.log`.
+The existing ash math/test suite passes against this same guest image;
+evidence: `artifacts/awk-ash-math-regression.log`. Firmware and WHPX awk
+integration are still unverified.
+
+Encountered issues: the shell include directory shadowed the SDK math header;
+quote-only header search fixes it in both BusyBox build scripts. Missing libbb
+formatting helpers initially failed linking; the helper implementation fixes
+the link. The existing native runner lacked awk registry support; rebuilding
+it fixes command discovery. Initial diagnostic assertions assumed an applet
+prefix and a different syntax diagnostic; the test now checks the actual
+upstream diagnostics and exact exit status.
 
