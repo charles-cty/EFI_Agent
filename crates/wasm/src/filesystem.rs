@@ -3,11 +3,13 @@ use alloc::{boxed::Box, collections::BTreeMap, format, rc::Rc, string::String, v
 use core::cell::RefCell;
 pub use efi_agent_filesystem::*;
 
+type TempFiles = BTreeMap<String, Rc<RefCell<Vec<u8>>>>;
+
 /// Files and directories that exist in every guest without being persisted in
 /// the workspace. The workspace remains the backing store for ordinary paths.
 pub struct VirtualFileSystem {
     base: Rc<dyn FileSystem>,
-    tmp: Rc<RefCell<BTreeMap<String, Rc<RefCell<Vec<u8>>>>>>,
+    tmp: Rc<RefCell<TempFiles>>,
     mount: String,
 }
 
