@@ -83,7 +83,11 @@ fn submit(
     let response = if text.split_whitespace().next() == Some("/wasm") {
         wasm.command(&text, app, &mut refresh)?
     } else if text == "/caps" {
-        app.capabilities = capabilities::detect(driver_report);
+        app.capabilities = alloc::format!(
+            "{}\n{}",
+            capabilities::detect(driver_report),
+            wasm.clock_description()
+        );
         app.capabilities.clone()
     } else if text == "/help" {
         String::from(
@@ -312,6 +316,8 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
         uefi::println!("Workspace initialization failed: {error:?}");
         terminal::Error(Status::VOLUME_CORRUPTED)
     })?;
+    app.capabilities.push('\n');
+    app.capabilities.push_str(&wasm.clock_description());
     // VM mode is explicit. The launcher ESP has no motherboard UART enabled.
     if vm && let Ok(handles) = boot::find_handles::<Serial>() {
         for handle in handles {

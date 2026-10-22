@@ -87,6 +87,7 @@ impl efi_agent_wasm::random::Random for FirmwareRandom {
 
 pub struct Runtime {
     world: World,
+    clock: Rc<crate::wasm_clock::FirmwareClock>,
     filesystem: Rc<Namespace>,
     outputs: BTreeMap<u32, WasmOutput>,
     roots: BTreeMap<u32, u32>,
@@ -102,22 +103,23 @@ impl Runtime {
         dns: ([u8; 4], u16),
     ) -> Result<Self, FileError> {
         use efi_agent_wasm::clock::{Clock, ClockId};
+        let clock = Rc::new(crate::wasm_clock::FirmwareClock::new());
+        let file_clock = clock.clone();
         let filesystem = Rc::new(Namespace::open(
             Rc::new(crate::wasm_filesystem::FirmwareFileSystem(workspace.into())),
-            Some(Rc::new(|| {
-                crate::wasm_clock::FirmwareClock
-                    .now(ClockId::Realtime)
-                    .map_err(|_| FileError::Io)
+            Some(Rc::new(move || {
+                file_clock.now(ClockId::Realtime).map_err(|_| FileError::Io)
             })),
         )?);
         let mut world = World::new();
-        world.set_clock(Rc::new(crate::wasm_clock::FirmwareClock));
+        world.set_clock(clock.clone());
         world.set_random(Rc::new(FirmwareRandom));
         world.set_network(Rc::new(crate::tcp::cooperative::FirmwareNetwork(ipv4)));
         world.set_dns_server(dns.0, dns.1);
         world.set_filesystem(filesystem.clone());
         Ok(Self {
             world,
+            clock,
             filesystem,
             outputs: BTreeMap::new(),
             roots: BTreeMap::new(),
@@ -129,6 +131,10 @@ impl Runtime {
 
     pub fn filesystem(&self) -> Rc<dyn FileSystem> {
         self.filesystem.clone()
+    }
+
+    pub fn clock_description(&self) -> String {
+        self.clock.description()
     }
 
     /// Report deferred close errors as well as explicit metadata flush errors.

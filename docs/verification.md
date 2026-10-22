@@ -4236,3 +4236,74 @@ and DNS, code-tree cancellation, independent background roots and subsequent
 requests also pass. Evidence: `artifacts/streams-whpx-final.log`,
 `artifacts/streams-whpx-final`, `artifacts/streams-tcg-final.log`, and
 `artifacts/streams-tcg-final`.
+
+## 2026-10-22 firmware monotonic time and upstream sleep
+
+The firmware clock retains EFI GetTime for wall time and opens a constant-rate
+64-bit hardware counter for elapsed time. It uses UEFI Timestamp when present;
+otherwise it uses PI CPU Architectural timer 0 with its reported femtosecond
+period. Zero rates, absent timers, failed protocol operations and timestamp
+counters below 64 bits return explicit errors. The provider retains its
+protocol guard. `/caps` reports the selected source and nominal resolution.
+Physical firmware and the Timestamp branch remain unverified.
+
+Counter conversion accumulates unsigned wrapping deltas and retains fractions
+before division. Calls must be separated by less than one full counter period.
+Unit tests cross u64 wrap, exercise repeated sub-nanosecond samples, reject
+zero rates and verify nanosecond overflow without resetting the epoch.
+Relative realtime poll subscriptions now use monotonic elapsed time, while
+absolute subscriptions retain the requested clock. A test moves realtime
+forward/backward independently of monotonic time and checks both deadline
+boundaries. All 85 WASM tests pass in
+`artifacts/monotonic-wasm-tests-final.log`.
+
+The BusyBox image now uses upstream sleep and duration parsing, with fractional
+durations, summed operands, s/m/h/d suffixes and --. Staged checks propagate
+nanosleep/sleep errors. The native standard-interface integration verifies
+Python monotonic reads and time.sleep, a separate realtime delta, sleep syntax
+and failures, ash timed input/timeout, and tail follow/read/append/EOF cleanup.
+The tail pipeline consumes two lines, then a third append makes tail observe
+EPIPE and terminate so the parent can reap all stages. The shared xwrite
+helper now preserves the specific errno diagnostic. Independent host timing
+measures between guest markers, excluding compilation and process startup.
+
+The first firmware test found a real clock-domain defect: WASI SDK nanosleep
+selects CLOCK_REALTIME. With second-resolution RTC readings, short sleep and
+read timeout polls could expire on the same RTC update before the writer ran.
+Object disassembly confirms that SDK call in
+`artifacts/monotonic-libc-disassembly.log`. Relative waits now use monotonic
+time. The corrected WHPX run passes the former failing timed-input case in
+`artifacts/monotonic-whpx-corrected.log`. Later follow checks exposed generic
+write-error text; xwrite now retains errno, allowing explicit EPIPE validation.
+
+Build issues resolved: the initial duration source marker also matched a
+comment and now requires the full line; the shared perror-and-die declaration
+was moved to the common header for the xwrite caller. A patch application
+initially interpreted Python byte escapes as patch newlines; a literal patch
+string corrected that application. QEMU emits a nonfatal Windows Appx manifest
+warning and an ignored interrupt-vector warning; the guest still completes
+the recorded checks. CPython binaries and standard-library source remain
+unchanged. Subprocess timeouts/signals, complete mounts and the remaining
+upstream command inventory remain separate pending work.
+
+Final Windows-native evidence: `artifacts/monotonic-native-follow-final.log`
+and `artifacts/monotonic-streams-final.log` pass standard time/follow checks,
+independent marker timing, and all 112 stream applet cases plus saved bytes.
+The existing ash read oracle passes in `artifacts/monotonic-read.log`; all
+15 CPython cases pass in `artifacts/monotonic-python-final.log`. WASM and UEFI
+Clippy, formatting, and Release packaging pass in
+`artifacts/monotonic-wasm-clippy-final.log`,
+`artifacts/monotonic-efi-clippy-final.log`, `artifacts/monotonic-format.log`
+and `artifacts/monotonic-package-final.log`.
+
+Actual 512 MiB WHPX/Responses and TCG/Chat Completions pass the full current
+file/code-tool sequence with the final BusyBox image. Both report PI CPU timer
+0 with nominal 1 ns resolution through /caps. They verify Python sleep against
+monotonic and independent RTC deltas, upstream sleep operands/errors, delayed
+and expired ash reads, tail follow and exact EPIPE diagnostics, saved result
+bytes, and cancellation/reap of a sleeping tool subtree while preserving an
+independent background root. Existing permissions, stream and 8 MiB write
+checks also pass. Evidence: `artifacts/monotonic-whpx-final-all.log`,
+`artifacts/monotonic-whpx-final-all`, `artifacts/monotonic-tcg-final-all.log`
+and `artifacts/monotonic-tcg-final-all`. The separate full network/application
+combination and 256 MiB resource gates remain pending.

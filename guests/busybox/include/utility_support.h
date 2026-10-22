@@ -15,6 +15,10 @@
 #define FALSE 0
 #define SKIP 2
 #define exit_SUCCESS() exit(EXIT_SUCCESS)
+#define MAXINT(T) (T)(((T)-1) > 0 ? (T)-1 : (T)~((T)1 << (sizeof(T)*8-1)))
+typedef double duration_t;
+duration_t parse_duration_str(char *text);
+void sleep_for_duration(duration_t duration);
 #define isprint_asciionly(value) ((unsigned)((value) - 0x20) <= 0x7e - 0x20)
 #define DOT_OR_DOTDOT(text) ((text)[0] == '.' && \
     ((text)[1] == '\0' || ((text)[1] == '.' && (text)[2] == '\0')))
@@ -48,7 +52,6 @@ char *bb_get_chunk_from_file(FILE *stream, size_t *end);
 char *xmalloc_fgetline(FILE *stream);
 int xmkstemp(char *name);
 void xrename(const char *source, const char *destination);
-void bb_simple_perror_msg_and_die(const char *text) NORETURN;
 void bb_perror_msg_and_die(const char *format, ...) NORETURN;
 
 enum {

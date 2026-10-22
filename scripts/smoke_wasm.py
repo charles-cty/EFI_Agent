@@ -625,8 +625,8 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                             send(f"/wasm reap {child}", f"WASM: Unknown WASM process: {child}")
                         pid += 3
                         script = "echo${IFS}ready|(read${IFS}-t${IFS}1${IFS}value)"
-                        text = send(f"/wasm run ash -c {script}", f"PID {pid}: Failed (exit code 2)")
-                        assert "monotonic timeout clock is unavailable" in text
+                        text = send(f"/wasm run ash -c {script}", f"PID {pid}: Completed (exit code 0)")
+                        assert "monotonic timeout clock is unavailable" not in text
                         for child in (pid + 1, pid + 2):
                             send(f"/wasm reap {child}", f"WASM: Unknown WASM process: {child}")
                         if args.quickjs:
@@ -1161,7 +1161,7 @@ print('UEFI_CPYTHON_SHELL_OK')
                 if args.python:
                     print("PASS actual UEFI CPython standard subprocess ash arithmetic and test error capture")
             if args.ash_read:
-                print("PASS UEFI actual ash read pipeline, unavailable timeout clock and QuickJS capture when enabled")
+                print("PASS UEFI actual ash read pipeline, monotonic timed read and QuickJS capture when enabled")
             if args.ash_printf:
                 print("PASS UEFI actual ash printf integer boundaries and QuickJS NUL capture when enabled")
         finally:

@@ -20,6 +20,7 @@ import threading
 import time
 from textwrap import dedent
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from wasm_time_fixture import TIME_CHECK
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -172,7 +173,8 @@ class Provider(BaseHTTPRequestHandler):
             else:
                 text = "CODE_TOOLS_VERIFIED"
         elif prompt == "Cancel code tool":
-            call = {"id": "cancel-code", "type": "function", "function": {"name": "shell", "arguments": json.dumps({"command": "echo started > code-cancel-started.txt; (while :; do :; done) & wait"})}, "extra_content": {"signature": "SIGNED_419"}}
+            command = "echo started > code-cancel-started.txt; (sleep 30) & wait" if Provider.filesystem_tools else "echo started > code-cancel-started.txt; (while :; do :; done) & wait"
+            call = {"id": "cancel-code", "type": "function", "function": {"name": "shell", "arguments": json.dumps({"command": command})}, "extra_content": {"signature": "SIGNED_419"}}
             text = ""
         elif prompt == "Exercise the file tools" or previous:
             if step < len(steps):
@@ -376,6 +378,8 @@ def main():
                 """)}),
         ]
         Provider.code_expected = ["File saved", "NESTED_SCRIPT_OK", "FILESYSTEM_WRITES_OK", "HEREDOC_SCRIPT_OK", "FINITE_STDIN_OK", "PERMISSIONS_CWD_OK", "MUTATION_SHARED_OK", "UPSTREAM_STREAMS_OK"]
+        Provider.code_steps.append(('python', {'code': TIME_CHECK}))
+        Provider.code_expected.append('MONOTONIC_WAIT_OK')
     args.output.mkdir(parents=True, exist_ok=True)
     Provider.requests.clear()
     Provider.errors.clear()
@@ -462,6 +466,14 @@ def main():
                 connection.sendall(text.encode() + b"\r")
 
             wait("What would you like to build?")
+            if args.filesystem_tools:
+                send("/caps")
+                visible = wait("Monotonic clock:")
+                assert "PI CPU timer 0" in visible or "UEFI Timestamp" in visible, visible
+                source = next(line.strip() for line in visible.splitlines() if "Monotonic clock:" in line)
+                print(f"PASS {source}", flush=True)
+                send("/clear")
+                wait("Conversation cleared")
             if args.driver:
                 send("/caps")
                 wait("Extra drivers started: 1")
@@ -496,7 +508,7 @@ def main():
                         wait("CODE_TOOLS_VERIFIED", args.code_timeout)
                         send("/wasm ps")
                         wait("Ready  •")
-                        print("PASS file tools, 8 MiB writes, finite stdin, mutations, permissions, inherited cwd/umask and upstream stream applets" if args.filesystem_tools else "PASS real model shell/Python tools, cached WASM, source preservation, subprocess, failure, capture boundaries and fresh state", flush=True)
+                        print("PASS file tools, 8 MiB writes, finite stdin, mutations, permissions, inherited cwd/umask, upstream stream applets and monotonic waits" if args.filesystem_tools else "PASS real model shell/Python tools, cached WASM, source preservation, subprocess, failure, capture boundaries and fresh state", flush=True)
                     send("/clear")
                     wait("Conversation cleared")
                     send("/wasm start ash background-loop.sh")
@@ -575,6 +587,7 @@ def main():
                                 assert workspace.read('stream-copy') == stream_payload
                                 assert workspace.read('stream-binary') == stream_payload
                                 assert workspace.read('stream-long') == b'x' * 1100003
+                                assert workspace.read('monotonic-result') == b'MONOTONIC_WAIT_OK\n'
                                 for removed in ('mutation', 'moved-mutation/empty', 'moved-mutation/original', 'moved-mutation/replaced'):
                                     assert removed not in workspace.entries, removed
                             else:

@@ -704,7 +704,13 @@ fn poll_oneoff(
                         return Err(INVAL);
                     }
                     if timeout != 0 || flags != 0 {
-                        let id = ClockId::decode(fd).map_err(ClockError::errno)?;
+                        let mut id = ClockId::decode(fd).map_err(ClockError::errno)?;
+                        // Relative wall-clock waits measure elapsed time. Use
+                        // the monotonic source so RTC granularity and wall-time
+                        // corrections cannot shorten or extend a duration.
+                        if flags == 0 && id == ClockId::Realtime {
+                            id = ClockId::Monotonic;
+                        }
                         let clock = caller.data().clock.as_ref().ok_or(58)?;
                         let now = clock.now(id).map_err(ClockError::errno)?;
                         let target = if flags == 1 {

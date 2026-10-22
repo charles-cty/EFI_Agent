@@ -43,6 +43,7 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $Source 'libbb/xatonum.c'), (Join-Path $Source 'libbb/wfopen_input.c'),
     (Join-Path $Source 'libbb/read.c'), (Join-Path $build 'fflush_stdout_and_exit.c'),
     'guests/busybox/stream_support.c',
+    (Join-Path $build 'sleep.c'), (Join-Path $build 'duration.c'),
     'guests/busybox/main.c', 'guests/busybox/support.c', 'guests/busybox/awk_support.c', 'guests/busybox/applets.c', 'guests/busybox/exec.c',
     'guests/lib/process.c', 'guests/sjlj/runtime.c', 'guests/sjlj/stack.s'
 $raw = Join-Path $build 'ash.raw.wasm'

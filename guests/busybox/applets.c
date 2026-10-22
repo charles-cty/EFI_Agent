@@ -17,17 +17,7 @@ static int applet_date(void)
     return 0;
 }
 
-static int applet_sleep(int argc, char **argv)
-{
-    if (argc != 2)
-        return 2;
-    char *end;
-    unsigned long seconds = strtoul(argv[1], &end, 10);
-    if (*end != '\0' || seconds > 86400)
-        return 2;
-    struct timespec delay = {(time_t)seconds, 0};
-    return nanosleep(&delay, NULL);
-}
+int sleep_main(int argc, char **argv);
 
 int sed_main(int argc, char **argv);
 int cat_main(int argc, char **argv);
@@ -185,7 +175,7 @@ int efi_busybox_applet(int argc, char **argv)
     if (strcmp(name, "cp") == 0) return applet_cp_mv(argc, argv, 0);
     if (strcmp(name, "mv") == 0) return applet_cp_mv(argc, argv, 1);
     if (strcmp(name, "date") == 0) return applet_date();
-    if (strcmp(name, "sleep") == 0) return applet_sleep(argc, argv);
+    if (strcmp(name, "sleep") == 0) return sleep_main(argc, argv);
     if (strcmp(name, "sed") == 0) return sed_main(argc, argv);
     if (strcmp(name, "chmod") == 0) return chmod_main(argc, argv);
     if (strcmp(name, "awk") == 0) return awk_main(argc, argv);

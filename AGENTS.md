@@ -9,6 +9,18 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Firmware monotonic time and upstream BusyBox sleep now pass actual 512 MiB
+WHPX/Responses and TCG/Chat Completions checks in
+artifacts/monotonic-whpx-final-all and monotonic-tcg-final-all. Both use PI CPU
+timer 0 and report nominal 1 ns resolution through /caps. Standard Python
+sleep, RTC comparison, ash timed reads, tail follow/EPIPE, sleeping-tree
+cancellation and independent saved FAT bytes pass. Relative realtime waits
+use monotonic time; absolute waits retain their requested clock. Counter wrap,
+fractional conversion and separate-clock deadline tests pass among all 85
+WASM tests. Upstream sleep supports fractional/summed s/m/h/d operands and
+reports wait failures. The actual Timestamp protocol branch and physical
+firmware remain unverified. Subprocess timeout/signal adaptation is pending.
+
 BusyBox cat/head/tail/wc/tee now use upstream 1.37.0 applets and shared libbb
 stream/numeric helpers. Staged fixes preserve NUL bytes and unterminated lines
 in numbered cat and negative-line head, retain numbering across file joins,
@@ -104,7 +116,10 @@ an immediate relative timeout allows nonblocking checks. Timed waits still
 require an available clock type. The firmware provider now supplies realtime
 through EFI GetTime and its reported resolution. Timed relative/absolute
 poll and WASI clock_time_get/clock_res_get use that provider. Firmware
-monotonic and CPU clocks are not implemented.
+monotonic time now uses a 64-bit UEFI Timestamp counter, or PI CPU timer 0
+when Timestamp is absent. Constant-rate conversion retains fractional ticks
+and handles 64-bit wrap. Relative realtime polls use monotonic elapsed time;
+absolute realtime polls retain RTC semantics. CPU-time clocks remain unavailable.
 The C process and concurrent capture libraries are under guests. Nonblocking
 waitpid_nohang lets command event loops drain all child streams. Module
 registration eagerly compiles functions; execution remains fuel-scheduled.
@@ -355,7 +370,7 @@ the root process; both languages require status 2 and the actual diagnostic.
 Filesystem PATH, ulimit/umask and full filesystem support remain incomplete. The real
 upstream read builtin now supports IFS splitting, raw/escaped input, continuation,
 EOF, -n/-d and selected input descriptors through WASI read/poll. Host timed
-reads pass; UEFI positive timeouts reject the unavailable monotonic clock.
+reads pass; UEFI positive timeouts use the installed monotonic clock.
 Terminal echo control (-s) returns an explicit error. Host field-oracle checks
 and QEMU/OVMF actual read/QuickJS pipeline checks pass.
 The world now accepts a host filesystem provider and gives each process a

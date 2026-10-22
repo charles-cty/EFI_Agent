@@ -19,6 +19,7 @@ ENABLED = {
     "CAT", "FEATURE_CATN", "FEATURE_CATV", "HEAD", "FEATURE_FANCY_HEAD",
     "TAIL", "FEATURE_FANCY_TAIL", "WC", "FEATURE_WC_LARGE",
     "TEE", "FEATURE_TEE_USE_BLOCK_IO",
+    "SLEEP", "FEATURE_FANCY_SLEEP", "FLOAT_DURATION",
 }
 
 
@@ -199,8 +200,8 @@ def main():
              args.source / "include/unicode.h", args.source / "editors/awk.c",
              args.source / "editors/sed.c", args.source / "libbb/getopt32.c",
              args.source / "findutils/grep.c", args.source / "coreutils/chmod.c",
-             *(args.source / f"coreutils/{name}.c" for name in ("cat", "head", "tail", "wc", "tee")),
-             args.source / "libbb/copyfd.c"]
+             *(args.source / f"coreutils/{name}.c" for name in ("cat", "head", "tail", "wc", "tee", "sleep")),
+             args.source / "libbb/copyfd.c", args.source / "libbb/duration.c"]
     names = set(ENABLED)
     for path in files:
         text = path.read_text(encoding="utf-8")
@@ -219,6 +220,15 @@ def main():
     (args.output / "ash_config.h").write_text("\n".join(lines), encoding="utf-8")
     (args.output / "NUM_APPLETS.h").write_text("#define NUM_APPLETS 1\n", encoding="utf-8")
     prepare_streams(args.source, args.output)
+    sleep = (args.source / "coreutils/sleep.c").read_text(encoding="utf-8")
+    sleep = replace_once(sleep, '\t\t\tsleep(INT_MAX);', '''            if (sleep(INT_MAX) != 0)
+                bb_simple_perror_msg_and_die("sleep");''')
+    (args.output / "sleep.c").write_text(sleep, encoding="utf-8")
+    duration = (args.source / "libbb/duration.c").read_text(encoding="utf-8")
+    duration = replace_once(duration, '\n\tnanosleep(&ts, &ts);', '''
+    if (nanosleep(&ts, &ts) < 0)
+        bb_simple_perror_msg_and_die("nanosleep");''')
+    (args.output / "duration.c").write_text(duration, encoding="utf-8")
     awk = (args.source / "editors/awk.c").read_text(encoding="utf-8")
     awk = replace_once(awk, '#include "libbb.h"', '#include "libbb.h"\n#include "awk_support.h"\nstruct globals;\nstatic struct globals *ptr_to_globals;')
     (args.output / "awk.c").write_text(awk, encoding="utf-8")

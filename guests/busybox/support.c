@@ -205,8 +205,9 @@ ssize_t full_write(int fd, const void *bytes, size_t size)
 }
 void xwrite(int fd, const void *bytes, size_t size)
 {
-    if (full_write(fd, bytes, size) != (ssize_t)size) {
-        bb_simple_error_msg_and_die("write failed");
+    ssize_t written = full_write(fd, bytes, size);
+    if (written != (ssize_t)size) {
+        bb_simple_perror_msg_and_die(written < 0 ? "write error" : "short write");
     }
 }
 void close_on_exec_on(int fd)

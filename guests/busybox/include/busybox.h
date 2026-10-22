@@ -68,6 +68,7 @@ int test_main(int argc, char **argv);
 int index_in_strings(const char *strings, const char *value);
 gid_t *bb_getgroups(int *count, gid_t *groups);
 void bb_simple_perror_msg(const char *text);
+NORETURN void bb_simple_perror_msg_and_die(const char *text);
 extern const char *applet_name;
 extern const char *bb_busybox_exec_path;
 extern int bb_got_signal;

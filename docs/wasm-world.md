@@ -232,14 +232,23 @@ dispatcher pass to resume it. Multiple subscriptions can watch child stdout
 and stderr together. An immediate relative clock subscription implements a
 nonblocking readiness check. Other clock subscriptions return NOTSUP (58)
 when their clock backend is unavailable. With a provider, relative waits
-compute a checked deadline once at syscall entry. Absolute waits compare the
-supplied deadline directly. Clock errors resume a blocked call with an errno;
+compute a checked deadline once at syscall entry. Relative realtime waits
+use the monotonic source; RTC granularity and wall-clock corrections cannot
+change an elapsed duration. Absolute waits compare the supplied deadline
+against the requested clock directly. Clock errors resume a blocked call with an errno;
 overflow returns OVERFLOW (61). Clock polling does not advance the host clock.
 
 Hosts install `clock::Clock` through `World::set_clock` before spawning any
 process. Readings and resolutions use nanoseconds. The firmware provider
 uses EFI GetTime, UTC conversion, nanoseconds and GetTime capabilities for
-the realtime clock. Its monotonic and CPU clocks remain unavailable.
+the realtime clock. Monotonic readings use a 64-bit UEFI Timestamp counter,
+or PI CPU timer 0 when Timestamp is absent. The constant counter frequency or
+femtosecond tick period supplies a rational nanosecond conversion. Fractions
+are retained across reads; 64-bit wrap uses the unsigned tick delta. Sources
+must be sampled within one full counter period. Narrow Timestamp counters,
+zero/unknown rates, unavailable protocols and failed readings return explicit
+errors. `/caps` reports the selected source and nominal resolution. CPU-time
+clocks remain unavailable.
 `run_guest` supplies host SystemTime and Instant for realtime and monotonic
 clocks, and sleeps briefly when all processes wait. Missing or failed clock
 providers return explicit errors rather than zero timestamps.
@@ -356,8 +365,9 @@ callbacks, sessions/groups, credentials and per-child umask changes raise `ENOTS
 Ordinary children inherit the current directory and process umask. `os.chdir`
 and `os.umask` update that state through the private startup adapter. Current
 directory tracking is still path based and does not follow ancestor rename.
-Timeouts and process signals also raise `ENOTSUP`; firmware has no monotonic
-clock provider. `subprocess.DEVNULL` uses the virtual `/dev/null` device.
+Subprocess timeouts and process signals still raise `ENOTSUP`; adapter support
+for those operations remains pending. Python `time.sleep` and monotonic clocks
+use the runtime clock provider. `subprocess.DEVNULL` uses the virtual `/dev/null` device.
 Descriptor 3 is reserved for the workspace, and user descriptors end at 127.
 See [the transparency audit](port-transparency-audit.md) for remaining gaps.
 
@@ -497,8 +507,8 @@ The build extracts the upstream `shell_builtin_read` implementation with its
 license header. WASI read and poll supply cooperative input; upstream code
 retains IFS splitting, escaping, continuation and EOF assignment behavior.
 `-r`, `-n`, `-d` and `-u` are supported. Invalid readiness descriptors fail.
-Positive `-t` timeouts require a monotonic clock; the host runner supplies one,
-while the current firmware returns an explicit unavailable-clock error.
+Positive `-t` timeouts use the installed monotonic source on both the native
+runner and firmware. Unavailable sources return an explicit clock error.
 `-s` fails because guest terminal echo control is unavailable. Prompt display
 continues to require isatty. No termios success is fabricated.
 
@@ -1024,7 +1034,7 @@ passes, including application chains, network/TLS and concurrent processes.
 The full 256 MiB combination fails during second concurrent Python startup.
 The remaining scope is:
 
-- Directory mutation, rename/delete, timestamps, and monotonic/CPU clocks.
+- Complete shared mounts, anchored cwd tracking and CPU-time clocks.
 - Socket options, address queries, listen/accept, peek/waitall and half-shutdown.
 - Reproducible source acquisition and packaging for the existing guest builds.
 - BusyBox ash remaining builtins and filesystem PATH lookup.
