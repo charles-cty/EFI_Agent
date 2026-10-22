@@ -140,6 +140,7 @@ const char *bb_basename(const char *path);
 const char *endofname(const char *text);
 char *concat_path_file(const char *path, const char *name);
 char *xmalloc_realpath(const char *path);
+char *xmalloc_realpath_coreutils(char *path);
 char *xrealloc_getcwd_or_warn(char *buffer);
 void sigprocmask_allsigs(int how);
 void sigprocmask2(int how, sigset_t *mask);

@@ -223,6 +223,7 @@ impl World {
                 | "uniq"
                 | "cut"
                 | "tr"
+                | "realpath"
                 | "sed"
                 | "sleep"
                 | "yes"
