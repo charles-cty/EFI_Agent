@@ -4574,11 +4574,3 @@ shared image exposes `sha256sum` through ash and runtime program lookup; its
 focused path fixture checks the exact digest for binary input. Windows WASI
 SDK/Binaryen compilation and WHPX execution remain pending because those tools
 were not configured in the current environment.
-
-## 2026-10-22 upstream ln
-
-BusyBox ln now uses the upstream link applet with the shared namespace link
-providers. The shared image exposes `ln`; the focused path fixture covers
-symbolic links, hard links, force replacement and dangling symbolic links.
-Windows WASI SDK/Binaryen compilation and WHPX execution remain pending because
-those tools were not configured in the current environment.

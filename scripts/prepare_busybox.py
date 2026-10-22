@@ -31,7 +31,6 @@ ENABLED = {
     "OD",
     "BASE64",
     "SHA256SUM",
-    "LN",
 }
 
 
@@ -286,7 +285,7 @@ def main():
              *(args.source / f"coreutils/{name}.c" for name in (
                  "cat", "head", "tail", "wc", "tee", "sleep", "basename",
                  "dirname", "pwd", "env", "printenv", "seq", "yes", "true", "false",
-                 "mkdir", "rmdir", "rm", "touch", "od", "uudecode", "ln")),
+                 "mkdir", "rmdir", "rm", "touch", "od", "uudecode")),
              args.source / "coreutils/date.c", args.source / "libbb/compare_string_array.c",
              *(args.source / f"coreutils/{name}.c" for name in ("sort", "uniq", "cut", "tr", "realpath")),
              *(args.source / f"libbb/{name}.c" for name in (
@@ -331,10 +330,6 @@ def main():
     )
     (args.output / "md5_sha1_sum.c").write_text(
         (args.source / "coreutils/md5_sha1_sum.c").read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
-    (args.output / "ln.c").write_text(
-        (args.source / "coreutils/ln.c").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     prepare_text_applets(args.source, args.output, replace_once)

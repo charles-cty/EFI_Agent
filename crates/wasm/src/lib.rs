@@ -227,7 +227,6 @@ impl World {
                 | "od"
                 | "base64"
                 | "sha256sum"
-                | "ln"
                 | "sed"
                 | "sleep"
                 | "yes"

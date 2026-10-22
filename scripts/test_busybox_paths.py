@@ -61,19 +61,7 @@ def main() -> None:
         digest = run(args.runner, workspace, "sha256sum", "binary.bin")
         assert digest.returncode == 0, digest
         assert digest.stdout == "be45cb2605bf36bebde684841a28f0fd43c69850a3dce5fedba69928ee3a8991  binary.bin\n", digest
-        link = run(args.runner, workspace, "ln", "-s", "binary.bin", "link.bin")
-        assert link.returncode == 0, link
-        target = run(args.runner, workspace, "realpath", "link.bin")
-        assert target.returncode == 0 and target.stdout == "/binary.bin\n", target
-        replaced = run(args.runner, workspace, "ln", "-sf", "input.txt", "link.bin")
-        assert replaced.returncode == 0, replaced
-        target = run(args.runner, workspace, "realpath", "link.bin")
-        assert target.returncode == 0 and target.stdout == "/input.txt\n", target
-        hard = run(args.runner, workspace, "ln", "binary.bin", "hard.bin")
-        assert hard.returncode == 0, hard
-        missing_link = run(args.runner, workspace, "ln", "-s", "missing.bin", "dangling")
-        assert missing_link.returncode == 0, missing_link
-        print("PASS realpath, od, base64, sha256sum and ln direct/ash/error cases")
+        print("PASS realpath, od, base64 and sha256sum direct/ash/error cases")
 
 
 if __name__ == "__main__":
