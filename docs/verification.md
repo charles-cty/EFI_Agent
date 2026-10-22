@@ -4424,3 +4424,48 @@ and background-isolation checks. Evidence:
 `artifacts/mutation-applets-tcg.log`, `artifacts/mutation-applets-tcg`.
 The full network/application combination, 256 MiB gate and remaining
 command/mount/PATH/session delivery remain pending.
+
+## 2026-10-22 upstream date applet
+
+The shared image replaces the handwritten date subset with upstream BusyBox
+1.37.0 date and compare_string_array helpers. Native integration exercises
+32 operand/output/error cases, current-time bounds and an independent Python
+datetime calendar oracle. The saved-workspace oracle checks reference bytes
+and both nanosecond timestamps. Epoch input includes negative seconds; output
+includes default UTC, RFC, ISO date/hours/minutes/seconds/nanoseconds, literal
+percent and variable nanosecond precision. Reference times, strptime/calendar
+input, empty format, invalid operands and closed stdout are covered.
+
+WASI libc silently ignores non-UTC TZ values. The initial JST test exposed
+that limit. Date now rejects such values explicitly; -u overrides them with
+UTC0. Full timezone support remains pending. Clock-setting attempts report
+ENOTSUP and fail, replacing the upstream diagnostic followed by successful
+status. Clock-read/localtime failures, incomplete -D conversions, format-buffer
+overflow and stdout errors also fail. Evidence:
+`artifacts/date-applet-native-final.log`.
+
+The preceding batch's Git whitespace check initially traversed the dirty
+Shell submodule for an extended time. The read-only check was stopped and
+rerun with --ignore-submodules=all. Only the named project changes were
+committed; user workspace assets and the Shell submodule were preserved.
+An SDK-header search first used the generic include path; the target-specific
+wasm32-wasip1 include directory contains the required declarations.
+
+Final Release packaging passes in `artifacts/date-applet-package.log`.
+The final image passes mutation (63), basic (65), stream (112), awk (21),
+sed (24) and grep (33) cases in `artifacts/date-applet-shared-regression.log`.
+Ash arithmetic/test, structured random expressions and independent random
+short-circuit oracles pass in `artifacts/date-applet-math.log`.
+The preceding Rust checks remain applicable because this batch changes guest
+C and Python verification code only.
+
+Actual 512 MiB WHPX/Responses and TCG/Chat Completions pass the complete
+current file/code-tool sequence with the date fixture combined into the
+mutation tool call, keeping the request below its twelve-round limit. Both
+independently verify saved date-reference bytes and nanosecond times from FAT,
+alongside existing mutation/permission, 8 MiB write, stream, monotonic wait,
+HTTPS/DNS, cancellation and background-root checks. Evidence:
+`artifacts/date-applet-whpx.log`, `artifacts/date-applet-whpx`,
+`artifacts/date-applet-tcg.log`, `artifacts/date-applet-tcg`.
+Full timezone, remaining commands, mounts, PATH, persistent sessions, the
+full network/application regression and the 256 MiB gate remain incomplete.

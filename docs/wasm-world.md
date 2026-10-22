@@ -77,6 +77,12 @@ including nanosecond reference times and link-local timestamps. A new-file
 timestamp failure is reported. Time parsing uses upstream libbb; CPU-time
 clocks, signals and clock setting remain outside these applets.
 
+Date uses upstream BusyBox UTC parsing and formatting, RFC/ISO output,
+nanosecond fields and file reference times. Invalid -D input tails, unavailable
+clock reads, oversized formatted output and closed stdout fail explicitly.
+Setting the system clock fails with ENOTSUP. WASI libc supplies UTC only;
+date rejects other TZ values and accepts -u to select UTC explicitly.
+
 The model receives `shell(command)` and `python(code)` in addition to the
 read/write/edit file tools. Shell code runs as `ash -c`; Python code runs as
 `python -c`. Source is passed as one unchanged argument, including whitespace,

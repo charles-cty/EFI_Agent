@@ -16,18 +16,6 @@ int bb_got_signal;
 int xfunc_error_retval = 2;
 void (*die_func)(void);
 
-int index_in_strings(const char *strings, const char *value)
-{
-    int index = 0;
-    while (*strings) {
-        if (strcmp(strings, value) == 0)
-            return index;
-        strings += strlen(strings) + 1;
-        ++index;
-    }
-    return -1;
-}
-
 void bb_error_msg(const char *format, ...)
 {
     va_list arguments;
@@ -210,11 +198,6 @@ void close_on_exec_on(int fd)
     if (efi_process_set_fd_flags(fd, 1) != 0) {
         bb_simple_error_msg_and_die("cannot set descriptor flags");
     }
-}
-char *is_prefixed_with(const char *text, const char *prefix)
-{
-    size_t size = strlen(prefix);
-    return strncmp(text, prefix, size) == 0 ? (char *)text + size : NULL;
 }
 const char *endofname(const char *text)
 {

@@ -9,6 +9,18 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Upstream BusyBox date now replaces its handwritten subset. It provides UTC
+epoch/calendar/strptime parsing, RFC/ISO output, nanoseconds and file reference
+times. Clock setting rejects ENOTSUP; non-UTC TZ values reject explicitly
+because WASI libc otherwise silently uses UTC. Trailing -D input, clock errors,
+oversized output and stdout errors fail. Upstream compare-string-array helpers
+replace local duplicates. Full timezone support remains pending.
+All 32 native date cases, current-time/calendar oracles and saved reference
+bytes/times pass. Actual 512 MiB WHPX/Responses and TCG/Chat Completions pass
+the combined current file/code-tool sequence and independent FAT checks in
+artifacts/date-applet-whpx and date-applet-tcg. Release packaging, mutation,
+basic/stream/awk/sed/grep and ash math/random regressions pass.
+
 BusyBox mkdir/rmdir/rm/touch now use upstream applets and shared make-directory,
 recursive-remove, confirmation and time helpers. Staged corrections report
 directory traversal errors and new-file timestamp errors, preserve nonzero

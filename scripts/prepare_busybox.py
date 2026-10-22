@@ -23,6 +23,7 @@ ENABLED = {
     "BASENAME", "DIRNAME", "PWD", "ENV", "PRINTENV", "SEQ", "YES", "TRUE", "FALSE",
     "MKDIR", "RMDIR", "RM", "TOUCH", "FEATURE_TOUCH_SUSV3", "FEATURE_VERBOSE",
     "MONOTONIC_SYSCALL",
+    "DATE", "FEATURE_DATE_ISOFMT", "FEATURE_DATE_NANO",
 }
 
 
@@ -234,6 +235,33 @@ def prepare_mutations(source: Path, output: Path):
     (output / "touch.c").write_text(touch, encoding="utf-8")
 
 
+def prepare_date(source: Path, output: Path):
+    """Keep upstream date parsing/formatting and reject unavailable clock writes."""
+    text = (source / "coreutils/date.c").read_text(encoding="utf-8")
+    text = replace_once(text, '# include <sys/syscall.h>', '# include <locale.h>')
+    text = replace_once(text, '\t\tclock_gettime(CLOCK_REALTIME, &ts);', '''        if (clock_gettime(CLOCK_REALTIME, &ts) < 0)
+            bb_simple_perror_msg_and_die("clock_gettime");''')
+    text = replace_once(text, '\tlocaltime_r(&ts.tv_sec, &tm_time);', '''    if (!localtime_r(&ts.tv_sec, &tm_time))
+        bb_simple_perror_msg_and_die("localtime");''')
+    text = replace_once(text, '\tif (ENABLE_FEATURE_DATE_ISOFMT && (opt & OPT_ISO8601)) {', '''    const char *timezone = getenv("TZ");
+    if (timezone && *timezone && strcmp(timezone, "UTC") && strcmp(timezone, "UTC0"))
+        bb_simple_error_msg_and_die("non-UTC timezones are unavailable; use -u");
+
+\tif (ENABLE_FEATURE_DATE_ISOFMT && (opt & OPT_ISO8601)) {''')
+    text = replace_once(text, '\t\t\tif (strptime(date_str, fmt_str2dt, &tm_time) == NULL)', '''            char *end = strptime(date_str, fmt_str2dt, &tm_time);
+            if (end == NULL || *end != '\\0')''')
+    text = replace_once(text, '''\t\tif ((opt & OPT_SET) && clock_settime(CLOCK_REALTIME, &ts) < 0) {
+\t\t\tbb_simple_perror_msg("can't set date");
+\t\t}''', '''        if (opt & OPT_SET) {
+            errno = ENOTSUP;
+            bb_simple_perror_msg_and_die("can't set date");
+        }''')
+    text = replace_once(text, '\t\tstrftime(date_buf, COMMON_BUFSIZE, fmt_dt2str, &tm_time);', '''        if (!strftime(date_buf, COMMON_BUFSIZE, fmt_dt2str, &tm_time))
+            bb_simple_error_msg_and_die("formatted date exceeds output buffer");''')
+    text = replace_once(text, '\treturn EXIT_SUCCESS;', '\tfflush_stdout_and_exit_SUCCESS();')
+    (output / "date.c").write_text(text, encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
@@ -251,6 +279,7 @@ def main():
                  "cat", "head", "tail", "wc", "tee", "sleep", "basename",
                  "dirname", "pwd", "env", "printenv", "seq", "yes", "true", "false",
                  "mkdir", "rmdir", "rm", "touch")),
+             args.source / "coreutils/date.c", args.source / "libbb/compare_string_array.c",
              *(args.source / f"libbb/{name}.c" for name in (
                  "copyfd", "duration", "make_directory", "remove_file", "time"))]
     names = set(ENABLED)
@@ -272,6 +301,7 @@ def main():
     (args.output / "NUM_APPLETS.h").write_text("#define NUM_APPLETS 1\n", encoding="utf-8")
     prepare_streams(args.source, args.output)
     prepare_mutations(args.source, args.output)
+    prepare_date(args.source, args.output)
     sleep = (args.source / "coreutils/sleep.c").read_text(encoding="utf-8")
     sleep = replace_once(sleep, '\t\t\tsleep(INT_MAX);', '''            if (sleep(INT_MAX) != 0)
                 bb_simple_perror_msg_and_die("sleep");''')

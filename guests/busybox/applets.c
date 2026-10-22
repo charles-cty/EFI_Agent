@@ -6,16 +6,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-static int applet_date(void)
-{
-    time_t now = time(NULL);
-    struct tm *value = gmtime(&now);
-    char text[64];
-    if (!value || strftime(text, sizeof(text), "%a %b %e %H:%M:%S UTC %Y", value) == 0)
-        return 1;
-    puts(text);
-    return 0;
-}
+int date_main(int argc, char **argv);
 
 int sleep_main(int argc, char **argv);
 
@@ -136,7 +127,7 @@ int efi_busybox_applet(int argc, char **argv)
     if (strcmp(name, "rm") == 0) return rm_main(argc, argv);
     if (strcmp(name, "cp") == 0) return applet_cp_mv(argc, argv, 0);
     if (strcmp(name, "mv") == 0) return applet_cp_mv(argc, argv, 1);
-    if (strcmp(name, "date") == 0) return applet_date();
+    if (strcmp(name, "date") == 0) return date_main(argc, argv);
     if (strcmp(name, "sleep") == 0) return sleep_main(argc, argv);
     if (strcmp(name, "sed") == 0) return sed_main(argc, argv);
     if (strcmp(name, "chmod") == 0) return chmod_main(argc, argv);

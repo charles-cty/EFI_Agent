@@ -61,6 +61,7 @@ int bb_ask_y_confirmation_FILE(FILE *stream);
 void xstat(const char *path, struct stat *metadata);
 void xclose(int fd);
 int parse_datestr(const char *text, struct tm *value);
+int index_in_substrings(const char *strings, const char *key);
 time_t validate_tm_time(const char *text, struct tm *value);
 extern const char bb_msg_invalid_date[];
 typedef smalluint exitcode_t;
