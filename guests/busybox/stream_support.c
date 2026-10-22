@@ -59,3 +59,12 @@ void die_if_ferror_stdout(void)
 {
     die_if_ferror(stdout, bb_msg_standard_output);
 }
+
+void BB_EXECVP_or_die(char **arguments)
+{
+    int status = efi_ash_run(arguments, environ);
+    if (status >= 0)
+        exit(status);
+    xfunc_error_retval = errno == ENOENT ? 127 : 126;
+    bb_error_msg_and_die("can't execute '%s': %s", arguments[0], strerror(errno));
+}

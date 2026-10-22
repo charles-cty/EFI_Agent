@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <libgen.h>
 #include <setjmp.h>
 #include <stdarg.h>
 #include <stddef.h>
@@ -132,7 +133,7 @@ unsigned bb_clk_tck(void);
 int bb_parse_mode(const char *text, unsigned initial);
 const char *get_signame(int number);
 int get_signum(const char *name);
-void fflush_all(void);
+int fflush_all(void);
 char *is_prefixed_with(const char *text, const char *prefix);
 char *safe_strncpy(char *target, const char *source, size_t size);
 const char *bb_basename(const char *path);

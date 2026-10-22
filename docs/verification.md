@@ -4307,3 +4307,69 @@ checks also pass. Evidence: `artifacts/monotonic-whpx-final-all.log`,
 `artifacts/monotonic-whpx-final-all`, `artifacts/monotonic-tcg-final-all.log`
 and `artifacts/monotonic-tcg-final-all`. The separate full network/application
 combination and 256 MiB resource gates remain pending.
+
+## 2026-10-22 upstream basic command applets
+
+The shared image now builds upstream BusyBox 1.37.0 basename, dirname, pwd,
+env, printenv, seq, yes, true and false. Upstream path-component, single-argv
+and dynamically sized getcwd helpers replace local duplicates. Pwd's -L/-P
+parser is enabled locally without changing other applets' DESKTOP selection.
+Env invokes the existing cooperative process ABI with the modified environment
+and preserves the child's status; launch errors retain 126/127 distinctions.
+The process helper accepts clearenv's null environment as an empty list.
+The common flush helper returns its result and existing stdio error flags.
+
+Windows-native integration passes 51 semantic/error cases, six yes buffer
+boundaries, NUL-terminated env output and seven closed-output cases: 65 cases
+plus an independent saved result check. Evidence:
+`artifacts/basic-applets-integration-final.log`. Cases cover empty/root/Unicode
+paths, suffixes, multiple operands, logical and physical pwd, environment
+clearing/unsetting/overrides/empty values, child exit propagation, absent
+commands, missing printenv variables, ascending/descending/empty/fractional
+and padded sequences, multiple yes words, and builtin/function precedence.
+The yes oracle checks 4093/4094/4095/4096/4097/8191-byte words through a
+65,537-byte bounded reader, then requires producer exit and pipe cleanup.
+
+Shared-image regressions pass all 112 stream cases plus saved tee bytes,
+21 awk checks including its pipe oracle, 24 sed checks including cleanup,
+33 grep cases, guest permissions/C wrappers, all 15 Python cases and 10
+descriptor inheritance cases. See `artifacts/basic-applets-streams.log`,
+`basic-applets-awk.log`, `basic-applets-sed.log`, `basic-applets-grep.log`,
+`basic-applets-permissions.log`, `basic-applets-python.log`, and
+`basic-applets-descriptors.log` under artifacts. All 85 WASM tests, Clippy,
+formatting and Windows Release EFI/launcher packaging pass in
+`artifacts/basic-applets-wasm-tests.log`, `artifacts/basic-applets-clippy.log`,
+`artifacts/basic-applets-format.log`, and `artifacts/basic-applets-package.log`.
+
+Resolved implementation and verification issues:
+
+- Upstream multiword yes could ignore fputs EPIPE while its final putchar
+  succeeded, leaving the producer running after head exited. A staged stdio
+  error check ends the loop. WASI has no SIGPIPE delivery, so upstream yes
+  prints its Broken pipe diagnostic and exits with failure; pipelines retain
+  the last stage's status. Tests check that exact behavior rather than treating
+  any stderr as success or suppressing the error.
+- clearenv can make environ null. The C argument packer previously dereferenced
+  that pointer; it now passes an actual empty environment to the process ABI.
+- The first dirname build lacked libgen.h. The shared header now includes it.
+- A new nested Python byte literal needed a second level of newline escaping.
+  Fixing it removes the firmware-test IndentationError. The VM script now
+  compiles every Python tool source before launching QEMU.
+- A header patch initially selected the wrong guard name; the include was
+  applied to the correct common header. Nonfatal upstream Clang string-pointer
+  arithmetic warnings remain as documented in the stream-applet verification.
+
+The wider filesystem mount, executable PATH/manifest, packaging and retained
+tool-session requirements remain incomplete.
+
+Actual final 512 MiB QEMU/OVMF checks pass WHPX with Responses and TCG with
+Chat Completions. The model drives the complete current command fixture
+through Python subprocess, including environment replacement, statuses, the
+multiword yes boundary cases and closed outputs. Both verify the persisted
+result bytes independently from FAT, along with existing stream, monotonic,
+permission/mutation and 8 MiB file-write checks, verified HTTPS/DNS, tool-tree
+cancellation and independent background roots. Evidence:
+`artifacts/basic-applets-whpx-fixed.log`, `artifacts/basic-applets-whpx-fixed`,
+`artifacts/basic-applets-tcg-fixed.log`, and
+`artifacts/basic-applets-tcg-fixed`. The wider full application and 256 MiB
+resource regressions remain pending.

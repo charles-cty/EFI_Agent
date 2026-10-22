@@ -9,6 +9,21 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Upstream BusyBox basename/dirname/pwd/env/printenv/seq/yes/true/false now
+build into the shared image. Local copies of path/single-argv/getcwd helpers
+were replaced by upstream helpers. Pwd enables -L/-P; env uses cooperative
+execution with explicit environments and preserves child/launch statuses.
+An empty environment no longer dereferences clearenv's null pointer. Flush
+results include existing stdio errors. A staged yes fix checks fputs failures,
+so multiword producers exit after head closes. Without SIGPIPE delivery, yes
+reports its EPIPE diagnostic; the final pipeline stage determines status.
+Native integration passes 65 cases plus independent saved bytes. Actual
+512 MiB WHPX/Responses and TCG/Chat Completions pass all current file/code-tool
+checks in artifacts/basic-applets-whpx-fixed and basic-applets-tcg-fixed.
+All 85 WASM tests, Clippy, format, Release packaging and shared guest
+regressions pass. Remaining command/mount/PATH/session gates are tracked in
+docs/environment-work.md.
+
 Firmware monotonic time and upstream BusyBox sleep now pass actual 512 MiB
 WHPX/Responses and TCG/Chat Completions checks in
 artifacts/monotonic-whpx-final-all and monotonic-tcg-final-all. Both use PI CPU

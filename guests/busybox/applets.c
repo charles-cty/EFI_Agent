@@ -27,6 +27,15 @@ int wc_main(int argc, char **argv);
 int tee_main(int argc, char **argv);
 int chmod_main(int argc, char **argv);
 int awk_main(int argc, char **argv);
+int basename_main(int argc, char **argv);
+int dirname_main(int argc, char **argv);
+int pwd_main(int argc, char **argv);
+int env_main(int argc, char **argv);
+int printenv_main(int argc, char **argv);
+int seq_main(int argc, char **argv);
+int yes_main(int argc, char **argv);
+int true_main(int argc, char **argv);
+int false_main(int argc, char **argv);
 
 static int copy_stream(int input, int output, long limit)
 {
@@ -70,22 +79,6 @@ static int applet_ls(int argc, char **argv)
     }
     closedir(directory);
     return 0;
-}
-
-static int applet_env(void)
-{
-    for (char **entry = environ; entry && *entry; ++entry)
-        puts(*entry);
-    return 0;
-}
-
-static int applet_yes(int argc, char **argv)
-{
-    const char *text = argc > 1 ? argv[1] : "y";
-    for (;;) {
-        if (puts(text) == EOF)
-            return 1;
-    }
 }
 
 int grep_main(int argc, char **argv);
@@ -167,8 +160,15 @@ int efi_busybox_applet(int argc, char **argv)
     if (strcmp(name, "wc") == 0) return wc_main(argc, argv);
     if (strcmp(name, "tee") == 0) return tee_main(argc, argv);
     if (strcmp(name, "ls") == 0) return applet_ls(argc, argv);
-    if (strcmp(name, "env") == 0) return applet_env();
-    if (strcmp(name, "yes") == 0) return applet_yes(argc, argv);
+    if (strcmp(name, "env") == 0) return env_main(argc, argv);
+    if (strcmp(name, "yes") == 0) return yes_main(argc, argv);
+    if (strcmp(name, "basename") == 0) return basename_main(argc, argv);
+    if (strcmp(name, "dirname") == 0) return dirname_main(argc, argv);
+    if (strcmp(name, "pwd") == 0) return pwd_main(argc, argv);
+    if (strcmp(name, "printenv") == 0) return printenv_main(argc, argv);
+    if (strcmp(name, "seq") == 0) return seq_main(argc, argv);
+    if (strcmp(name, "true") == 0) return true_main(argc, argv);
+    if (strcmp(name, "false") == 0) return false_main(argc, argv);
     if (strcmp(name, "grep") == 0) return grep_main(argc, argv);
     if (strcmp(name, "mkdir") == 0) return applet_mkdir(argc, argv);
     if (strcmp(name, "rm") == 0) return applet_rm(argc, argv);

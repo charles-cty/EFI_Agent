@@ -16,12 +16,6 @@ int bb_got_signal;
 int xfunc_error_retval = 2;
 void (*die_func)(void);
 
-const char *bb_basename(const char *path)
-{
-    const char *separator = strrchr(path, '/');
-    return separator ? separator + 1 : path;
-}
-
 int index_in_strings(const char *strings, const char *value)
 {
     int index = 0;
@@ -109,9 +103,10 @@ char *xstrdup(const char *text)
     return xmemdup(text, strlen(text) + 1);
 }
 
-void fflush_all(void)
+int fflush_all(void)
 {
-    fflush(NULL);
+    int result = fflush(NULL);
+    return result == EOF || ferror(stdout) || ferror(stderr) ? EOF : 0;
 }
 
 ssize_t nonblock_immune_read(int fd, void *bytes, size_t size)
@@ -271,15 +266,6 @@ char *skip_whitespace(const char *text)
         ++text;
     }
     return (char *)text;
-}
-
-char **skip_dash_dash(char **arguments)
-{
-    ++arguments;
-    if (*arguments && strcmp(*arguments, "--") == 0) {
-        ++arguments;
-    }
-    return arguments;
 }
 
 void overlapping_strcpy(char *target, const char *source)

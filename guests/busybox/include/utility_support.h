@@ -75,6 +75,10 @@ int recursive_action(const char *path, unsigned flags,
     void *data);
 char *concat_subpath_file(const char *path, const char *name);
 char *last_char_is(const char *text, int value);
+char *bb_get_last_path_component_strip(char *path);
+char *bb_get_last_path_component_nostrip(const char *path);
+char *single_argv(char **arguments);
+void BB_EXECVP_or_die(char **arguments) NORETURN;
 char *bb_mode_string(char buffer[11], mode_t mode);
 extern const char bb_msg_standard_output[];
 extern const char bb_msg_read_error[];

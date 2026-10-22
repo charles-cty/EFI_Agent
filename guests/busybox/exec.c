@@ -29,7 +29,7 @@ int efi_ash_run(char *const arguments[], char *const environment[])
     while (arguments[count]) {
         ++count;
     }
-    while (environment[environment_count]) {
+    while (environment && environment[environment_count]) {
         ++environment_count;
     }
     char *scratch = malloc(65536);

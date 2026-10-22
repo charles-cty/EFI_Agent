@@ -144,7 +144,7 @@ def main():
                 error = f'host status={result.returncode}, wanted={bool(status)}'
             elif status and f'Guest exited with {status}'.encode() not in result.stderr:
                 error = f'guest status mismatch: {result.stderr[-500:]!r}'
-            elif not status and result.stderr:
+            elif not status and result.stderr != (b'yes: Broken pipe\n' if name == 'pipeline-break' else b''):
                 error = f'unexpected stderr: {result.stderr[-500:]!r}'
             if error:
                 failures.append(f'{name}: {error}')

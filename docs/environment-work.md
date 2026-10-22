@@ -3,6 +3,12 @@
 Status: in progress. The checks below define completion of the environment
 expansion. Initial native/firmware interfaces do not establish full completion.
 
+The shared image currently uses upstream awk, sed, grep, chmod, cat, head,
+tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true
+and false. Other utility applets still need upstream replacement or addition.
+Firmware monotonic waits now use a reported hardware-counter rate. The mount,
+PATH, packaging and persistent-session gates remain incomplete.
+
 ## Required commands
 
 Build the upstream BusyBox implementations of ls, cat, cp, mv, rm, mkdir,

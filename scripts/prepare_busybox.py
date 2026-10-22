@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # ///
-"""Prepare upstream BusyBox ash for the Windows-native WASI build."""
+"""Prepare upstream BusyBox sources for the Windows-native WASI build."""
 import argparse
 from pathlib import Path
 import re
@@ -20,6 +20,7 @@ ENABLED = {
     "TAIL", "FEATURE_FANCY_TAIL", "WC", "FEATURE_WC_LARGE",
     "TEE", "FEATURE_TEE_USE_BLOCK_IO",
     "SLEEP", "FEATURE_FANCY_SLEEP", "FLOAT_DURATION",
+    "BASENAME", "DIRNAME", "PWD", "ENV", "PRINTENV", "SEQ", "YES", "TRUE", "FALSE",
 }
 
 
@@ -200,7 +201,9 @@ def main():
              args.source / "include/unicode.h", args.source / "editors/awk.c",
              args.source / "editors/sed.c", args.source / "libbb/getopt32.c",
              args.source / "findutils/grep.c", args.source / "coreutils/chmod.c",
-             *(args.source / f"coreutils/{name}.c" for name in ("cat", "head", "tail", "wc", "tee", "sleep")),
+             *(args.source / f"coreutils/{name}.c" for name in (
+                 "cat", "head", "tail", "wc", "tee", "sleep", "basename",
+                 "dirname", "pwd", "env", "printenv", "seq", "yes", "true", "false")),
              args.source / "libbb/copyfd.c", args.source / "libbb/duration.c"]
     names = set(ENABLED)
     for path in files:
@@ -229,6 +232,15 @@ def main():
     if (nanosleep(&ts, &ts) < 0)
         bb_simple_perror_msg_and_die("nanosleep");''')
     (args.output / "duration.c").write_text(duration, encoding="utf-8")
+    pwd = (args.source / "coreutils/pwd.c").read_text(encoding="utf-8")
+    # Enable pwd's logical/physical option parser without changing the global
+    # DESKTOP feature selection of other translation units.
+    pwd = replace_once(pwd, '\tif (ENABLE_DESKTOP) {', '\t{')
+    (args.output / "pwd.c").write_text(pwd, encoding="utf-8")
+    yes = (args.source / "coreutils/yes.c").read_text(encoding="utf-8")
+    yes = replace_once(yes, "} while (putchar('\\n') != EOF);",
+                       "} while (putchar('\\n') != EOF && !ferror(stdout));")
+    (args.output / "yes.c").write_text(yes, encoding="utf-8")
     awk = (args.source / "editors/awk.c").read_text(encoding="utf-8")
     awk = replace_once(awk, '#include "libbb.h"', '#include "libbb.h"\n#include "awk_support.h"\nstruct globals;\nstatic struct globals *ptr_to_globals;')
     (args.output / "awk.c").write_text(awk, encoding="utf-8")

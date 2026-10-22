@@ -225,6 +225,13 @@ impl World {
                 | "tail"
                 | "wc"
                 | "tee"
+                | "basename"
+                | "dirname"
+                | "pwd"
+                | "printenv"
+                | "seq"
+                | "true"
+                | "false"
         )
     }
 

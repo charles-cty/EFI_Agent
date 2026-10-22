@@ -21,6 +21,7 @@ import time
 from textwrap import dedent
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from wasm_time_fixture import TIME_CHECK
+from wasm_basic_applets_fixture import BASIC_APPLETS_CHECK
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -372,7 +373,10 @@ def main():
                         assert int(result.stdout) == len(payload), result.stdout
                     else:
                         assert result.stdout == expected, (command, len(result.stdout))
-                    assert bool(result.stderr) == bool(status), (command, result.stderr)
+                    if command.startswith('yes |'):
+                        assert result.stderr == b'yes: Broken pipe\\n', result.stderr
+                    else:
+                        assert bool(result.stderr) == bool(status), (command, result.stderr)
                 assert open('stream-copy', 'rb').read() == payload
                 print('UPSTREAM_STREAMS_OK')
                 """)}),
@@ -380,6 +384,11 @@ def main():
         Provider.code_expected = ["File saved", "NESTED_SCRIPT_OK", "FILESYSTEM_WRITES_OK", "HEREDOC_SCRIPT_OK", "FINITE_STDIN_OK", "PERMISSIONS_CWD_OK", "MUTATION_SHARED_OK", "UPSTREAM_STREAMS_OK"]
         Provider.code_steps.append(('python', {'code': TIME_CHECK}))
         Provider.code_expected.append('MONOTONIC_WAIT_OK')
+        Provider.code_steps.append(('python', {'code': BASIC_APPLETS_CHECK}))
+        Provider.code_expected.append('UPSTREAM_BASIC_APPLETS_OK')
+    for index, (name, arguments) in enumerate(Provider.code_steps, 1):
+        if name == 'python':
+            compile(arguments['code'], f'guest-tool-step-{index}', 'exec')
     args.output.mkdir(parents=True, exist_ok=True)
     Provider.requests.clear()
     Provider.errors.clear()
@@ -508,7 +517,7 @@ def main():
                         wait("CODE_TOOLS_VERIFIED", args.code_timeout)
                         send("/wasm ps")
                         wait("Ready  •")
-                        print("PASS file tools, 8 MiB writes, finite stdin, mutations, permissions, inherited cwd/umask, upstream stream applets and monotonic waits" if args.filesystem_tools else "PASS real model shell/Python tools, cached WASM, source preservation, subprocess, failure, capture boundaries and fresh state", flush=True)
+                        print("PASS file tools, 8 MiB writes, finite stdin, mutations, permissions, inherited cwd/umask, upstream BusyBox applets and monotonic waits" if args.filesystem_tools else "PASS real model shell/Python tools, cached WASM, source preservation, subprocess, failure, capture boundaries and fresh state", flush=True)
                     send("/clear")
                     wait("Conversation cleared")
                     send("/wasm start ash background-loop.sh")
@@ -588,6 +597,7 @@ def main():
                                 assert workspace.read('stream-binary') == stream_payload
                                 assert workspace.read('stream-long') == b'x' * 1100003
                                 assert workspace.read('monotonic-result') == b'MONOTONIC_WAIT_OK\n'
+                                assert workspace.read('basic-applets-result') == b'UPSTREAM_BASIC_APPLETS_OK\n'
                                 for removed in ('mutation', 'moved-mutation/empty', 'moved-mutation/original', 'moved-mutation/replaced'):
                                     assert removed not in workspace.entries, removed
                             else:

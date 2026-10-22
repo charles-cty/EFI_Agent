@@ -55,6 +55,18 @@ fuel exhaustion and round-robin scheduling.
 
 ## Firmware commands
 
+The shared BusyBox image includes upstream basename, dirname, pwd, env,
+printenv, seq, yes, true and false in addition to the upstream stream,
+regex/editor and sleep applets. Shell builtins and functions retain their
+normal precedence; /bin-prefixed names select registered external applets.
+Pwd enables its upstream -L/-P parser locally. Env supports clearing/unsetting
+variables, NUL output and cooperative execution with explicit environments.
+Seq retains upstream floating-point formatting and sequence semantics.
+Yes checks stdout errors after each line, including errors inside fputs, so
+multiword pipelines terminate after the reader closes. WASI returns EPIPE
+without SIGPIPE delivery; upstream yes reports Broken pipe before exiting
+with failure. The pipeline retains the final stage's status.
+
 The model receives `shell(command)` and `python(code)` in addition to the
 read/write/edit file tools. Shell code runs as `ash -c`; Python code runs as
 `python -c`. Source is passed as one unchanged argument, including whitespace,
