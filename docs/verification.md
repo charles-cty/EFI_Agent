@@ -4582,3 +4582,11 @@ providers. The shared image exposes `ln`; the focused path fixture covers
 symbolic links, hard links, force replacement and dangling symbolic links.
 Windows WASI SDK/Binaryen compilation and WHPX execution remain pending because
 those tools were not configured in the current environment.
+
+## 2026-10-22 upstream hexdump
+
+BusyBox hexdump now uses the upstream `util-linux/hexdump.c` parser and the
+shared dump engine already used by od. The shared image exposes `hexdump`; the
+focused path fixture covers canonical `-C` output, finite stdin and malformed
+options. Windows WASI SDK/Binaryen compilation and WHPX execution remain
+pending because those tools were not configured in the current environment.

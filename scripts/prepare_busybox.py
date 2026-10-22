@@ -32,6 +32,7 @@ ENABLED = {
     "BASE64",
     "SHA256SUM",
     "LN",
+    "HEXDUMP",
 }
 
 
@@ -335,6 +336,10 @@ def main():
     )
     (args.output / "ln.c").write_text(
         (args.source / "coreutils/ln.c").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (args.output / "hexdump.c").write_text(
+        (args.source / "util-linux/hexdump.c").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     prepare_text_applets(args.source, args.output, replace_once)
