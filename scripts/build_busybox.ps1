@@ -56,7 +56,6 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $build 'realpath.c'),
     (Join-Path $build 'od.c'), (Join-Path $Source 'libbb/dump.c'),
     'guests/busybox/dump_support.c',
-    (Join-Path $build 'uudecode.c'), (Join-Path $Source 'libbb/uuencode.c'),
     (Join-Path $Source 'libbb/make_directory.c'), (Join-Path $build 'remove_file.c'),
     (Join-Path $Source 'libbb/ask_confirmation.c'), (Join-Path $Source 'libbb/time.c'),
     (Join-Path $build 'date.c'), (Join-Path $Source 'libbb/compare_string_array.c'),

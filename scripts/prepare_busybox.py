@@ -29,7 +29,6 @@ ENABLED = {
     "TR", "FEATURE_TR_CLASSES", "FEATURE_TR_EQUIV",
     "REALPATH",
     "OD",
-    "BASE64",
 }
 
 
@@ -284,7 +283,7 @@ def main():
              *(args.source / f"coreutils/{name}.c" for name in (
                  "cat", "head", "tail", "wc", "tee", "sleep", "basename",
                  "dirname", "pwd", "env", "printenv", "seq", "yes", "true", "false",
-                 "mkdir", "rmdir", "rm", "touch", "od", "uudecode")),
+                 "mkdir", "rmdir", "rm", "touch", "od")),
              args.source / "coreutils/date.c", args.source / "libbb/compare_string_array.c",
              *(args.source / f"coreutils/{name}.c" for name in ("sort", "uniq", "cut", "tr", "realpath")),
              *(args.source / f"libbb/{name}.c" for name in (
@@ -321,10 +320,6 @@ def main():
     (args.output / "xreadlink.c").write_text(xreadlink, encoding="utf-8")
     (args.output / "od.c").write_text(
         (args.source / "coreutils/od.c").read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
-    (args.output / "uudecode.c").write_text(
-        (args.source / "coreutils/uudecode.c").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     prepare_text_applets(args.source, args.output, replace_once)
