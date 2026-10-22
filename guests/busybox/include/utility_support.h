@@ -16,12 +16,6 @@
 #define SKIP 2
 #define exit_SUCCESS() exit(EXIT_SUCCESS)
 #define MAXINT(T) (T)(((T)-1) > 0 ? (T)-1 : (T)~((T)1 << (sizeof(T)*8-1)))
-#ifndef MIN
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-#endif
-#define move_from_unaligned16(value, pointer) memcpy(&(value), (pointer), sizeof(value))
-#define move_from_unaligned32(value, pointer) memcpy(&(value), (pointer), sizeof(value))
-#define move_from_unaligned64(value, pointer) memcpy(&(value), (pointer), sizeof(value))
 enum {	/* cp.c, mv.c, install.c depend on these values. CAREFUL when changing them! */
 	FILEUTILS_PRESERVE_STATUS = 1 << 0, /* -p */
 	FILEUTILS_DEREFERENCE     = 1 << 1, /* !-d */

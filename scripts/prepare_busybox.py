@@ -28,7 +28,6 @@ ENABLED = {
     "SORT", "FEATURE_SORT_BIG", "UNIQ", "CUT", "FEATURE_CUT_REGEX",
     "TR", "FEATURE_TR_CLASSES", "FEATURE_TR_EQUIV",
     "REALPATH",
-    "OD",
 }
 
 
@@ -283,7 +282,7 @@ def main():
              *(args.source / f"coreutils/{name}.c" for name in (
                  "cat", "head", "tail", "wc", "tee", "sleep", "basename",
                  "dirname", "pwd", "env", "printenv", "seq", "yes", "true", "false",
-                 "mkdir", "rmdir", "rm", "touch", "od")),
+                 "mkdir", "rmdir", "rm", "touch")),
              args.source / "coreutils/date.c", args.source / "libbb/compare_string_array.c",
              *(args.source / f"coreutils/{name}.c" for name in ("sort", "uniq", "cut", "tr", "realpath")),
              *(args.source / f"libbb/{name}.c" for name in (
@@ -318,10 +317,6 @@ def main():
     xreadlink = (args.source / "libbb/xreadlink.c").read_text(encoding="utf-8")
     xreadlink = '#ifndef KERNEL_VERSION\n#define KERNEL_VERSION(a, b, c) 0\n#endif\n' + xreadlink
     (args.output / "xreadlink.c").write_text(xreadlink, encoding="utf-8")
-    (args.output / "od.c").write_text(
-        (args.source / "coreutils/od.c").read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
     prepare_text_applets(args.source, args.output, replace_once)
     sleep = (args.source / "coreutils/sleep.c").read_text(encoding="utf-8")
     sleep = replace_once(sleep, '\t\t\tsleep(INT_MAX);', '''            if (sleep(INT_MAX) != 0)

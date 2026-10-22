@@ -224,7 +224,6 @@ impl World {
                 | "cut"
                 | "tr"
                 | "realpath"
-                | "od"
                 | "sed"
                 | "sleep"
                 | "yes"

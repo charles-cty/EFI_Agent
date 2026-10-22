@@ -23,7 +23,6 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="efi-path-applets-") as temporary:
         workspace = Path(temporary)
         (workspace / "input.txt").write_text("path\n", encoding="utf-8")
-        (workspace / "binary.bin").write_bytes(bytes(range(16)))
         (workspace / "ash.wasm").write_bytes(args.ash.read_bytes())
         direct = run(args.runner, workspace, "realpath", "input.txt")
         assert direct.returncode == 0, direct
@@ -35,15 +34,7 @@ def main() -> None:
         assert shell.returncode == 0, shell
         assert shell.stdout == "/input.txt\n", shell
         assert shell.stderr == "", shell
-        octal = run(args.runner, workspace, "od", "binary.bin")
-        assert octal.returncode == 0, octal
-        assert octal.stdout == (
-            "0000000 300400400 501001402 701402404 1102003406 "
-            "1302404410 1503005412 1703406414 007416\n0000020\n"
-        ), octal
-        invalid = run(args.runner, workspace, "od", "--invalid", "binary.bin")
-        assert invalid.returncode != 0, invalid
-        print("PASS realpath and od direct/ash/error cases")
+        print("PASS realpath direct, missing-path error and ash dispatch")
 
 
 if __name__ == "__main__":
