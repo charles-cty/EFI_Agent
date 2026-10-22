@@ -3900,10 +3900,16 @@ replacement, subprocess, capture bounds, fresh interpreter state and tree
 cancellation. This focused result does not resolve the larger 256 MiB
 file-write/Python-to-Python combination described below.
 
-Remaining delivery includes the common mounted namespace, virtual devices and
-temporary/process files, complete firmware rename/delete/link/mode/time
-semantics, the BusyBox applets, unified PATH, persistent interpreter sessions,
-workspace deletion/metadata save, and full combined firmware/WHPX verification.
+The current release EFI was rebuilt after the virtual mount changes and passed
+the complete 512 MiB WHPX Responses regression in
+`artifacts/virtual-mounts-whpx-current`: nested model writes, recursive mkdir,
+8 MiB transfers, finite Python stdin, cancellation/background isolation,
+direct DNS/HTTPS, streamed Responses tools, FAT byte verification, and the
+no-partial-tool-execution check all passed.
+
+Remaining delivery includes filesystem PATH search, persistent interpreter
+sessions, complete firmware mode/time semantics, workspace deletion/metadata
+save edge cases, and the full combined firmware/WHPX application matrix.
 
 Issues encountered and corrected:
 
