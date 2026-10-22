@@ -96,6 +96,15 @@ def main() -> None:
             input=b"a\0b c\0", capture_output=True, timeout=60,
         )
         assert zero.returncode == 0 and zero.stdout == b"[a]\n[b c]\n", zero
+        found = run(args.runner, workspace, "find", ".", "-name", "binary.bin")
+        assert found.returncode == 0 and found.stdout == "./binary.bin\n", found
+        typed = run(args.runner, workspace, "find", ".", "-type", "f")
+        assert typed.returncode == 0 and "./binary.bin\n" in typed.stdout, typed
+        nul = subprocess.run(
+            [str(args.runner.resolve()), str(workspace.resolve()), "find", ".", "-name", "binary.bin", "-print0"],
+            capture_output=True, timeout=60,
+        )
+        assert nul.returncode == 0 and nul.stdout == b"./binary.bin\0", nul
         print("PASS realpath, od, base64, sha256sum, ln, hexdump and xargs cases")
 
 

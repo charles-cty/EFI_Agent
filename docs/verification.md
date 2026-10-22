@@ -4583,6 +4583,15 @@ symbolic links, hard links, force replacement and dangling symbolic links.
 Windows WASI SDK/Binaryen compilation and WHPX execution remain pending because
 those tools were not configured in the current environment.
 
+## 2026-10-23 upstream find
+
+BusyBox find now uses the upstream expression parser and recursive traversal
+with the shared namespace metadata and directory helpers. The shared image
+exposes `find`; the focused path fixture covers name matching, file type
+selection and NUL-terminated output. Windows WASI SDK/Binaryen compilation and
+WHPX execution remain pending because those tools were not configured in the
+current environment.
+
 ## 2026-10-22 upstream hexdump
 
 BusyBox hexdump now uses the upstream `util-linux/hexdump.c` parser and the

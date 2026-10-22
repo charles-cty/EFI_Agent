@@ -34,6 +34,11 @@ ENABLED = {
     "LN",
     "HEXDUMP",
     "XARGS",
+    "FIND",
+    "FEATURE_FIND_TYPE",
+    "FEATURE_FIND_NOT",
+    "FEATURE_FIND_PAREN",
+    "FEATURE_FIND_PRINT0",
     "FEATURE_XARGS_SUPPORT_QUOTES",
     "FEATURE_XARGS_SUPPORT_TERMOPT",
     "FEATURE_XARGS_SUPPORT_ZERO_TERM",
@@ -349,6 +354,10 @@ def main():
     )
     (args.output / "xargs.c").write_text(
         (args.source / "findutils/xargs.c").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (args.output / "find.c").write_text(
+        (args.source / "findutils/find.c").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     prepare_text_applets(args.source, args.output, replace_once)
