@@ -11,14 +11,17 @@ pub struct VirtualFileSystem {
     base: Rc<dyn FileSystem>,
     tmp: Rc<RefCell<TempFiles>>,
     mount: String,
+    identity: usize,
 }
 
 impl VirtualFileSystem {
     pub fn new(base: Rc<dyn FileSystem>) -> Rc<Self> {
+        let identity = base.identity();
         Rc::new(Self {
             base,
             tmp: Rc::new(RefCell::new(BTreeMap::new())),
             mount: String::new(),
+            identity,
         })
     }
 
@@ -333,7 +336,12 @@ impl FileSystem for VirtualFileSystem {
     }
 
     fn symlink_metadata(&self, path: &str) -> Result<Metadata, FileError> {
-        self.metadata(path)
+        let path = self.mounted(path);
+        let path = path.as_str();
+        if let Some(kind) = Self::virtual_entry(path) {
+            return Ok(Metadata::new(kind, 0));
+        }
+        self.base.symlink_metadata(path)
     }
 
     fn set_times(
@@ -364,15 +372,27 @@ impl FileSystem for VirtualFileSystem {
         self.base.capacity()
     }
 
+    fn identity(&self) -> usize {
+        self.identity
+    }
+
     fn directory_view(&self, path: &str) -> Result<Option<Rc<dyn FileSystem>>, FileError> {
         if Self::virtual_directory(path) {
             return Ok(Some(Rc::new(VirtualFileSystem {
                 base: self.base.clone(),
                 tmp: self.tmp.clone(),
                 mount: path.into(),
+                identity: self.identity,
             })));
         }
-        self.base.directory_view(path)
+        Ok(self.base.directory_view(path)?.map(|view| {
+            Rc::new(VirtualFileSystem {
+                base: view,
+                tmp: self.tmp.clone(),
+                mount: String::new(),
+                identity: self.identity,
+            }) as Rc<dyn FileSystem>
+        }))
     }
 }
 

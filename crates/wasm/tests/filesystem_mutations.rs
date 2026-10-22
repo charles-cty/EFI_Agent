@@ -118,6 +118,57 @@ fn persistent_namespace_wasi_mutations_keep_directory_and_file_identity() {
 }
 
 #[test]
+fn virtual_mounts_supply_devices_and_ephemeral_tmp_files() {
+    use efi_agent_wasm::filesystem::{FileSystem, OpenOptions, VirtualFileSystem};
+    let workspace = Workspace::new();
+    let virtual_fs = VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(
+        workspace.0.clone(),
+    )));
+    assert!(virtual_fs.metadata("bin").unwrap().is_directory());
+    assert!(virtual_fs.metadata("dev").unwrap().is_directory());
+    assert!(virtual_fs.metadata("proc").unwrap().is_directory());
+    assert!(virtual_fs.metadata("tmp").unwrap().is_directory());
+
+    let mut null = virtual_fs
+        .open(
+            "dev/null",
+            OpenOptions {
+                read: false,
+                write: true,
+                create: false,
+                exclusive: false,
+                truncate: false,
+                append: false,
+            },
+        )
+        .unwrap();
+    assert_eq!(null.write(b"discarded").unwrap(), 9);
+
+    let mut tmp = virtual_fs
+        .open(
+            "tmp/value",
+            OpenOptions {
+                read: true,
+                write: true,
+                create: true,
+                exclusive: true,
+                truncate: false,
+                append: false,
+            },
+        )
+        .unwrap();
+    assert_eq!(tmp.write(b"temporary").unwrap(), 9);
+    tmp.seek(0, 0).unwrap();
+    let mut bytes = [0; 9];
+    assert_eq!(tmp.read(&mut bytes).unwrap(), 9);
+    assert_eq!(&bytes, b"temporary");
+    assert_eq!(virtual_fs.metadata("tmp/value").unwrap().size, 9);
+    virtual_fs.rename("tmp/value", "tmp/moved").unwrap();
+    virtual_fs.unlink("tmp/moved").unwrap();
+    assert!(virtual_fs.metadata("tmp/moved").is_err());
+}
+
+#[test]
 fn workspace_modules_load_on_demand_and_aliases_share_the_compiled_image() {
     let workspace = Workspace::new();
     let module =
