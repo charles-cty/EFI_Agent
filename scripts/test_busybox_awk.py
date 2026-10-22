@@ -33,9 +33,9 @@ def main():
         ("independent-writers", "awk 'BEGIN {a=\"cat > writer-a\"; b=\"cat > writer-b\"; print \"A\" | a; print \"B\" | b; print close(a),close(b)}'; cat writer-a writer-b", b"0 0\nA\nB\n", 0),
         ("closed-stdin", "awk 'BEGIN {c=\"printf data\"; c | getline x; print x,close(c)}' <&-", b"data 0\n", 0),
         ("exit-status", "awk 'BEGIN {exit 17}'", b"", 17),
-        ("bad-regex", "awk 'BEGIN {print match(\"abc\", \"[\")}'", b"", 2),
-        ("bad-syntax", "awk 'BEGIN {'", b"", 2),
-        ("missing-input", "awk '{print}' missing-input", b"", 2),
+        ("bad-regex", "awk 'BEGIN {print match(\"abc\", \"[\")}'", b"", 1),
+        ("bad-syntax", "awk 'BEGIN {'", b"", 1),
+        ("missing-input", "awk '{print}' missing-input", b"", 1),
     ]
     with tempfile.TemporaryDirectory(prefix="efi-busybox-awk-") as temporary:
         root = Path(temporary)

@@ -48,6 +48,7 @@
 #define fdprintf dprintf
 #define bb_unreachable(alternative) __builtin_unreachable()
 #define LONE_DASH(text) ((text)[0] == '-' && (text)[1] == '\0')
+#define NOT_LONE_DASH(text) (!(text) || !LONE_DASH(text))
 #define LONE_CHAR(text, character) ((text)[0] == (character) && (text)[1] == '\0')
 #define NOT_LONE_CHAR(text, character) (!(text) || !LONE_CHAR(text, character))
 #define STRERROR_FMT "%s"
@@ -113,14 +114,13 @@ void close_on_exec_on(int fd);
 NORETURN void xfunc_die(void);
 ssize_t nonblock_immune_read(int fd, void *bytes, size_t size);
 char *itoa(int value);
-unsigned long bb_strtoul(const char *text, char **end, int base);
-long bb_strtol(const char *text, char **end, int base);
-unsigned long long bb_strtoull(const char *text, char **end, int base);
-long long bb_strtoll(const char *text, char **end, int base);
-_Static_assert(UINT_MAX == ULONG_MAX && INT_MAX == LONG_MAX,
-    "WASI32 numeric helper aliases require equal int and long widths");
-#define bb_strtou bb_strtoul
-#define bb_strtoi bb_strtol
+struct suffix_mult {
+    char suffix[4];
+    uint32_t mult;
+};
+#define ALIGN_SUFFIX __attribute__((aligned(4)))
+extern const struct suffix_mult bkm_suffixes[];
+#include "xatonum.h"
 int printf_main(int argc, char **argv);
 int bb_putchar(int value);
 char *skip_whitespace(const char *text);

@@ -344,8 +344,38 @@ def main():
                 print('PERMISSIONS_CWD_OK')
                 """)}),
             ("shell", {"command": "read -r result < moved-mutation/result; printf '%s\\n' \"$result\""}),
+            ("python", {"code": dedent("""
+                import subprocess
+                payload = (bytes(range(256)) * 2050)[:524289]
+                long_line = b'x' * 1100003
+                for path, data in [('stream-binary', payload), ('stream-long', long_line),
+                                   ('stream-lines', b'a\\0b\\nsecond\\nlast\\0tail')]:
+                    with open(path, 'wb') as output:
+                        output.write(data)
+                cases = [
+                    ('cat stream-binary', payload, 0),
+                    ('cat -n stream-lines', b'     1\\ta\\0b\\n     2\\tsecond\\n     3\\tlast\\0tail', 0),
+                    ('head -n -1 stream-lines', b'a\\0b\\nsecond\\n', 0),
+                    ('tail -n 1 stream-long', long_line, 0),
+                    ('tail -c 65537 stream-binary', payload[-65537:], 0),
+                    ('cat stream-binary | tee stream-copy | wc -c', None, 0),
+                    ('yes | head -c 196613', (b'y\\n' * 98307)[:196613], 0),
+                    ('head moved-mutation', b'', 1),
+                    ('printf data | tee >&-', b'', 1),
+                ]
+                for command, expected, status in cases:
+                    result = subprocess.run(command, shell=True, capture_output=True)
+                    assert result.returncode == status, (command, result.returncode, result.stderr)
+                    if expected is None:
+                        assert int(result.stdout) == len(payload), result.stdout
+                    else:
+                        assert result.stdout == expected, (command, len(result.stdout))
+                    assert bool(result.stderr) == bool(status), (command, result.stderr)
+                assert open('stream-copy', 'rb').read() == payload
+                print('UPSTREAM_STREAMS_OK')
+                """)}),
         ]
-        Provider.code_expected = ["File saved", "NESTED_SCRIPT_OK", "FILESYSTEM_WRITES_OK", "HEREDOC_SCRIPT_OK", "FINITE_STDIN_OK", "PERMISSIONS_CWD_OK", "MUTATION_SHARED_OK"]
+        Provider.code_expected = ["File saved", "NESTED_SCRIPT_OK", "FILESYSTEM_WRITES_OK", "HEREDOC_SCRIPT_OK", "FINITE_STDIN_OK", "PERMISSIONS_CWD_OK", "MUTATION_SHARED_OK", "UPSTREAM_STREAMS_OK"]
     args.output.mkdir(parents=True, exist_ok=True)
     Provider.requests.clear()
     Provider.errors.clear()
@@ -466,7 +496,7 @@ def main():
                         wait("CODE_TOOLS_VERIFIED", args.code_timeout)
                         send("/wasm ps")
                         wait("Ready  •")
-                        print("PASS file tools, 8 MiB writes, finite stdin, mutations, permissions and inherited cwd/umask" if args.filesystem_tools else "PASS real model shell/Python tools, cached WASM, source preservation, subprocess, failure, capture boundaries and fresh state", flush=True)
+                        print("PASS file tools, 8 MiB writes, finite stdin, mutations, permissions, inherited cwd/umask and upstream stream applets" if args.filesystem_tools else "PASS real model shell/Python tools, cached WASM, source preservation, subprocess, failure, capture boundaries and fresh state", flush=True)
                     send("/clear")
                     wait("Conversation cleared")
                     send("/wasm start ash background-loop.sh")
@@ -541,6 +571,10 @@ def main():
                                                    ('new-mode-target', 0o400)]:
                                     assert workspace.entries['moved-mutation/' + name]['mode'] == mode, name
                                 assert workspace.entries['moved-mutation/link']['target'] == 'replaced'
+                                stream_payload = (bytes(range(256)) * 2050)[:524289]
+                                assert workspace.read('stream-copy') == stream_payload
+                                assert workspace.read('stream-binary') == stream_payload
+                                assert workspace.read('stream-long') == b'x' * 1100003
                                 for removed in ('mutation', 'moved-mutation/empty', 'moved-mutation/original', 'moved-mutation/replaced'):
                                     assert removed not in workspace.entries, removed
                             else:

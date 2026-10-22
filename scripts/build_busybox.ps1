@@ -36,6 +36,13 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $Source 'libbb/last_char_is.c'),
     (Join-Path $Source 'coreutils/chmod.c'), (Join-Path $Source 'libbb/parse_mode.c'),
     (Join-Path $Source 'libbb/mode_string.c'), 'guests/busybox/metadata.c',
+    (Join-Path $build 'cat.c'), (Join-Path $build 'head.c'),
+    (Join-Path $build 'tail.c'), (Join-Path $Source 'coreutils/wc.c'), (Join-Path $build 'tee.c'),
+    (Join-Path $Source 'libbb/bb_cat.c'), (Join-Path $Source 'libbb/copyfd.c'),
+    (Join-Path $build 'print_numbered_lines.c'), (Join-Path $Source 'libbb/printable.c'),
+    (Join-Path $Source 'libbb/xatonum.c'), (Join-Path $Source 'libbb/wfopen_input.c'),
+    (Join-Path $Source 'libbb/read.c'), (Join-Path $build 'fflush_stdout_and_exit.c'),
+    'guests/busybox/stream_support.c',
     'guests/busybox/main.c', 'guests/busybox/support.c', 'guests/busybox/awk_support.c', 'guests/busybox/applets.c', 'guests/busybox/exec.c',
     'guests/lib/process.c', 'guests/sjlj/runtime.c', 'guests/sjlj/stack.s'
 $raw = Join-Path $build 'ash.raw.wasm'

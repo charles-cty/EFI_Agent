@@ -66,22 +66,9 @@ FILE *xfopen(const char *path, const char *mode)
     return stream;
 }
 
-FILE *xfopen_stdin(const char *path)
-{
-    return LONE_DASH(path) ? stdin : xfopen(path, "r");
-}
-
 FILE *fopen_for_read(const char *path)
 {
     return fopen(path, "r");
-}
-
-int xopen_stdin(const char *path)
-{
-    int fd = LONE_DASH(path) ? efi_ash_dupfd(STDIN_FILENO, 4) : open(path, O_RDONLY);
-    if (fd < 0)
-        bb_simple_perror_msg_and_die(path);
-    return fd;
 }
 
 char *xmalloc_read(int fd, size_t *size)

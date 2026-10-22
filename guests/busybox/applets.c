@@ -1,4 +1,5 @@
 #include "busybox.h"
+#include "utility_support.h"
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -29,6 +30,11 @@ static int applet_sleep(int argc, char **argv)
 }
 
 int sed_main(int argc, char **argv);
+int cat_main(int argc, char **argv);
+int head_main(int argc, char **argv);
+int tail_main(int argc, char **argv);
+int wc_main(int argc, char **argv);
+int tee_main(int argc, char **argv);
 int chmod_main(int argc, char **argv);
 int awk_main(int argc, char **argv);
 
@@ -56,66 +62,6 @@ static int copy_stream(int input, int output, long limit)
                 return 0;
         }
     }
-}
-
-static int applet_cat(int argc, char **argv)
-{
-    if (argc == 1)
-        return copy_stream(STDIN_FILENO, STDOUT_FILENO, -1);
-    for (int i = 1; i < argc; ++i) {
-        int input = strcmp(argv[i], "-") == 0 ? STDIN_FILENO : open(argv[i], O_RDONLY);
-        if (input < 0) {
-            bb_simple_perror_msg(argv[i]);
-            return 1;
-        }
-        int status = copy_stream(input, STDOUT_FILENO, -1);
-        if (input != STDIN_FILENO)
-            close(input);
-        if (status)
-            return status;
-    }
-    return 0;
-}
-
-static int applet_head(int argc, char **argv)
-{
-    long lines = 10;
-    int index = 1;
-    if (index + 1 < argc && strcmp(argv[index], "-n") == 0) {
-        lines = strtol(argv[index + 1], NULL, 10);
-        index += 2;
-    }
-    if (lines < 0)
-        lines = 0;
-    if (index == argc)
-        return copy_stream(STDIN_FILENO, STDOUT_FILENO, -1);
-    for (; index < argc; ++index) {
-        int input = open(argv[index], O_RDONLY);
-        if (input < 0) {
-            bb_simple_perror_msg(argv[index]);
-            return 1;
-        }
-        char buffer[65536];
-        long remaining = lines;
-        while (remaining > 0) {
-            ssize_t count = read(input, buffer, sizeof(buffer));
-            if (count <= 0)
-                break;
-            ssize_t end = count;
-            for (ssize_t i = 0; i < count && remaining > 0; ++i) {
-                if (buffer[i] == '\n')
-                    --remaining;
-                if (remaining == 0)
-                    end = i + 1;
-            }
-            if (write(STDOUT_FILENO, buffer, (size_t)end) != end) {
-                close(input);
-                return 1;
-            }
-        }
-        close(input);
-    }
-    return 0;
 }
 
 static int applet_ls(int argc, char **argv)
@@ -224,8 +170,12 @@ int efi_busybox_applet(int argc, char **argv)
 {
     const char *name = bb_basename(argv[0]);
     applet_name = name;
-    if (strcmp(name, "cat") == 0) return applet_cat(argc, argv);
-    if (strcmp(name, "head") == 0) return applet_head(argc, argv);
+    xfunc_error_retval = EXIT_FAILURE;
+    if (strcmp(name, "cat") == 0) return cat_main(argc, argv);
+    if (strcmp(name, "head") == 0) return head_main(argc, argv);
+    if (strcmp(name, "tail") == 0) return tail_main(argc, argv);
+    if (strcmp(name, "wc") == 0) return wc_main(argc, argv);
+    if (strcmp(name, "tee") == 0) return tee_main(argc, argv);
     if (strcmp(name, "ls") == 0) return applet_ls(argc, argv);
     if (strcmp(name, "env") == 0) return applet_env();
     if (strcmp(name, "yes") == 0) return applet_yes(argc, argv);

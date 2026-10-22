@@ -35,9 +35,9 @@ def main():
         ("backup", "sed -i.bak 's/new/next/g' inplace; cat inplace inplace.bak", b"next next\nnew new\n", 0, None),
         ("long-options", "sed --quiet --regexp-extended --expression 's/([0-9]+)/[\\1]/p' words", b"red [11] red\nblue [22] blue\ngreen [33] red\n", 0, None),
         ("missing-file", "sed 's/a/b/' missing", b"", 1, b"missing"),
-        ("bad-regex", "sed -E 's/(a/b/' words", b"", 2, b"bad regex"),
-        ("bad-expression", "sed 's/[a/b/' words", b"", 2, b"unmatched"),
-        ("bad-option", "sed -Q words", b"", 2, b"invalid applet arguments"),
+        ("bad-regex", "sed -E 's/(a/b/' words", b"", 1, b"bad regex"),
+        ("bad-expression", "sed 's/[a/b/' words", b"", 1, b"unmatched"),
+        ("bad-option", "sed -Q words", b"", 1, b"invalid applet arguments"),
     ]
     with tempfile.TemporaryDirectory(prefix="efi-busybox-sed-") as temporary:
         root = Path(temporary)

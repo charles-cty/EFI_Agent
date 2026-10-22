@@ -152,7 +152,7 @@ impl Descriptor {
         }
     }
 
-    /// None means a full pipe. A partial write is returned when some space exists.
+    /// None means a full output queue or pipe. Available space permits a short write.
     pub(crate) fn write(&self, bytes: &[u8]) -> Result<Option<usize>, i32> {
         if !self.writable() {
             return Err(if matches!(self, Self::File { .. }) {
@@ -190,11 +190,12 @@ impl Descriptor {
             }
             Self::Output(output) => {
                 let mut output = output.borrow_mut();
-                if bytes.len() > MAX_OUTPUT_BYTES - output.len() {
-                    return Err(51);
+                let count = bytes.len().min(MAX_OUTPUT_BYTES - output.len());
+                if count == 0 {
+                    return Ok(None);
                 }
-                output.extend_from_slice(bytes);
-                Ok(Some(bytes.len()))
+                output.extend_from_slice(&bytes[..count]);
+                Ok(Some(count))
             }
             Self::Pipe(endpoint) => {
                 let mut pipe = endpoint.pipe.borrow_mut();

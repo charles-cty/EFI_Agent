@@ -45,7 +45,7 @@ def main():
         ("bad-number", "grep -m -1 alpha lines", b"", 2, b"invalid number"),
         ("space-number", "grep -m ' 1' alpha lines", b"", 2, b"invalid number"),
         ("plus-number", "grep -m +1 alpha lines", b"", 2, b"invalid number"),
-        ("overflow-number", "grep -m 2147483648 alpha lines", b"", 2, b"invalid number"),
+        ("overflow-number", "grep -m 2147483648 alpha lines", b"", 2, b"not in 0..2147483647 range"),
         ("directory-input", "grep alpha tree", b"", 2, None),
         ("closed-output", "grep alpha lines >&-", b"", 2, None),
     ]

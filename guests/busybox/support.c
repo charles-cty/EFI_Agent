@@ -114,11 +114,6 @@ void fflush_all(void)
     fflush(NULL);
 }
 
-ssize_t safe_read(int fd, void *bytes, size_t size)
-{
-    return read(fd, bytes, size);
-}
-
 ssize_t nonblock_immune_read(int fd, void *bytes, size_t size)
 {
     return read(fd, bytes, size);

@@ -4158,3 +4158,81 @@ are method-compatible private proxies, with a type identity difference from
 the built-in DirEntry. Virtual mount completeness, other upstream applets,
 filesystem PATH and persistent sessions remain pending. These permission
 checks do not establish complete environment delivery.
+
+## 2026-10-22 upstream stream applets and output backpressure
+
+The shared BusyBox image now builds upstream 1.37.0 cat, head, tail, wc and
+tee. It uses upstream read, copyfd, xatonum, input opening, printable-byte and
+numbered-line helpers. The numbered-line and negative-head staging patches
+use length-aware input/output to preserve embedded NUL and missing final
+newlines. Numbering crosses partial file boundaries. Tail retains complete
+long lines instead of assuming a maximum line length, grows its byte buffer
+from actual input, and handles unsigned counts without signed overflow.
+Read, write and flush failures produce nonzero statuses. Ordinary external
+applets use failure status 1; grep explicitly retains its own error status 2.
+
+Windows-native integration passes 112 command cases and independent saved
+tee bytes in `artifacts/streams-integration-final.log`. It covers files/stdin,
+multiple files, numbering, binary visible output, negative and zero head
+counts, tail positions and UINT_MAX counts, an unterminated 1,100,003-byte
+line, wc totals/offsets, tee append/multiple destinations, closed descriptors,
+directory reads, and a 196,613-byte yes/head pipeline. Twelve deterministic
+structured binary inputs each check head, tail and numbering against separate
+byte/index oracles. Tests use isolated temporary namespace trees.
+
+Output queues now suspend full writes and resume after the host drains them.
+Stream requests above 512 KiB return a normal short write. Every iovec is
+validated before any bytes are copied. The private control endpoint retains
+its atomic frame limit. `output_backpressure.rs` checks stdout and stderr,
+an invalid later vector without effects, the first 524,288-byte transfer,
+zero-byte success while full, suspension, and the exact remaining bytes after
+drain. All 82 WASM tests and Clippy pass in `artifacts/streams-wasm-tests.log`
+and `artifacts/streams-clippy.log`.
+
+The final shared image passes 21 awk checks including its independent pipe
+oracle, 24 sed checks including temporary cleanup, 33 grep cases, the guest
+permission/C-wrapper suite, all 15 CPython integration cases, and 10 ash
+descriptor inheritance cases. Evidence: `artifacts/streams-awk-final.log`,
+`streams-sed-final.log`, `streams-grep-final.log`,
+`streams-permissions-final.log`, `streams-python-final.log` and
+`streams-descriptors-final.log` under artifacts. The Windows Release EFI and
+launcher package builds pass in `artifacts/streams-package.log`.
+
+Issues found and resolved during implementation:
+
+- Fast cat output filled the root queue before a scheduler yield and lost the
+  final byte of a 524,289-byte file. Backpressure replaces NOSPC rejection.
+- Tail's large write hit the old request cap. Bounded copying and normal short
+  writes now allow it to complete; its approximate line seek was removed.
+- Upstream numbered cat added final newlines and removed NUL bytes. Upstream
+  negative-line head also removed NUL bytes. Length-aware staging fixes both.
+- Head ignored input errors; tee and tail ignored selected output errors.
+  Input/flush/copy error checks now preserve failure status.
+- Signed tail count arithmetic could corrupt +UINT_MAX byte positions and
+  negative casts could misclassify small streams. Bounded skip arithmetic
+  and unsigned comparisons cover both boundaries.
+- The first preparation patch used a duplicated source marker. A unique
+  surrounding marker restores strict upstream-source validation.
+- Upstream numeric parsing changes grep's overflow diagnostic to its precise
+  valid range. The test now checks that range and retains the status check.
+- A descriptor test initially selected a nonexistent fixture location; it now
+  uses the existing `artifacts/wasm-fixtures/ash_child.wasm`.
+- Clang reports upstream string-pointer arithmetic warnings in head/tail/wc.
+  These are nonfatal. One log-inspection tail invocation was parsed as an
+  invalid option; explicit `tail -n` fixed the inspection.
+
+Other upstream commands, complete mounts, filesystem PATH, real monotonic
+time, persistent sessions, the full application regression and the 256 MiB
+resource gate remain pending. These checks establish only the stated scope.
+
+Actual 512 MiB QEMU/OVMF passes WHPX with Responses and TCG with Chat
+Completions on the final shared image. The model calls standard Python
+subprocess APIs to verify cat's 524,289-byte binary output and numbered NUL
+lines, negative-line head, tail's 1,100,003-byte line and 65,537-byte suffix,
+cat/tee/wc above pipe capacity, yes/head, directory reads and closed output.
+Independent saved FAT reads verify the binary input, complete long line and
+tee copy. Existing mutation/permission/8 MiB file-write checks, verified HTTPS
+and DNS, code-tree cancellation, independent background roots and subsequent
+requests also pass. Evidence: `artifacts/streams-whpx-final.log`,
+`artifacts/streams-whpx-final`, `artifacts/streams-tcg-final.log`, and
+`artifacts/streams-tcg-final`.

@@ -385,12 +385,21 @@ fn fd_write(
         let total = vectors.iter().try_fold(0usize, |sum, range| {
             sum.checked_add(range.len()).ok_or(INVAL)
         })?;
-        if total > MAX_OUTPUT_BYTES {
+        if total > MAX_OUTPUT_BYTES
+            && matches!(
+                caller.data().descriptors.get(&fd),
+                Some(io::Descriptor::Control(_))
+            )
+        {
             return Err(INVAL);
         }
-        let mut output = Vec::with_capacity(total);
+        let mut output = Vec::with_capacity(total.min(MAX_OUTPUT_BYTES));
         for range in vectors {
-            output.extend_from_slice(&memory.data(&caller)[range]);
+            let count = range.len().min(MAX_OUTPUT_BYTES - output.len());
+            output.extend_from_slice(&memory.data(&caller)[range.start..range.start + count]);
+            if output.len() == MAX_OUTPUT_BYTES {
+                break;
+            }
         }
         Ok((
             memory,

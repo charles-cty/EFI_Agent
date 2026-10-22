@@ -9,6 +9,21 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+BusyBox cat/head/tail/wc/tee now use upstream 1.37.0 applets and shared libbb
+stream/numeric helpers. Staged fixes preserve NUL bytes and unterminated lines
+in numbered cat and negative-line head, retain numbering across file joins,
+read complete long tail lines, handle UINT_MAX counts, and report I/O failures.
+Output queues now suspend on backpressure and return normal short writes
+instead of rejecting data above 512 KiB. All iovecs are validated first;
+private control messages retain their atomic size bound. Windows-native
+stream integration passes 112 cases plus independent saved tee bytes.
+Shared-image awk/sed/grep, permission, Python and descriptor checks pass.
+Actual 512 MiB WHPX/Responses and TCG/Chat Completions verify standard Python
+subprocess stream capture, pipelines, errors and independent saved FAT bytes
+in artifacts/streams-whpx-final and streams-tcg-final. All 82 WASM tests,
+Clippy, formatting and Windows Release EFI/launcher packaging pass.
+The broader command, mount, PATH and session requirements remain incomplete.
+
 BusyBox awk now uses the upstream 1.37.0 translation unit with SDK regex/math
 and cooperative ash-backed system/popen/pclose. Windows native integration
 checks 20 semantic cases and an independent 195000-byte pipe oracle; existing

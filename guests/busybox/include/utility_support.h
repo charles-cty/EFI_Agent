@@ -15,6 +15,7 @@
 #define FALSE 0
 #define SKIP 2
 #define exit_SUCCESS() exit(EXIT_SUCCESS)
+#define isprint_asciionly(value) ((unsigned)((value) - 0x20) <= 0x7e - 0x20)
 #define DOT_OR_DOTDOT(text) ((text)[0] == '.' && \
     ((text)[1] == '\0' || ((text)[1] == '.' && (text)[2] == '\0')))
 
@@ -72,5 +73,33 @@ int recursive_action(const char *path, unsigned flags,
 char *concat_subpath_file(const char *path, const char *name);
 char *last_char_is(const char *text, int value);
 char *bb_mode_string(char buffer[11], mode_t mode);
+extern const char bb_msg_standard_output[];
+extern const char bb_msg_read_error[];
+extern const char *const bb_argv_dash[];
+ssize_t full_read(int fd, void *buffer, size_t size);
+int open_or_warn(const char *path, int flags);
+int open_or_warn_stdin(const char *path);
+FILE *fopen_or_warn_stdin(const char *path);
+off_t xlseek(int fd, off_t offset, int whence);
+void xmove_fd(int source, int target);
+void bb_perror_nomsg_and_die(void) NORETURN;
+void die_if_ferror(FILE *stream, const char *name);
+void die_if_ferror_stdout(void);
+int fputs_stdout(const char *text);
+void bb_perror_msg(const char *format, ...) __attribute__((format(printf, 1, 2)));
+void fflush_stdout_and_exit(int status) NORETURN;
+void fflush_stdout_and_exit_SUCCESS(void) NORETURN;
+off_t bb_copyfd_size(int input, int output, off_t size);
+off_t bb_copyfd_eof(int input, int output);
+int bb_cat(char **argv);
+char *xmalloc_fgets(FILE *stream);
+struct number_state {
+    unsigned width, start, inc;
+    const char *sep, *empty_str;
+    smallint all, nonempty, continued;
+};
+int print_numbered_lines(struct number_state *state, const char *path);
+enum { PRINTABLE_META = 0x100, VISIBLE_ENDLINE = 1 << 0, VISIBLE_SHOW_TABS = 1 << 1 };
+void visible(unsigned value, char *buffer, int flags);
 
 #endif

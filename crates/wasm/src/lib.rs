@@ -222,6 +222,9 @@ impl World {
                 | "yes"
                 | "awk"
                 | "chmod"
+                | "tail"
+                | "wc"
+                | "tee"
         )
     }
 

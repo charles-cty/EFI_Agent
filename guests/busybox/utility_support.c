@@ -18,19 +18,6 @@ unsigned string_array_len(char **array)
     return length;
 }
 
-int xatoi_positive(const char *text)
-{
-    char *end;
-    int previous_error = errno;
-    errno = 0;
-    unsigned long value = strtoul(text, &end, 10);
-    if (!*text || *text == '-' || *text == '+' || isspace((unsigned char)*text)
-        || *end || errno || value > INT_MAX)
-        bb_error_msg_and_die("invalid number '%s'", text);
-    errno = previous_error;
-    return (int)value;
-}
-
 FILE *xfopen_for_write(const char *path)
 {
     return xfopen(path, "w");

@@ -16,6 +16,9 @@ ENABLED = {
     "SED", "LONG_OPTS",
     "GREP", "FEATURE_GREP_CONTEXT",
     "CHMOD",
+    "CAT", "FEATURE_CATN", "FEATURE_CATV", "HEAD", "FEATURE_FANCY_HEAD",
+    "TAIL", "FEATURE_FANCY_TAIL", "WC", "FEATURE_WC_LARGE",
+    "TEE", "FEATURE_TEE_USE_BLOCK_IO",
 }
 
 
@@ -71,6 +74,118 @@ static int efi_read_monotonic_ms(unsigned *value)
     (output / "shell_read.c").write_text(license_header + preamble + read, encoding="utf-8")
 
 
+def prepare_streams(source: Path, output: Path):
+    """Retain upstream applets and fix byte preservation and error propagation."""
+    cat = (source / "coreutils/cat.c").read_text(encoding="utf-8")
+    cat = replace_once(cat, '\t\tns.start = 1;', '\t\tns.start = 1;\n        ns.continued = 0;')
+    (output / "cat.c").write_text(cat, encoding="utf-8")
+
+    numbered = (source / "libbb/print_numbered_lines.c").read_text(encoding="utf-8")
+    numbered = replace_once(numbered, '\tchar *line;', '''    char *line = NULL;
+    size_t capacity = 0;
+    ssize_t length;
+    int status = EXIT_SUCCESS;''')
+    start = numbered.index('\twhile ((line = xmalloc_fgetline(fp)) != NULL) {')
+    end = numbered.index('\n\tns->start = N;', start)
+    numbered = numbered[:start] + '''    while ((length = getline(&line, &capacity, fp)) >= 0) {
+        if (!ns->continued) {
+            if (ns->all || (ns->nonempty && line[0] != '\\n')) {
+                printf("%*u%s", ns->width, N, ns->sep);
+                N += ns->inc;
+            } else if (ns->empty_str) {
+                fputs_stdout(ns->empty_str);
+            }
+        }
+        fwrite(line, 1, length, stdout);
+        ns->continued = line[length - 1] != '\\n';
+    }
+    free(line);
+    if (ferror(fp)) {
+        bb_simple_perror_msg(filename);
+        status = EXIT_FAILURE;
+    }
+''' + numbered[end:]
+    numbered = replace_once(numbered, '\tfclose(fp);', '''    if (fclose_if_not_stdin(fp)) {
+        bb_simple_perror_msg(filename);
+        return EXIT_FAILURE;
+    }''')
+    numbered = replace_once(numbered, '\treturn EXIT_SUCCESS;', '\treturn status;')
+    (output / "print_numbered_lines.c").write_text(numbered, encoding="utf-8")
+
+    head = (source / "coreutils/head.c").read_text(encoding="utf-8")
+    marker = 'static void\nprint_except_N_last_lines(FILE *fp, unsigned count)'
+    head = replace_once(head, marker, '''static char *head_line(FILE *fp, size_t *length)
+{
+    char *line = NULL;
+    size_t capacity = 0;
+    ssize_t size = getline(&line, &capacity, fp);
+    if (size < 0) {
+        free(line);
+        return NULL;
+    }
+    *length = size;
+    return line;
+}
+
+''' + marker)
+    start = head.index(marker)
+    end = head.index('\n#else', start)
+    ring = head[start:end]
+    ring = replace_once(ring, '\tunsigned head = 0;', '''    size_t *lengths = xzalloc(count * sizeof(*lengths));
+    size_t length;
+    unsigned head = 0;''')
+    ring = ring.replace('xmalloc_fgets(fp)', 'head_line(fp, &length)')
+    ring = replace_once(ring, '\t\tcircle[head++] = c;\n\t\tif (head == count)', '\t\tlengths[head] = length;\n\t\tcircle[head++] = c;\n\t\tif (head == count)')
+    ring = replace_once(ring, '\t\tfputs_stdout(circle[head]);', '\t\tfwrite(circle[head], 1, lengths[head], stdout);')
+    ring = replace_once(ring, '\t\tfree(circle[head]);', '\t\tlengths[head] = length;\n\t\tfree(circle[head]);')
+    ring = replace_once(ring, '\tfree(circle);', '\tfree(circle);\n\tfree(lengths);')
+    head = head[:start] + ring + head[end:]
+    head = replace_once(head, 'bb_error_msg("count is too big: %lu", count);', 'bb_error_msg_and_die("count is too big: %lu", count);')
+    head = replace_once(head, '\t\t\tdie_if_ferror_stdout();', '''            die_if_ferror_stdout();
+            if (ferror(fp)) {
+                bb_simple_perror_msg(*argv);
+                retval = EXIT_FAILURE;
+            }''')
+    (output / "head.c").write_text(head, encoding="utf-8")
+
+    tail = (source / "coreutils/tail.c").read_text(encoding="utf-8")
+    tail = replace_once(tail, '\t\tsleep(sleep_period);', '''        if (sleep(sleep_period) != 0)
+            bb_simple_perror_msg_and_die("sleep");''')
+    tail = replace_once(tail, '\t\t\t\t\tbb_copyfd_size(fd, STDOUT_FILENO, count);', '''                    if (bb_copyfd_size(fd, STDOUT_FILENO, count) < 0)
+                        G.exitcode = EXIT_FAILURE;''')
+    start = tail.index('#if 1 /* This is technically incorrect for *LONG* strings')
+    end = tail.index('#endif', start) + len('#endif')
+    tail = tail[:start] + '                xlseek(fd, 0, SEEK_SET);' + tail[end:]
+    tail = replace_once(tail, '\t\t\t\tunsigned off;\n', '')
+    start = tail.index('\tif (!G.from_top && COUNT_BYTES) {\n\t\tif (tailbufsize < count + BUFSIZ)')
+    end = tail.index('\n\t/* tail -c1024m', start)
+    tail = tail[:start] + tail[end:]
+    tail = replace_once(tail, 'taillen > (int)count', '(unsigned)taillen > count')
+    tail = replace_once(tail, 'newlines_seen + newlines_in_buf < (int)count', '(unsigned)(newlines_seen + newlines_in_buf) < count')
+    tail = replace_once(tail, '\t\t\t\t\t\tnwrite -= (count - seen);\n\t\t\t\t\t\tseen += nread;', '''                        unsigned skip = count - seen;
+                        if (skip > (unsigned)nread)
+                            skip = nread;
+                        nwrite -= skip;
+                        seen += skip;''')
+    growth = '''\t\t\t\t\tif (tailbufsize < (size_t)taillen + BUFSIZ) {
+\t\t\t\t\t\ttailbufsize = taillen + BUFSIZ;
+\t\t\t\t\t\ttailbuf = xrealloc(tailbuf, tailbufsize);
+\t\t\t\t\t}'''
+    tail = replace_once(tail, growth, '')
+    tail = replace_once(tail, '\t\t\t\tbuf = tailbuf + taillen;', growth + '\n\t\t\t\tbuf = tailbuf + taillen;')
+    (output / "tail.c").write_text(tail, encoding="utf-8")
+
+    tee = (source / "coreutils/tee.c").read_text(encoding="utf-8")
+    tee = replace_once(tee, '\t\tsignal(SIGINT, SIG_IGN);', '''        if (signal(SIGINT, SIG_IGN) == SIG_ERR)
+            bb_simple_perror_msg_and_die("SIGINT");''')
+    tee = replace_once(tee, '\tfiles[0] = stdin;', '\tdie_if_ferror_stdout();\n\tfiles[0] = stdin;')
+    (output / "tee.c").write_text(tee, encoding="utf-8")
+
+    flush = (source / "libbb/fflush_stdout_and_exit.c").read_text(encoding="utf-8")
+    flush = replace_once(flush, 'if (fflush(stdout))', 'if (fflush(stdout) || ferror(stdout))')
+    (output / "fflush_stdout_and_exit.c").write_text(flush, encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
@@ -83,7 +198,9 @@ def main():
              args.source / "coreutils/test.c", args.source / "shell/math.c",
              args.source / "include/unicode.h", args.source / "editors/awk.c",
              args.source / "editors/sed.c", args.source / "libbb/getopt32.c",
-             args.source / "findutils/grep.c", args.source / "coreutils/chmod.c"]
+             args.source / "findutils/grep.c", args.source / "coreutils/chmod.c",
+             *(args.source / f"coreutils/{name}.c" for name in ("cat", "head", "tail", "wc", "tee")),
+             args.source / "libbb/copyfd.c"]
     names = set(ENABLED)
     for path in files:
         text = path.read_text(encoding="utf-8")
@@ -97,9 +214,11 @@ def main():
         lines.append(f"#define ENABLE_{name} {int(enabled)}")
         lines.append(f"#define IF_{name}(...) {'__VA_ARGS__' if enabled else ''}")
         lines.append(f"#define IF_NOT_{name}(...) {'' if enabled else '__VA_ARGS__'}")
-    lines.extend(["#define HAVE_DEV_FD 0", "#define CONFIG_FEATURE_EDITING_MAX_LEN 1024", "#endif", ""])
+    lines.extend(["#define HAVE_DEV_FD 0", "#define CONFIG_FEATURE_EDITING_MAX_LEN 1024",
+                  "#define CONFIG_FEATURE_COPYBUF_KB 4", "#endif", ""])
     (args.output / "ash_config.h").write_text("\n".join(lines), encoding="utf-8")
     (args.output / "NUM_APPLETS.h").write_text("#define NUM_APPLETS 1\n", encoding="utf-8")
+    prepare_streams(args.source, args.output)
     awk = (args.source / "editors/awk.c").read_text(encoding="utf-8")
     awk = replace_once(awk, '#include "libbb.h"', '#include "libbb.h"\n#include "awk_support.h"\nstruct globals;\nstatic struct globals *ptr_to_globals;')
     (args.output / "awk.c").write_text(awk, encoding="utf-8")

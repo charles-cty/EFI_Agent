@@ -142,7 +142,12 @@ The current WASI Preview 1 imports are `args_sizes_get`, `args_get`,
 `clock_time_get`, `clock_res_get`, `proc_exit`, and `sched_yield`.
 Firmware roots start with an empty environment. Descriptor 0 reads finite input and
 returns EOF when the input is empty. Descriptors 1 and 2 append to distinct
-output buffers, each bounded to 512 KiB between host drains. Child processes
+output buffers, each bounded to 512 KiB between host drains. Full buffers
+suspend writes until the host drains them; available space permits a short
+write. Stream requests above 512 KiB also use short writes, with all iovecs
+validated before any transfer. Empty writes succeed even with a full buffer.
+The private process-control endpoint retains its atomic frame-size limit.
+Child processes
 inherit selected input and output objects. Invalid iovecs return WASI FAULT
 before input is consumed or output is appended. Selected unsupported operations
 are registered with explicit error results; unknown imports fail linking.
