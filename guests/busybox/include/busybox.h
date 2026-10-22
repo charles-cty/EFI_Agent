@@ -149,6 +149,7 @@ extern const char bb_banner[];
 #define getppid efi_process_getppid
 char *utoa(unsigned value);
 int echo_main(int argc, char **argv);
+int efi_busybox_applet(int argc, char **argv);
 char bb_process_escape_sequence(const char **text);
 
 #endif

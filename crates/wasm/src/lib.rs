@@ -197,6 +197,29 @@ pub struct World {
 }
 
 impl World {
+    /// Names implemented by the BusyBox multicall guest. They resolve to the
+    /// ash image while retaining argv[0], so the guest can select the applet.
+    fn ash_applet(name: &str) -> bool {
+        matches!(
+            name,
+            "ash"
+                | "cat"
+                | "cp"
+                | "date"
+                | "env"
+                | "grep"
+                | "head"
+                | "ls"
+                | "mkdir"
+                | "mv"
+                | "rm"
+                | "sed"
+                | "sleep"
+                | "yes"
+                | "awk"
+        )
+    }
+
     pub fn new() -> Self {
         let mut config = Config::default();
         // Module start sections run during instantiation and cannot join the dispatcher.
@@ -240,7 +263,10 @@ impl World {
     }
 
     pub fn has_program(&self, name: &str) -> bool {
-        self.programs.contains_key(name) || self.program_files.contains_key(name)
+        self.programs.contains_key(name)
+            || self.program_files.contains_key(name)
+            || (Self::ash_applet(name)
+                && (self.programs.contains_key("ash") || self.program_files.contains_key("ash")))
     }
 
     /// Discover workspace modules without compiling them. Existing installations
@@ -452,10 +478,11 @@ impl World {
         if self.processes.len() >= MAX_PROCESSES {
             return Err(Error::ProcessLimit);
         }
-        self.load_program(name)?;
+        let module_name = if Self::ash_applet(name) { "ash" } else { name };
+        self.load_program(module_name)?;
         let module = self
             .programs
-            .get(name)
+            .get(module_name)
             .ok_or_else(|| Error::UnknownProgram(name.clone()))?;
         let pid = self.next_pid;
         let next_pid = pid

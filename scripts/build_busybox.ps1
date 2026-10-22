@@ -24,7 +24,7 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $build 'printf.c'), (Join-Path $Source 'libbb/bb_strtonum.c'),
     (Join-Path $build 'test.c'), (Join-Path $Source 'coreutils/test_ptr_hack.c'),
     (Join-Path $build 'math.c'),
-    'guests/busybox/main.c', 'guests/busybox/support.c', 'guests/busybox/exec.c',
+    'guests/busybox/main.c', 'guests/busybox/support.c', 'guests/busybox/applets.c', 'guests/busybox/exec.c',
     'guests/lib/process.c', 'guests/sjlj/runtime.c', 'guests/sjlj/stack.s'
 $raw = Join-Path $build 'ash.raw.wasm'
 try {

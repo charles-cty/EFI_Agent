@@ -29,7 +29,9 @@ shell/Python files, finite stdin, mutation/open-file identity and independent
 logical FAT bytes. That run predates the latest flush changes. Current binary
 WHPX verification passes the same complete Responses sequence at 512 MiB with
 qemu64,+rdrand in artifacts/namespace-tools-whpx-512, including cancellation,
-the next request and independent saved FAT content. The native libc/ash/
+the next request and independent saved FAT content. The current binary also
+passes Chat Completions under TCG with max at 512 MiB in
+artifacts/namespace-tools-current-tcg-512. The native libc/ash/
 QuickJS filesystem regression also passes file cursors, append/resize,
 directory cookies and positioning, Unicode globbing, random bytes, fresh-task
 file sharing and language capture against logical namespace bytes. Virtual
@@ -3941,3 +3943,13 @@ Issues encountered and corrected:
   Wasmi's nested Instantiation error wrapper; handling that wrapper passes.
 - A dependency source lookup used an outdated file location. Searching the
   relevant crate's source located the current error definitions.
+## BusyBox command registration
+
+The WASM world resolves the BusyBox applet names `cat`, `cp`, `date`, `env`,
+`grep`, `head`, `ls`, `mkdir`, `mv`, `rm`, `sed`, `sleep`, `yes`, and `awk` to
+the registered `ash.wasm` image. The guest keeps the requested name in
+`argv[0]`, so the multicall entry point selects the applet. Native Release
+`run_guest` checks for `ls`, `cat`, and `ash -c 'ls'`; the Windows WASI SDK 34
+BusyBox build completes successfully. The remaining applets have only build
+coverage until a dedicated firmware regression is run.
+

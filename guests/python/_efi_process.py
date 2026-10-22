@@ -2,7 +2,6 @@
 import errno
 import os
 import struct
-import sys
 
 _channel = os.open('.efi-process', os.O_RDWR)
 _read = os.read
@@ -151,7 +150,6 @@ def _system(command):
 def install():
     import posix
     import subprocess
-    sys.dont_write_bytecode = True
     methods = {
         'pipe': _pipe, 'dup': _dup, 'dup2': _dup2,
         'get_inheritable': _get_inheritable, 'set_inheritable': _set_inheritable,

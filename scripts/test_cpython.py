@@ -316,6 +316,36 @@ print('FINITE_STDIN_OK')
 """)
         self.assertEqual(result.stdout, b"FINITE_STDIN_OK\n")
 
+    def test_imports_write_normal_bytecode_caches_and_respect_no_bytecode_flag(self):
+        result = self.execute("""
+import importlib, os, subprocess, sys
+assert not sys.dont_write_bytecode
+os.makedirs('import-cache')
+with open('import-cache/cached_module.py', 'w') as target:
+    target.write('value = 731\\n')
+sys.path.insert(0, 'import-cache')
+import cached_module
+assert cached_module.value == 731
+cache = importlib.util.cache_from_source('import-cache/cached_module.py')
+assert cached_module.__cached__ == cache and os.path.isfile(cache)
+with open(cache, 'rb') as source:
+    assert source.read(4) == importlib.util.MAGIC_NUMBER
+with open('import-cache/uncached_module.py', 'w') as target:
+    target.write('value = 193\\n')
+r = subprocess.run(['python', '-B', '-c',
+    "import sys;sys.path.insert(0,'import-cache');import uncached_module;assert uncached_module.value==193"],
+    capture_output=True)
+assert (r.returncode, r.stdout, r.stderr) == (0, b'', b''), r
+assert not os.path.exists(importlib.util.cache_from_source('import-cache/uncached_module.py'))
+print('IMPORT_CACHE_OK')
+""")
+        self.assertEqual(result.stdout, b"IMPORT_CACHE_OK\n")
+        workspace = DirectoryWorkspace(self.tree)
+        caches = [path for path in workspace.entries
+                  if path.startswith('import-cache/__pycache__/cached_module.')]
+        self.assertEqual(len(caches), 1)
+        self.assertGreater(len(workspace.read(caches[0])), 16)
+
     def test_uncaught_python_error_is_reported(self):
         result = self.execute("raise ValueError('EXPECTED_PYTHON_ERROR')", status=1)
         diagnostic = re.sub(rb"\x1b\[[0-9;]*m", b"", result.stderr)
