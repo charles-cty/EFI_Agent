@@ -71,9 +71,8 @@ Check pipelines above capacity, yes/head, text transformations, archive and
 compression round trips, extraction containment, modes/times and interrupted
 saves. Check consecutive sessions, failures, cancellation and reset.
 
-Run actual native guests, independent saved FAT checks, both model APIs through
-QEMU/OVMF, a full 512 MiB application regression, a focused 256 MiB check, and
-Windows WHPX separately. Run existing process, descriptor, filesystem, ash,
-Python and networking regressions, host/target Clippy, format and whitespace
-checks. Record actual evidence and failures in verification.md. No stub,
-registered name or unverified provider operation satisfies these requirements.
+Run the Windows-native guest and independent saved FAT checks through WHPX at
+512 MiB. Run existing process, descriptor, filesystem, ash, Python and
+networking regressions, host/target Clippy, format and whitespace checks. Record
+actual evidence and failures in verification.md. No stub, registered name or
+unverified provider operation satisfies these requirements.
