@@ -30,6 +30,7 @@ ENABLED = {
     "REALPATH",
     "OD",
     "BASE64",
+    "SHA256SUM",
 }
 
 
@@ -325,6 +326,10 @@ def main():
     )
     (args.output / "uudecode.c").write_text(
         (args.source / "coreutils/uudecode.c").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (args.output / "md5_sha1_sum.c").write_text(
+        (args.source / "coreutils/md5_sha1_sum.c").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     prepare_text_applets(args.source, args.output, replace_once)
