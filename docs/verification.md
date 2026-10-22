@@ -4533,3 +4533,14 @@ builds complete with only the existing upstream format warnings. The focused
 host runner regression passes direct execution, missing-path failure and ash
 child dispatch, with `/input.txt` as the canonical result. A focused WHPX run
 has not yet been performed for this applet.
+
+## 2026-10-22 upstream od
+
+BusyBox od now uses the upstream parser and dump engine with a narrow WASI
+adapter for file status, escape processing and unaligned byte loads. The
+enabled build exposes the default octal word dump and rejects unsupported
+options with a nonzero status. The focused host runner regression passes
+binary input, exact output, malformed-option failure and coexistence with the
+realpath checks. Windows WASI SDK 34 and Binaryen compilation completes with
+only the existing upstream format warnings. A focused WHPX run has not yet
+been performed for this applet; hexdump remains unimplemented.
