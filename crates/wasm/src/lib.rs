@@ -230,7 +230,6 @@ impl World {
                 | "ln"
                 | "hexdump"
                 | "xargs"
-                | "find"
                 | "sed"
                 | "sleep"
                 | "yes"
