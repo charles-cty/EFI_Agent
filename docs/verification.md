@@ -1,5 +1,46 @@
 # Verification record
 
+## 2026-10-22: Persistent filesystem foundation and WASI mutations
+
+Windows-native `cargo test -p efi-agent-filesystem -p efi-agent-wasm` passes.
+The common filesystem crate has 13 native-backed integration cases. They cover
+open-file unlink/replacement lifetime, anchored directory rename, mode checks,
+timestamp persistence, relative/absolute/dangling/cyclic links, recovery from
+partial journal writes and failed flush, protected metadata collisions, partial
+initialization, and 160 structured mutations against an independent map with
+periodic restart. Clock failure is checked before resize/read effects.
+
+The WASI filesystem suite has five passing integration cases, including a
+namespace-backed actual WAT guest. It verifies directory identity after rename,
+creation through links, nofollow errors, stat/lstat types, truncated readlink,
+path and descriptor timestamps, unlink with an open descriptor and directory
+removal with an open view. Optional-operation tests now expect provider errors
+for newly granted mutation rights. All existing WASM unit/integration tests pass.
+
+The common provider types are extracted into a no_std crate. Native raw
+providers now expose actual timestamps, supported modes and capacity, and raw
+unlink/rmdir for backing reclamation. The persistent namespace remains outside
+normal firmware/native-runner mounting. Its logical snapshot must be used for
+launcher export before mounting it in normal operation. No new firmware
+mutation or BusyBox applet claim follows from these native checks.
+
+Issues corrected during this work:
+
+- An extraction script omitted directory creation and continued after a write
+  error. The exact original was recovered from Git before extraction resumed.
+- Rust rejected an inner module comment below extern crate; it now precedes it.
+- Windows FlushFileBuffers denied read-only handles. Read-only file flush now
+  succeeds without requesting a write-only OS operation.
+- Clippy found an unused unit expression and a collapsible condition; both
+  were corrected.
+- Existing optional-operation tests expected denied rights. They now verify
+  unsupported provider errors after mutation rights were implemented.
+- The new WAT test requested unimplemented rights by mistake. The exact
+  supported union corrected it; the guest then passed the complete sequence.
+- A source read used the old filesystem test filename; the current test file
+  was located with rg. A documentation patch used an incorrect heading;
+  no changes were applied, and an exact-context patch replaced it.
+
 ## 2026-10-06: Single-vCPU VM CPU configuration
 
 The launcher explicitly selects one vCPU with `-smp 1`. Windows WHPX uses

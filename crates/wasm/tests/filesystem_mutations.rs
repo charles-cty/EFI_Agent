@@ -42,6 +42,82 @@ impl Drop for Workspace {
 }
 
 #[test]
+fn persistent_namespace_wasi_mutations_keep_directory_and_file_identity() {
+    use efi_agent_wasm::filesystem::{FileSystem, namespace::Namespace};
+    let workspace = Workspace::new();
+    let namespace = Rc::new(
+        Namespace::open(
+            Rc::new(native_fs::NativeFileSystem(workspace.0.clone())),
+            Some(Rc::new(|| Ok(731))),
+        )
+        .unwrap(),
+    );
+    let module = wat::parse_str(r#"(module
+      (import "wasi_snapshot_preview1" "path_create_directory" (func $mkdir (param i32 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "path_open" (func $open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "path_rename" (func $rename (param i32 i32 i32 i32 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "path_symlink" (func $symlink (param i32 i32 i32 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "path_readlink" (func $readlink (param i32 i32 i32 i32 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "path_unlink_file" (func $unlink (param i32 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "path_remove_directory" (func $rmdir (param i32 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "path_filestat_get" (func $stat (param i32 i32 i32 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "path_filestat_set_times" (func $times (param i32 i32 i32 i32 i64 i64 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_filestat_get" (func $fstat (param i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_filestat_set_times" (func $ftimes (param i32 i64 i64 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_close" (func $close (param i32) (result i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 100) "a")
+      (data (i32.const 110) "moved")
+      (data (i32.const 120) "f")
+      (data (i32.const 130) "l")
+      (data (i32.const 140) "a/f")
+      (func $ok (param $error i32) (if (local.get $error) (then unreachable)))
+      (func $equal (param $a i32) (param $b i32)
+        (if (i32.ne (local.get $a) (local.get $b)) (then unreachable)))
+      (func (export "_start") (local $dir i32) (local $file i32)
+        (call $ok (call $mkdir (i32.const 3) (i32.const 100) (i32.const 1)))
+        (call $ok (call $open (i32.const 3) (i32.const 1) (i32.const 100) (i32.const 1) (i32.const 2) (i64.const 268428919) (i64.const 268428919) (i32.const 0) (i32.const 0)))
+        (local.set $dir (i32.load (i32.const 0)))
+        (call $ok (call $symlink (i32.const 140) (i32.const 3) (i32.const 3) (i32.const 130) (i32.const 1)))
+        (call $equal (call $open (i32.const 3) (i32.const 0) (i32.const 130) (i32.const 1) (i32.const 1) (i64.const 66) (i64.const 0) (i32.const 0) (i32.const 0)) (i32.const 32))
+        (call $ok (call $open (i32.const 3) (i32.const 1) (i32.const 130) (i32.const 1) (i32.const 1) (i64.const 10485826) (i64.const 0) (i32.const 0) (i32.const 0)))
+        (local.set $file (i32.load (i32.const 0)))
+        (call $ok (call $stat (i32.const 3) (i32.const 0) (i32.const 130) (i32.const 1) (i32.const 512)))
+        (call $equal (i32.load8_u (i32.const 528)) (i32.const 7))
+        (call $ok (call $times (i32.const 3) (i32.const 1) (i32.const 130) (i32.const 1) (i64.const 193) (i64.const 853) (i32.const 5)))
+        (call $ok (call $stat (i32.const 3) (i32.const 1) (i32.const 130) (i32.const 1) (i32.const 512)))
+        (call $equal (i32.load (i32.const 552)) (i32.const 193))
+        (call $equal (i32.load (i32.const 560)) (i32.const 853))
+        (call $ok (call $readlink (i32.const 3) (i32.const 130) (i32.const 1) (i32.const 600) (i32.const 2) (i32.const 604)))
+        (call $equal (i32.load16_u (i32.const 600)) (i32.const 12129))
+        (call $equal (i32.load (i32.const 604)) (i32.const 2))
+        (call $ok (call $rename (i32.const 3) (i32.const 100) (i32.const 1) (i32.const 3) (i32.const 110) (i32.const 5)))
+        (call $ok (call $stat (local.get $dir) (i32.const 1) (i32.const 120) (i32.const 1) (i32.const 512)))
+        (call $ok (call $unlink (local.get $dir) (i32.const 120) (i32.const 1)))
+        (call $ok (call $ftimes (local.get $file) (i64.const 17) (i64.const 29) (i32.const 5)))
+        (call $ok (call $fstat (local.get $file) (i32.const 512)))
+        (call $equal (i32.load (i32.const 536)) (i32.const 0))
+        (call $equal (i32.load (i32.const 552)) (i32.const 17))
+        (call $ok (call $rmdir (i32.const 3) (i32.const 110) (i32.const 5)))
+        (call $ok (call $close (local.get $file)))
+        (call $ok (call $close (local.get $dir)))))"#).unwrap();
+    let mut world = World::new();
+    world.set_filesystem(namespace.clone());
+    world.register("mutations", &module).unwrap();
+    let pid = world.spawn(vec!["mutations".into()], vec![]).unwrap();
+    for _ in 0..1000 {
+        if !world.status(pid).unwrap().is_live() {
+            break;
+        }
+        world.step();
+    }
+    assert_eq!(world.status(pid).unwrap(), &Status::Exited(0));
+    assert_eq!(namespace.read_link("l").unwrap(), "a/f");
+    assert!(namespace.metadata("moved").is_err());
+    assert!(namespace.take_errors().is_empty());
+}
+
+#[test]
 fn workspace_modules_load_on_demand_and_aliases_share_the_compiled_image() {
     let workspace = Workspace::new();
     let module =

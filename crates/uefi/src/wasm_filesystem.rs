@@ -103,10 +103,14 @@ impl FileSystem for FirmwareFileSystem {
         let info = handle
             .get_boxed_info::<FileInfo>()
             .map_err(|failure| error(failure.status()))?;
-        Ok(Metadata {
-            directory: info.is_directory(),
-            size: info.file_size(),
-        })
+        Ok(Metadata::new(
+            if info.is_directory() {
+                EntryType::Directory
+            } else {
+                EntryType::File
+            },
+            info.file_size(),
+        ))
     }
     fn read_directory(&self, path: &str) -> Result<DirectoryEntries, FileError> {
         let mut directory = self
@@ -214,10 +218,7 @@ impl File for FirmwareFile {
             .handle
             .get_boxed_info::<FileInfo>()
             .map_err(|failure| error(failure.status()))?;
-        Ok(Metadata {
-            directory: false,
-            size: info.file_size(),
-        })
+        Ok(Metadata::new(EntryType::File, info.file_size()))
     }
     fn flush(&mut self) -> Result<(), FileError> {
         self.handle

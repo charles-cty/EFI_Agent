@@ -66,10 +66,14 @@ impl FileSystem for NonLinks {
     fn metadata(&self, path: &str) -> Result<Metadata, FileError> {
         self.0.borrow_mut().push(path.into());
         match path {
-            "file" | "dir" => Ok(Metadata {
-                directory: path == "dir",
-                size: 0,
-            }),
+            "file" | "dir" => Ok(Metadata::new(
+                if path == "dir" {
+                    efi_agent_wasm::filesystem::EntryType::Directory
+                } else {
+                    efi_agent_wasm::filesystem::EntryType::File
+                },
+                0,
+            )),
             "missing" => Err(FileError::NotFound),
             _ => panic!("Unexpected provider path: {path}"),
         }
@@ -114,7 +118,10 @@ fn readlink_distinguishes_nonlinks_missing_paths_and_validation_without_output_c
         world.step();
     }
     assert_eq!(world.status(pid).unwrap(), &Status::Exited(0));
-    assert_eq!(*provider.0.borrow(), ["file", "dir", "missing", "dir"]);
+    assert_eq!(
+        *provider.0.borrow(),
+        ["file", "dir", "missing", "dir", "dir"]
+    );
 }
 
 #[test]
@@ -137,18 +144,18 @@ fn unavailable_cli_mutations_and_accept_fail_without_provider_effects_or_output_
       (data (i32.const 64) "new.txt")
       (func (export "_start")
         (if (i32.ne (call $mkdir (i32.const 3) (i32.const 64) (i32.const 7)) (i32.const 58)) (then unreachable))
-        (if (i32.ne (call $unlink (i32.const 3) (i32.const 64) (i32.const 7)) (i32.const 76)) (then unreachable))
+        (if (i32.ne (call $unlink (i32.const 3) (i32.const 64) (i32.const 7)) (i32.const 58)) (then unreachable))
         (if (i32.ne (call $rename (i32.const 3) (i32.const 64) (i32.const 7) (i32.const 3) (i32.const 64) (i32.const 7)) (i32.const 58)) (then unreachable))
-        (if (i32.ne (call $times (i32.const 3) (i32.const 0) (i32.const 64) (i32.const 7) (i64.const 0) (i64.const 0) (i32.const 0)) (i32.const 76)) (then unreachable))
+        (if (i32.ne (call $times (i32.const 3) (i32.const 0) (i32.const 64) (i32.const 7) (i64.const 0) (i64.const 0) (i32.const 0)) (i32.const 58)) (then unreachable))
         (if (i32.ne (call $mkdir (i32.const 127) (i32.const 64) (i32.const 7)) (i32.const 8)) (then unreachable))
         (if (i32.ne (call $unlink (i32.const 1) (i32.const 64) (i32.const 7)) (i32.const 54)) (then unreachable))
         (i32.store (i32.const 65532) (i32.const 71731))
-        (if (i32.ne (call $rmdir (i32.const 3) (i32.const 64) (i32.const 7)) (i32.const 76)) (then unreachable))
-        (if (i32.ne (call $symlink (i32.const 64) (i32.const 7) (i32.const 3) (i32.const 64) (i32.const 7)) (i32.const 76)) (then unreachable))
+        (if (i32.ne (call $rmdir (i32.const 3) (i32.const 64) (i32.const 7)) (i32.const 58)) (then unreachable))
+        (if (i32.ne (call $symlink (i32.const 64) (i32.const 7) (i32.const 3) (i32.const 64) (i32.const 7)) (i32.const 58)) (then unreachable))
         (if (i32.ne (call $link (i32.const 3) (i32.const 0) (i32.const 64) (i32.const 7) (i32.const 3) (i32.const 64) (i32.const 7)) (i32.const 76)) (then unreachable))
         (if (i32.ne (call $advise (i32.const 127) (i64.const 0) (i64.const 0) (i32.const 0)) (i32.const 8)) (then unreachable))
         (if (i32.ne (call $advise (i32.const 1) (i64.const 0) (i64.const 0) (i32.const 6)) (i32.const 28)) (then unreachable))
-        (if (i32.ne (call $fd_times (i32.const 3) (i64.const 0) (i64.const 0) (i32.const 0)) (i32.const 76)) (then unreachable))
+        (if (i32.ne (call $fd_times (i32.const 3) (i64.const 0) (i64.const 0) (i32.const 0)) (i32.const 58)) (then unreachable))
         (if (i32.ne (call $fd_times (i32.const 3) (i64.const 0) (i64.const 0) (i32.const 3)) (i32.const 28)) (then unreachable))
         (if (i32.ne (call $pread (i32.const 1) (i32.const 0) (i32.const 0) (i64.const 0) (i32.const 65532)) (i32.const 70)) (then unreachable))
         (if (i32.ne (call $pwrite (i32.const 127) (i32.const 0) (i32.const 0) (i64.const 0) (i32.const 65532)) (i32.const 8)) (then unreachable))

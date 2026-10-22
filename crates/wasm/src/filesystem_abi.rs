@@ -5,9 +5,18 @@ use wasmi::{Caller, Linker};
 use crate::{
     Context,
     abi::{memory, range, vectors},
-    filesystem::{Directory, FileError, OpenOptions},
+    filesystem::{Directory, EntryType, FileError, OpenOptions, TimeUpdate},
     io::{self, Descriptor},
 };
+
+fn time_update(value: u64, flags: u32) -> TimeUpdate {
+    match flags {
+        0 => TimeUpdate::Keep,
+        1 => TimeUpdate::Set(value),
+        2 => TimeUpdate::Now,
+        _ => unreachable!("Timestamp flags are validated before provider calls"),
+    }
+}
 
 fn directory(caller: &Caller<'_, Context>, fd: u32, right: u64) -> Result<Directory, i32> {
     match caller.data().descriptors.get(&fd).ok_or(io::BADF)? {
@@ -32,7 +41,7 @@ fn path(
 }
 
 fn readlink(
-    caller: Caller<'_, Context>,
+    mut caller: Caller<'_, Context>,
     fd: u32,
     ptr: u32,
     len: u32,
@@ -46,13 +55,17 @@ fn readlink(
         range(buffer, size as usize, memory.data_size(&caller))?;
         range(used, 4, memory.data_size(&caller))?;
         let path = path(&caller, &directory, ptr, len)?;
-        // Providers expose regular files and directories, never followed links.
-        // Preserve missing/access errors; an existing non-link is EINVAL.
-        directory
+        let target = directory
             .filesystem
-            .metadata(&path)
+            .read_link(&path)
             .map_err(FileError::errno)?;
-        Err(28)
+        let count = target.len().min(size as usize);
+        memory
+            .write(&mut caller, buffer as usize, &target.as_bytes()[..count])
+            .map_err(|_| 21)?;
+        memory
+            .write(&mut caller, used as usize, &(count as u32).to_le_bytes())
+            .map_err(|_| 21)
     })();
     result.err().unwrap_or(0)
 }
@@ -107,8 +120,17 @@ fn open(
         let available = (0..io::MAX_DESCRIPTORS)
             .find(|fd| !caller.data().descriptors.contains_key(fd))
             .ok_or(io::MFILE)?;
+        if lookup & 1 == 0 {
+            match directory.filesystem.symlink_metadata(&path) {
+                Ok(info) if info.kind == EntryType::Symlink => {
+                    return Err(if oflags & 5 == 5 { 20 } else { 32 });
+                }
+                Ok(_) | Err(FileError::NotFound) => (),
+                Err(error) => return Err(error.errno()),
+            }
+        }
         let target_is_directory = match directory.filesystem.metadata(&path) {
-            Ok(metadata) => metadata.directory,
+            Ok(metadata) => metadata.is_directory(),
             Err(FileError::NotFound) if oflags & 1 != 0 && oflags & 2 == 0 => false,
             Err(failure) => return Err(failure.errno()),
         };
@@ -124,14 +146,22 @@ fn open(
             if !target_is_directory {
                 return Err(54);
             }
+            let view = directory
+                .filesystem
+                .directory_view(&path)
+                .map_err(FileError::errno)?;
+            let (filesystem, path) = match view {
+                Some(filesystem) => (filesystem, String::new()),
+                None => (directory.filesystem.clone(), path),
+            };
             Descriptor::Directory(Directory {
+                filesystem,
                 path,
                 preopen: false,
                 rights: rights & io::DIRECTORY_RIGHTS,
                 inheriting,
                 entries: Rc::new(RefCell::new(None)),
                 flags: flags as u16,
-                ..directory
             })
         } else {
             if flags & !1 != 0 {
@@ -197,8 +227,6 @@ pub(crate) fn link(linker: &mut Linker<Context>) {
             },
         )
         .expect("Unique import");
-    // These operations have no provider implementation or granted rights yet.
-    // Link callers so unsupported optional CLI features fail as domain errors.
     for (name, right) in [
         ("path_unlink_file", 1 << 26),
         ("path_remove_directory", 1 << 25),
@@ -210,8 +238,13 @@ pub(crate) fn link(linker: &mut Linker<Context>) {
                 move |caller: Caller<'_, Context>, fd: u32, ptr: u32, len: u32| -> i32 {
                     let result = (|| {
                         let directory = directory(&caller, fd, right)?;
-                        path(&caller, &directory, ptr, len)?;
-                        Err::<(), i32>(58)
+                        let path = path(&caller, &directory, ptr, len)?;
+                        if right == 1 << 26 {
+                            directory.filesystem.unlink(&path)
+                        } else {
+                            directory.filesystem.remove_directory(&path)
+                        }
+                        .map_err(FileError::errno)
                     })();
                     result.err().unwrap_or(0)
                 },
@@ -235,11 +268,8 @@ pub(crate) fn link(linker: &mut Linker<Context>) {
                     let new = directory(&caller, new_fd, 1 << 17)?;
                     let source = path(&caller, &old, old_ptr, old_len)?;
                     let destination = path(&caller, &new, new_ptr, new_len)?;
-                    if !Rc::ptr_eq(&old.filesystem, &new.filesystem) {
-                        return Err(75); // XDEV
-                    }
                     old.filesystem
-                        .rename(&source, &destination)
+                        .rename_to(&source, new.filesystem.as_ref(), &destination)
                         .map_err(FileError::errno)
                 })();
                 result.err().unwrap_or(0)
@@ -255,8 +285,8 @@ pub(crate) fn link(linker: &mut Linker<Context>) {
              lookup: u32,
              ptr: u32,
              len: u32,
-             _access: u64,
-             _modify: u64,
+             access: u64,
+             modify: u64,
              flags: u32|
              -> i32 {
                 let result = (|| {
@@ -264,8 +294,16 @@ pub(crate) fn link(linker: &mut Linker<Context>) {
                     if lookup & !1 != 0 || flags & !15 != 0 || flags & 3 == 3 || flags & 12 == 12 {
                         return Err(28);
                     }
-                    path(&caller, &directory, ptr, len)?;
-                    Err::<(), i32>(58)
+                    let path = path(&caller, &directory, ptr, len)?;
+                    directory
+                        .filesystem
+                        .set_times(
+                            &path,
+                            lookup & 1 != 0,
+                            time_update(access, flags & 3),
+                            time_update(modify, (flags >> 2) & 3),
+                        )
+                        .map_err(FileError::errno)
                 })();
                 result.err().unwrap_or(0)
             },
@@ -296,7 +334,7 @@ pub(crate) fn link(linker: &mut Linker<Context>) {
         .func_wrap(
             wasi,
             "fd_filestat_set_times",
-            |caller: Caller<'_, Context>, fd: u32, _access: u64, _modify: u64, flags: u32| {
+            |caller: Caller<'_, Context>, fd: u32, access: u64, modify: u64, flags: u32| {
                 let result = (|| {
                     let descriptor = caller.data().descriptors.get(&fd).ok_or(io::BADF)?;
                     if flags & !15 != 0 || flags & 3 == 3 || flags & 12 == 12 {
@@ -307,7 +345,23 @@ pub(crate) fn link(linker: &mut Linker<Context>) {
                         Descriptor::Directory(directory) => directory.rights,
                         _ => return Err(28),
                     };
-                    Err::<(), i32>(if rights & (1 << 23) == 0 { 76 } else { 58 })
+                    if rights & (1 << 23) == 0 {
+                        return Err(76);
+                    }
+                    let access = time_update(access, flags & 3);
+                    let modify = time_update(modify, (flags >> 2) & 3);
+                    match descriptor {
+                        Descriptor::File { handle, .. } => {
+                            handle.borrow_mut().set_times(access, modify)
+                        }
+                        Descriptor::Directory(directory) => {
+                            directory
+                                .filesystem
+                                .set_times(&directory.path, true, access, modify)
+                        }
+                        _ => unreachable!(),
+                    }
+                    .map_err(FileError::errno)
                 })();
                 result.err().unwrap_or(0)
             },
@@ -355,13 +409,15 @@ pub(crate) fn link(linker: &mut Linker<Context>) {
              new_len: u32| {
                 let result = (|| {
                     let directory = directory(&caller, fd, 1 << 24)?;
-                    range(
-                        old_ptr,
-                        old_len as usize,
-                        memory(&caller)?.data_size(&caller),
-                    )?;
-                    path(&caller, &directory, new_ptr, new_len)?;
-                    Err::<(), i32>(58)
+                    let memory = memory(&caller)?;
+                    let bytes = &memory.data(&caller)
+                        [range(old_ptr, old_len as usize, memory.data_size(&caller))?];
+                    let target = core::str::from_utf8(bytes).map_err(|_| 25)?;
+                    let path = path(&caller, &directory, new_ptr, new_len)?;
+                    directory
+                        .filesystem
+                        .symlink(target, &path)
+                        .map_err(FileError::errno)
                 })();
                 result.err().unwrap_or(0)
             },
@@ -472,11 +528,13 @@ pub(crate) fn link(linker: &mut Linker<Context>) {
                     let memory = memory(&caller)?;
                     range(output, 64, memory.data_size(&caller))?;
                     let path = path(&caller, &directory, ptr, len)?;
-                    let stat = directory
-                        .filesystem
-                        .metadata(&path)
-                        .map_err(FileError::errno)?
-                        .wasi();
+                    let stat = if flags & 1 != 0 {
+                        directory.filesystem.metadata(&path)
+                    } else {
+                        directory.filesystem.symlink_metadata(&path)
+                    }
+                    .map_err(FileError::errno)?
+                    .wasi();
                     memory
                         .write(&mut caller, output as usize, &stat)
                         .map_err(|_| 21)

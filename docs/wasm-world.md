@@ -1,5 +1,15 @@
 # WASM process world
 
+The common `efi-agent-filesystem` crate supplies no_std provider types and an
+optional persistent inode namespace. The namespace stores logical directories,
+links, modes and times in two checksummed metadata generations above raw
+backing files. It retains open-file and directory identity across mutations.
+WASI unlink/rmdir, rename across directory views, symlink/readlink, lookup
+flags and path/descriptor timestamps now call provider methods. Raw providers
+can reject unimplemented operations explicitly. The native integration tests
+install this namespace directly; normal firmware and run_guest installation,
+logical launcher export and virtual mounts remain pending.
+
 The UEFI application embeds wasmi 2 with `alloc` and no Rust standard library.
 `crates/wasm` contains the firmware-independent process world.
 `crates/uefi/src/wasm.rs` connects it to the firmware UI. No host process or

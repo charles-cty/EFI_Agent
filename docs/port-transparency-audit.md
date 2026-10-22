@@ -50,6 +50,13 @@ input are also outside the interface defects above.
 
 ## Verification boundary
 
+The common persistent namespace and WASI mutation adapters have native-backed
+tests for inode lifetime, directory rename, links, modes, timestamps and
+recovery. These checks install the namespace explicitly. Normal firmware and
+native runner mounting, Python mode reporting and mutation adaptation, and
+launcher logical export remain incomplete. This foundation does not establish
+that the reported firmware unlink, rename or chmod defects are resolved.
+
 The 2026-10-22 filesystem expansion connects directory creation to native and
 firmware providers, and rename to the native provider. File writes now use
 64 KiB chunks after complete iovec validation, including calls above 512 KiB.

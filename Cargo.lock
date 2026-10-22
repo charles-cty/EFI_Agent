@@ -567,6 +567,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "efi-agent-filesystem"
+version = "0.1.0"
+dependencies = [
+ "efi-agent-filesystem",
+ "libc",
+ "serde",
+ "serde_json",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "efi-agent-uefi"
 version = "0.1.0"
 dependencies = [
@@ -587,6 +598,7 @@ dependencies = [
 name = "efi-agent-wasm"
 version = "0.1.0"
 dependencies = [
+ "efi-agent-filesystem",
  "getrandom 0.2.17",
  "mio",
  "wasmi",

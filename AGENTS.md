@@ -9,6 +9,18 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+The common no_std efi-agent-filesystem crate now owns provider interfaces and
+a persistent inode namespace. Two checksummed metadata generations preserve
+directory entries, symlinks, modes and times above FAT backing files. Anchored
+directory views survive rename; detached open files retain identity until the
+last close. Native-backed integration covers recovery, permissions, links and
+structured mutations. WASI mutation, readlink, stat lookup flags and timestamp
+imports delegate to providers; unsupported providers return explicit errors.
+The namespace is not yet installed by firmware or the native guest runner.
+Launcher export must interpret its logical snapshot before that integration;
+raw FAT paths are backing storage, not the guest tree. Virtual mounts, applets,
+sessions and the remaining delivery in docs/environment-work.md are incomplete.
+
 ## Architecture
 
 The UEFI app now embeds the no_std `efi-agent-wasm` crate with wasmi 2.
