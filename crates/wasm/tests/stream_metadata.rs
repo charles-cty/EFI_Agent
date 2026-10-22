@@ -15,7 +15,7 @@ fn stream_metadata_and_directory_errors() {
             (call $equal (call $stat (i32.const 1) (i32.const 65500)) (i32.const 21))
             (call $equal (call $stat (i32.const 127) (i32.const 0)) (i32.const 8))
             (call $equal (call $stat (i32.const 1) (i32.const 65472)) (i32.const 0))
-            (call $equal (i32.load8_u (i32.const 65488)) (i32.const 2))
+            (call $equal (i32.load8_u (i32.const 65488)) (i32.const 0))
             (call $equal (i32.load (i32.const 65496)) (i32.const 1))
             (call $equal (i32.load (i32.const 65504)) (i32.const 0))
             (call $equal (call $flags (i32.const 1) (i32.const 0)) (i32.const 0))

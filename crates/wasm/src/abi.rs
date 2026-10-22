@@ -18,6 +18,11 @@ const INVAL: i32 = 28;
 
 #[derive(Clone, Debug)]
 pub(crate) enum Action {
+    Control {
+        fd: u32,
+        bytes: Vec<u8>,
+        written: u32,
+    },
     Yield,
     ProgramExists(String),
     Spawn {
@@ -290,7 +295,11 @@ fn write_u32(caller: &mut Caller<'_, Context>, ptr: u32, value: u32) -> Result<(
         .map_err(|_| FAULT)
 }
 
-fn vectors(caller: &Caller<'_, Context>, ptr: u32, count: u32) -> Result<Vec<Range<usize>>, i32> {
+pub(crate) fn vectors(
+    caller: &Caller<'_, Context>,
+    ptr: u32,
+    count: u32,
+) -> Result<Vec<Range<usize>>, i32> {
     if count > 1024 {
         return Err(INVAL);
     }
@@ -314,6 +323,44 @@ fn fd_write(
     count: u32,
     written: u32,
 ) -> Result<i32, wasmi::Error> {
+    if let Some(io::Descriptor::File {
+        handle,
+        write: true,
+        ..
+    }) = caller.data().descriptors.get(&fd)
+    {
+        let handle = handle.clone();
+        let result = (|| {
+            let memory = memory(&caller)?;
+            range(written, 4, memory.data_size(&caller))?;
+            // Validate every vector before the first file operation.
+            let vectors = vectors(&caller, ptr, count)?;
+            vectors.iter().try_fold(0u32, |sum, vector| {
+                sum.checked_add(vector.len() as u32).ok_or(INVAL)
+            })?;
+            let mut total = 0u32;
+            let mut handle = handle.borrow_mut();
+            'vectors: for vector in vectors {
+                for bytes in memory.data(&caller)[vector].chunks(io::PIPE_CAPACITY) {
+                    match handle.write(bytes) {
+                        Ok(count) => {
+                            assert!(count <= bytes.len(), "Host file write exceeds buffer");
+                            total += count as u32;
+                            if count < bytes.len() {
+                                break 'vectors;
+                            }
+                        }
+                        Err(_) if total != 0 => break 'vectors,
+                        Err(failure) => return Err(failure.errno()),
+                    }
+                }
+            }
+            memory
+                .write(&mut caller, written as usize, &total.to_le_bytes())
+                .map_err(|_| FAULT)
+        })();
+        return Ok(result.err().unwrap_or(0));
+    }
     let result = (|| {
         if !caller
             .data()
@@ -354,6 +401,18 @@ fn fd_write(
             },
         ))
     })();
+    if let Ok((_, IoRequest::Write { bytes, .. })) = &result
+        && matches!(
+            caller.data().descriptors.get(&fd),
+            Some(io::Descriptor::Control(_))
+        )
+    {
+        return Err(wasmi::Error::host(Action::Control {
+            fd,
+            bytes: bytes.clone(),
+            written,
+        }));
+    }
     complete_or_suspend(&mut caller, result)
 }
 
@@ -879,6 +938,74 @@ pub(crate) fn linker(engine: &Engine) -> Linker<Context> {
         .expect("Unique import");
     linker
         .func_wrap(wasi, "fd_read", fd_read)
+        .expect("Unique import");
+    linker
+        .func_wrap(
+            wasi,
+            "sock_recv",
+            |caller: Caller<'_, Context>,
+             fd: u32,
+             ptr: u32,
+             count: u32,
+             flags: u32,
+             used: u32,
+             output_flags: u32| {
+                let result = (|| {
+                    match caller.data().descriptors.get(&fd) {
+                        Some(io::Descriptor::Socket { .. }) => (),
+                        Some(_) => return Err(57),
+                        None => return Err(BADF),
+                    }
+                    if flags & !3 != 0 {
+                        return Err(INVAL);
+                    }
+                    vectors(&caller, ptr, count)?;
+                    let size = memory(&caller)?.data_size(&caller);
+                    range(used, 4, size)?;
+                    range(output_flags, 2, size)?;
+                    Err::<(), i32>(58)
+                })();
+                result.err().unwrap_or(0)
+            },
+        )
+        .expect("Unique import");
+    linker
+        .func_wrap(
+            wasi,
+            "sock_send",
+            |caller: Caller<'_, Context>, fd: u32, ptr: u32, count: u32, flags: u32, used: u32| {
+                let result = (|| {
+                    match caller.data().descriptors.get(&fd) {
+                        Some(io::Descriptor::Socket { .. }) => (),
+                        Some(_) => return Err(57),
+                        None => return Err(BADF),
+                    }
+                    if flags != 0 {
+                        return Err(INVAL);
+                    }
+                    vectors(&caller, ptr, count)?;
+                    range(used, 4, memory(&caller)?.data_size(&caller))?;
+                    Err::<(), i32>(58)
+                })();
+                result.err().unwrap_or(0)
+            },
+        )
+        .expect("Unique import");
+    linker
+        .func_wrap(
+            wasi,
+            "sock_shutdown",
+            |caller: Caller<'_, Context>, fd: u32, flags: u32| match caller
+                .data()
+                .descriptors
+                .get(&fd)
+            {
+                None => BADF,
+                Some(io::Descriptor::Socket { .. }) if flags == 0 || flags & !3 != 0 => INVAL,
+                Some(io::Descriptor::Socket { .. }) => 58,
+                Some(_) => 57,
+            },
+        )
         .expect("Unique import");
     linker
         .func_wrap(wasi, "poll_oneoff", poll_oneoff)

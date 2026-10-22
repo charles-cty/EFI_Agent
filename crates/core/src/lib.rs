@@ -13,6 +13,7 @@ pub mod protocol;
 pub mod random;
 pub mod serial;
 pub mod ui;
+pub mod wasm_output;
 
 pub mod model;
 pub mod reasoning_stream;

@@ -66,6 +66,7 @@ impl Drop for Endpoint {
 
 #[derive(Clone)]
 pub(crate) enum Descriptor {
+    Control(Rc<RefCell<VecDeque<u8>>>),
     Input(Rc<RefCell<VecDeque<u8>>>),
     Output(Rc<RefCell<Vec<u8>>>),
     Pipe(Endpoint),
@@ -102,6 +103,11 @@ impl Descriptor {
             return Ok(Some(Vec::new()));
         }
         match self {
+            Self::Control(reply) => {
+                let mut reply = reply.borrow_mut();
+                let count = maximum.min(reply.len());
+                Ok(Some(reply.drain(..count).collect()))
+            }
             Self::Socket {
                 connection, flags, ..
             } => {
@@ -159,6 +165,7 @@ impl Descriptor {
             return Ok(Some(0));
         }
         match self {
+            Self::Control(_) => unreachable!("Control writes are dispatched by the world"),
             Self::Socket {
                 connection, flags, ..
             } => {
@@ -208,7 +215,8 @@ impl Descriptor {
     pub(crate) fn readable(&self) -> bool {
         matches!(
             self,
-            Self::Socket { .. }
+            Self::Control(_)
+                | Self::Socket { .. }
                 | Self::File { read: true, .. }
                 | Self::Input(_)
                 | Self::Pipe(Endpoint {
@@ -221,7 +229,8 @@ impl Descriptor {
     pub(crate) fn writable(&self) -> bool {
         matches!(
             self,
-            Self::Socket { .. }
+            Self::Control(_)
+                | Self::Socket { .. }
                 | Self::File { write: true, .. }
                 | Self::Output(_)
                 | Self::Pipe(Endpoint {
@@ -249,11 +258,8 @@ impl Descriptor {
             }
             _ => {}
         }
-        // WASI has no pipe file type. Streams exposed by the console use
-        // CHARACTER_DEVICE; anonymous pipes use UNKNOWN.
-        if !matches!(self, Self::Pipe(_)) {
-            stat[0] = 2;
-        }
+        // WASI has no pipe type. Finite input and captured output are streams,
+        // not terminals. libc uses CHARACTER_DEVICE to implement isatty.
         if let Self::Socket { flags, .. } = self {
             stat[0] = 6; // SOCKET_STREAM
             stat[2..4].copy_from_slice(&flags.get().to_le_bytes());
@@ -312,6 +318,7 @@ impl Descriptor {
             );
         }
         match self {
+            Self::Control(reply) => ready(reply.borrow().len(), false, 0),
             Self::Socket { connection, .. } => match connection.borrow_mut().readiness(writing) {
                 Ok(Some(state)) => ready(state.bytes, state.hangup, 0),
                 Ok(None) => None,
@@ -420,8 +427,16 @@ pub(crate) const FILE_RIGHTS: u64 = (1 << 0)
     | (1 << 21)
     | (1 << 22)
     | (1 << 27);
-pub(crate) const DIRECTORY_RIGHTS: u64 =
-    (1 << 10) | (1 << 13) | (1 << 14) | (1 << 15) | (1 << 18) | (1 << 19) | (1 << 21);
+pub(crate) const DIRECTORY_RIGHTS: u64 = (1 << 9)
+    | (1 << 10)
+    | (1 << 13)
+    | (1 << 14)
+    | (1 << 15)
+    | (1 << 16)
+    | (1 << 17)
+    | (1 << 18)
+    | (1 << 19)
+    | (1 << 21);
 
 pub(crate) type Table = BTreeMap<u32, Descriptor>;
 

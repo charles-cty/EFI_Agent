@@ -15,7 +15,14 @@ The UEFI app now embeds the no_std `efi-agent-wasm` crate with wasmi 2.
 Each process has an independent Store and memory. A single APPLICATION-TPL
 dispatcher resumes retained call stacks after explicit yield, child wait,
 or fuel exhaustion. `/wasm` loads registered command modules and starts,
-runs, lists, cancels, or reaps their processes. Basic WASI arguments, finite
+runs, lists, cancels, or reaps their processes. Module paths accept slash or
+backslash separators. Relative paths use the configured workspace; absolute
+paths use the boot volume root. Guest binaries sit directly in the workspace,
+so `/wasm load python.wasm` loads Python without a separate directory.
+`/wasm load PATH` infers the registered name from the final filename, removing
+a case-insensitive .wasm suffix. `/wasm load NAME PATH` selects an explicit
+alias. Both forms resolve paths against the same configured workspace/root.
+Basic WASI arguments, finite
 stdin, stdout/stderr, exit and yield are implemented. The `efi_process`
 imports provide getpid/getppid, spawn and waitpid without fork. Children
 inherit selected standard descriptors. Descriptor tables, 64 KiB pipes,
@@ -39,18 +46,38 @@ against both a probe and actual ash builtins. Actual QEMU/OVMF also verified the
 engine, top-level await, firmware Date.now and concurrent real ash capture.
 The implemented application ports and their remaining limits are described
 below and in docs/wasm-world.md.
-Actual CPython 3.14.0 builds with scripts/build_cpython.ps1 using Windows WASI
-SDK and matching Windows build Python. Native MSYS2 supplies configure/make
-only. It has single-thread pthread stubs, frozen UTF-8 encodings and efi,
-builtin/frozen imports only, and no posix/time/signal/socket host modules.
-FileIO allows only fd 0–2, no filenames or custom opener. Builtin open/input/
-breakpoint are removed. python -e CODE executes real Python; efi.shell accepts
-shell text or individually quoted list/tuple words and captures raw/text
-stdout/stderr. Nonzero exits raise ShellError unless check=False. Each stream
-is capped at 512 KiB; oversized output is drained and child status reaped.
-Host checks verify actual language execution, restrictions, capture boundaries
-and concurrent Python children with independent module state and saved files.
-Actual QEMU verifies Python execution, real ash capture and persisted FAT files.
+CPython now uses Brett Cannon's prebuilt 3.14.7 WASI SDK 24 distribution,
+linked from PSF webassembly. scripts/prepare_cpython.ps1 copies the binary
+unchanged, the full standard library and license; no interpreter build remains.
+The standard CLI supports -c, script files and -m; open, FileIO and .py imports
+use the workspace. sitecustomize installs a private Python monkey patch over
+upstream subprocess process hooks and os functions. WASI open/read/write on
+the process-local .efi-process endpoint provide cooperative spawn/wait and
+explicit descriptor mapping. The endpoint cannot be inherited. Standard
+run/Popen/check_output/os.system, binary/text capture, environments, file
+redirections and pass_fds replace the removed public efi module. Native tests
+verify duplex output above pipe capacity, capture above the old 512 KiB cap,
+concurrency, descriptor boundaries and rejection before effects. Dynamic
+extensions and native threads remain unavailable. The prebuilt _socket exists,
+but socket creation lacks a backend. -S disables the startup patch.
+Timeouts, signals, cwd, process groups/credentials and distinct custom argv[0]
+are unsupported.
+The runtime still executes registered names rather than filesystem PATH.
+See docs/port-transparency-audit.md and docs/verification.md for evidence and limits.
+The former source-built standard-interface correction passes the 512 MiB
+QEMU/OVMF application combination with curl/TLS/DNS/POSIX/WolfSSH/QuickJS/ash
+arithmetic in artifacts/wasm-python-transparent-applications. The current prebuilt distribution
+passes the focused 512 MiB QEMU/OVMF Python/ash/QuickJS combination, including
+standard scripts/imports, duplex pipes, concurrent Python and saved FAT bytes,
+in artifacts/wasm-python-monkey-long. Its TCG run used a 180-second command
+timeout. All 11 native integration cases and an additional site/timeout case
+pass. The complete 512 MiB curl/TLS/DNS/POSIX/WolfSSH/QuickJS/ash/math/random
+combination also passes with current prebuilt Python, held HTTP/SSH peers,
+cancellation and saved-byte checks in artifacts/wasm-python-monkey-applications.
+-I retains the adapter; -S disables it. Ordinary file opens have an
+inheritable default under WASI libc, recorded in the transparency audit.
+The firmware module limit is now 48 MiB for the unchanged 30,522,756-byte binary.
+WHPX was not tested in this run.
 Normal return, proc_exit, traps and cancellation now drop execution Stores,
 linear memory, continuations and pending I/O immediately. Only parent PID,
 status and shared output remain until wait/reap. Live children are adopted by
@@ -84,8 +111,19 @@ suspends in Closing, consumes the descriptor on completion/error, and closes
 the shared connection for duplicates. Native and real QEMU tests verify the
 full 196,613-byte payload before EOF and closed-duplicate behavior. Ordinary
 fd_close and cancellation remain abortive; half-shutdown is not implemented.
-/wasm run now redraws new
-output immediately while polling, so children can communicate progress.
+/wasm run redraws changed output while polling. Each top-level run/start has
+one default-collapsed disclosure with command, process ID, readable status,
+and plain-text standard output/error sections. Stream chunks and completion
+update that disclosure without resetting the user's expansion choice.
+Child output stays with its root; child exits do not add message blocks.
+Background roots remain separate. /clear discards earlier output and later
+background updates recreate a collapsed panel without editing reused rows.
+The 2026-10-22 output UI checks pass actual QEMU Python/ash capture/direct
+stdout/stderr, keyboard disclosure, failure/trap/cancellation, background
+isolation and clearing in artifacts/wasm-output-panel-final-all. Ordinary exit
+130 is distinguished from cancellation. The adapted base process integration
+passes in artifacts/wasm-output-base-latest. All 116 core/wasm tests and Clippy
+pass; the full network application combination was not rerun for this UI change.
 DNS now uses cooperative TCP queries through efi_net.resolve_ipv4. It accepts
 ASCII hostnames, checks the random transaction ID and question, follows bounded
 CNAME chains and returns one IPv4 A address. The configured DNS address/port
@@ -256,8 +294,26 @@ read/write, create/exclusive/truncate/append, metadata, seek/tell and sync.
 Duplicates share file cursors; independent opens have separate cursors.
 Directory-relative paths validate each intermediate component. Host WASI libc,
 ash redirections, fresh tasks and QuickJS file capture pass. Actual QEMU/OVMF
-also verifies file operations and the saved FAT bytes. Directory mutation,
-rename/delete, timestamps and filesystem PATH remain pending.
+also verifies file operations and the saved FAT bytes. Directory creation now
+reaches the native and firmware providers through WASI path_create_directory.
+The model write tool creates missing parents and includes paths in errors.
+Native rename reaches the provider; firmware rename/delete, timestamps and
+filesystem PATH remain pending. File fd_write validates every iovec before
+effects and writes 64 KiB chunks without the former 512 KiB call limit.
+Finite input and captured output report stream types rather than character
+devices, so unchanged CPython reads `python -` as a script. Automatic import
+bytecode writes remain disabled until firmware rename/delete are complete.
+Explicit native py_compile and compileall work with mkdir/rename support.
+Model code tools discover root workspace .wasm files, validate their header and
+size, and compile on first spawn. Program lookup includes discovered modules.
+QuickJS has a qjs alias that shares its compiled module. Existing installations
+remain stable when their source files change. A persistent installation manifest,
+filesystem PATH and /bin entries still need implementation.
+The initial filesystem/tool sequence passes actual 512 MiB TCG/Responses and
+WHPX/Chat Completions, including saved FAT byte checks. The 256 MiB sequence
+writes 8 MiB but fails later at Python-to-Python spawn; that memory boundary
+is unresolved. Allocation failures now map to ENOMEM rather than ENOEXEC,
+with a deterministic guest memory-quota check.
 File resizing now implements fd_filestat_set_size with writable-descriptor and
 resize-right checks, a 48 MiB limit, zero-filled growth and preserved shared
 cursors. Firmware reads beyond a truncated EOF return zero bytes without
@@ -308,7 +364,7 @@ require explicit passing; host environment variables are never copied implicitly
 
 The UEFI application owns direct model HTTP/HTTPS requests, DNS A queries over
 TCP, SSE parsing for Chat Completions and Responses, reasoning state, usage
-statistics, cancellation, and the read/write/edit tool loop. There is no relay,
+statistics, cancellation, and the read/write/edit/shell/python tool loop. There is no relay,
 HostBridge, RPC model service, or `serve` command. All file tools use the boot
 volume's configured workspace through EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.
 
@@ -342,7 +398,8 @@ VM.TXT selects serial input/output and shutdown behavior only. Without the
 marker, the app uses firmware SimpleText input/output and optional pointers;
 /exit returns to its parent (Shell or firmware). Startup recursively connects
 installed drivers before opening long-lived protocols. /caps also reports the
-Shell protocol. Model Shell command tools are not implemented yet.
+Shell protocol. The model shell tool runs WASM ash and does not invoke the
+firmware Shell protocol.
 Startup optionally loads the ordered EFI/AGENT/DRIVERS.JSON list via standard
 LoadImage/StartImage. Only x64 PE32+ boot-service/runtime drivers under
 EFI/AGENT/DRIVERS are allowed (32 files, 8 MiB each, 32 MiB total). Filesystem
@@ -369,7 +426,7 @@ The 2026-10-12 native allocation investigation found linear-memory capacity
 amplification: each Python instance starts at 18.875 MiB, grows to a visible
 19.375 MiB, but wasmi_core's Vec reserves 37.750 MiB. The UEFI allocator uses
 allocate/copy/free reallocation, so old and new buffers coexist during growth.
-The Python build also reserves a 16 MiB C stack per instance. Five registered
+The then-current source-built Python also reserves a 16 MiB C stack per instance. Five registered
 modules occupy about 32.2 MiB in the native allocation probe. These findings
 do not establish the full firmware OOM cause or its minimum RAM requirement.
 See docs/verification.md and artifacts/memory-inspection-2026-10-12.log.
@@ -408,7 +465,25 @@ credentials are written only into the private temporary disk.
 ## UI and model behavior
 
 Slash commands: /help, /caps, /wasm, /effort [value], /status, /clear, /quit, /exit.
-A normal prompt runs at most twelve rounds of executed read/write/edit tools.
+A normal prompt runs at most twelve rounds of executed read/write/edit/shell/python tools.
+The model can run shell commands through `shell(command)` and Python source
+through `python(code)`. The runtime loads workspace ash.wasm once on first
+code use and python.wasm once on first Python use, reusing registered modules.
+Each call uses a fresh process with the shared workspace and empty stdin.
+Source is passed unchanged as one argument (60 KiB limit, no NUL). Results
+contain readable exit status and stdout/stderr, capped at 64 KiB per stream
+with explicit truncation. The existing tool disclosure holds the result.
+Tool completion or cancellation cancels and reaps its remaining process tree;
+independent background roots continue. Original root IDs survive adoption.
+The prompt specifies an Alpine Linux-style BusyBox ash environment, POSIX
+syntax and actual WASM limits; it does not claim a Linux kernel or apk support.
+All 117 core/wasm tests pass. Actual 256 MiB QEMU/OVMF checks pass both
+provider APIs' code-tool sequences and focused Esc tree cleanup with an
+independent background root. Evidence: artifacts/model-tools-chat,
+artifacts/model-tools-responses-final and artifacts/model-tools-cancellation.
+The Responses sequence passed before a CRLF background fixture failed;
+the corrected LF fixture passes the focused rerun. Release EFI and Clippy
+pass. The full network application combination was not rerun for these tools.
 Edit requires one exact match, including overlap checks. Tool results enter
 model history; slash commands do not. /clear resets history, retaining local
 usage statistics. /status shows actual configuration (never the key), exact
@@ -495,7 +570,7 @@ interfaces; it does not provide Agent's TCP4 protocol. It is not packaged
 into the Agent boot trees. See docs/verification.md.
 
 - Physical bare-metal and third-party provider verification.
-- Arbitrary command execution.
+- Native firmware Shell command execution.
 - Complete the WASM world and named application ports in docs/wasm-world.md.
 - Permissions and sandboxes.
 - Richer tool views and conversation navigation.

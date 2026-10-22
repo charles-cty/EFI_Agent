@@ -35,8 +35,12 @@ def main():
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--qemu", default="qemu-system-x86_64")
     parser.add_argument("--memory", type=int, default=256, help="QEMU RAM in MiB.")
+    parser.add_argument("--command-timeout", type=float, default=45,
+                        help="Maximum seconds for each firmware command.")
     parser.add_argument("--quickjs", type=Path)
     parser.add_argument("--python", type=Path)
+    parser.add_argument("--output-panel-test", action="store_true",
+                        help="Verify one collapsed output disclosure per WASM run.")
     parser.add_argument("--curl", type=Path)
     parser.add_argument("--wolfssh", type=Path)
     parser.add_argument("--curl-tls", action="store_true")
@@ -83,6 +87,8 @@ def main():
         dns_listener.settimeout(45)
     if args.memory <= 0:
         parser.error("--memory must be positive")
+    if args.command_timeout <= 0:
+        parser.error("--command-timeout must be positive")
     if args.python and not args.ash:
         parser.error("--python requires --ash")
     if args.no_rdrand and not args.random:
@@ -137,6 +143,28 @@ def main():
         (tree / "EFI/AGENT/CONFIG.JSON").write_text(json.dumps(config), encoding="utf-8")
     if args.python:
         shutil.copyfile(args.python, tree / "work/python.wasm")
+        shutil.copytree(args.python.parent / "lib", tree / "work/lib", dirs_exist_ok=True)
+        (tree / "work/panel-demo.py").write_text(
+            "import subprocess\n"
+            "r = subprocess.run('echo PANEL_STDOUT;echo PANEL_STDERR >&2',shell=True,capture_output=True,text=True,check=True)\n"
+            "print(r.stdout,end='')\nprint(r.stderr,end='')\n"
+            "subprocess.run('echo PANEL_DIRECT;echo PANEL_ERROR_DIRECT >&2',shell=True,check=True)\n",
+            encoding="utf-8")
+        (tree / "work/python-duplex-input.bin").write_bytes(
+            bytes((i * 37 + i // 251 + 19) % 256 for i in range(196613)))
+        (tree / "work/port_probe.py").write_text("value = 731\n", encoding="utf-8")
+        (tree / "work/python-standard.py").write_text(r'''
+import subprocess, port_probe
+assert port_probe.value == 731
+with open('python-duplex-input.bin', 'rb') as source:
+    data = source.read()
+code = "import sys;data=sys.stdin.buffer.read();sys.stderr.buffer.write(data[::-1]);sys.stdout.buffer.write(data)"
+result = subprocess.run(['python', '-c', code], input=data, capture_output=True, check=True)
+assert result.stdout == data and result.stderr == data[::-1]
+with open('python-standard.bin', 'wb') as target:
+    target.write(result.stdout)
+print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
+''', encoding="utf-8")
     if args.wolfssh:
         shutil.copyfile(args.wolfssh, tree / "work/wolfssh.wasm")
         (tree / "work/ssh-password.txt").write_bytes(b"secret\r\n")
@@ -164,10 +192,12 @@ def main():
     (tree / "EFI/AGENT/VM.TXT").write_text("serial\n", encoding="utf-8")
     for name in PROGRAMS:
         shutil.copyfile(args.fixtures / f"{name}.wasm", tree / "work" / f"{name}.wasm")
+    shutil.copyfile(args.fixtures / "child.wasm", tree / "work/child.variant.WASM")
+    shutil.copyfile(args.fixtures / "child.wasm", tree / "work/extensionless")
     if args.filesystem:
         shutil.copyfile(args.fixtures / "filesystem.wasm", tree / "work/filesystem.wasm")
         (tree / "work/subdir").mkdir()
-        (tree / "work/subdir/λ.txt").write_bytes(b"xyz")
+        (tree / "work/subdir/位.txt").write_bytes(b"xyz")
     if args.directories:
         shutil.copyfile(args.fixtures / "directory.wasm", tree / "work/directory.wasm")
         directory_entries = stage_directory(tree / "work")
@@ -287,8 +317,10 @@ def main():
     stream = pyte.ByteStream(screen)
     frame_bytes = bytearray()
     view_prefix = b"\x1b]778;efi-agent;view;"
+    latest_view = {}
 
     def feed_frames(data):
+        nonlocal latest_view
         frame_bytes.extend(data)
         while True:
             start = frame_bytes.find(view_prefix)
@@ -299,6 +331,7 @@ def main():
             if end < 0:
                 return
             view = json.loads(frame_bytes[payload:end])
+            latest_view = view
             width, height = view["dimensions"]
             if (screen.columns, screen.lines) != (width, height):
                 screen.resize(lines=height, columns=width)
@@ -329,7 +362,9 @@ def main():
 
             def wait(marker, complete_line=False):
                 nonlocal ready
-                deadline = time.monotonic() + 45
+                deadline = time.monotonic() + args.command_timeout
+                opening = None
+                scrolling = False
                 while time.monotonic() < deadline:
                     try:
                         data = connection.recv(65536)
@@ -343,6 +378,34 @@ def main():
                     except socket.timeout:
                         pass
                     text = "\n".join(screen.display)
+                    if "Cancelled (exit code" in marker or marker == "exit code 130)":
+                        # Do not interleave a mouse escape sequence with Esc cancellation.
+                        if marker in text:
+                            return text
+                        continue
+                    if not args.output_panel_test:
+                        latest_panel = next(((row, line) for row, line in reversed(list(enumerate(screen.display, 1)))
+                                             if "WASM:" in line and ("[+]" in line or "[-]" in line)), None)
+                        collapsed = latest_panel if latest_panel and "[+]" in latest_panel[1] else None
+                        if collapsed is not None:
+                            row, line = collapsed
+                            identity = re.search(r'PID (\d+)', line)
+                            identity = identity[1] if identity else line
+                            if opening != identity:
+                                connection.sendall(f"\x1b[<0;3;{row}M\x1b[<0;3;{row}m".encode())
+                                opening = identity
+                            continue
+                        if opening is not None:
+                            connection.sendall(b"\x1b[B" * 40)
+                            opening = None
+                            scrolling = True
+                            continue
+                        if latest_view.get("offset", 0) != latest_view.get("max_offset", 0):
+                            if not scrolling:
+                                connection.sendall(b"\x1b[B" * 40)
+                                scrolling = True
+                            continue
+                        scrolling = False
                     if (any(line.strip() == marker for line in text.splitlines())
                             if complete_line else marker in text):
                         return text
@@ -373,73 +436,144 @@ def main():
                 assert event.is_set(), message + "\n" + "\n".join(screen.display)
 
             wait("What would you like to build?")
+            if args.output_panel_test:
+                assert args.python and args.ash, "Output panel test needs --python and --ash"
+                for name in ("ash", "python", "loop", "child", "trap"):
+                    send(f"/wasm load {name}.wasm", f"Loaded {name}")
+                send("/clear", "Conversation cleared")
+                text = send("/wasm run python panel-demo.py", "Completed (exit code 0)")
+                assert text.count("[+] WASM:") == 1, text
+                assert "PANEL_STDOUT" not in text and "PANEL_DIRECT" not in text, text
+                assert "Process " not in text and "wasm stderr" not in text, text
+                connection.sendall(b"\t\r")
+                text = wait("PANEL_DIRECT")
+                assert "PANEL_STDOUT" in text and "PANEL_STDERR" in text, text
+                assert "Standard output:" in text, text
+                assert "Standard error:" in text and "PANEL_ERROR_DIRECT" in text, text
+                assert text.count("[-] WASM:") == 1, text
+                connection.sendall(b"\r")
+                text = wait("[+] WASM:")
+                assert "PANEL_STDOUT" not in text and "PANEL_DIRECT" not in text, text
+                send("/clear", "Conversation cleared")
+                text = send("/wasm run ash -c exit${IFS}130", "Failed (exit code 130)")
+                assert "Cancelled" not in text, text
+                for name, status in [("child", "Failed (exit code 37)"), ("trap", "Failed:")]:
+                    send("/clear", "Conversation cleared")
+                    text = send(f"/wasm run {name}", status)
+                    assert text.count("[+] WASM:") == 1, text
+                    if name == "child":
+                        assert "WASM_CHILD_731" not in text, text
+                        connection.sendall(b"\t\r")
+                        wait("WASM_CHILD_731")
+                send("/clear", "Conversation cleared")
+                send("/wasm run loop", "WASM: loop")
+                connection.sendall(b"\x1b")
+                text = wait("Cancelled (exit code 130)")
+                assert text.count("[+] WASM:") == 1, text
+                assert "Process " not in text, text
+                send("/clear", "Conversation cleared")
+                text = send("/wasm start loop", ": Running")
+                background = re.search(r'PID (\d+): Running', text)[1]
+                text = send("/wasm run child", "Failed (exit code 37)")
+                assert text.count("[+] WASM:") == 2, text
+                assert f"PID {background}: Running" in text, text
+                send("/clear", "Conversation cleared")
+                send(f"/wasm kill {background}", f"Cancelled {background}")
+                text = wait("Cancelled (exit code 130)")
+                assert text.count("[+] WASM:") == 1, text
+                connection.sendall(b"/exit\r")
+                qemu.wait(timeout=15)
+                assert qemu.returncode == 0, qemu.returncode
+                print("PASS actual UEFI WASM output: one collapsed panel, plain text, stdout/capture/direct output, child grouping, click-free keyboard disclosure, failure, trap and cancellation")
+                return
+            module_paths = [
+                "child.wasm", "./child.wasm", ".\\child.wasm",
+                "/work/child.wasm", "\\work\\child.wasm", "/work\\child.wasm",
+            ]
+            for path in module_paths:
+                send("/clear", "Conversation cleared")
+                send(f"/wasm load {path}", "Loaded child")
+            send("/wasm load child_alias child.wasm", "Loaded child_alias")
+            send("/wasm load child.variant.WASM", "Loaded child.variant")
+            send("/wasm load extensionless", "Loaded extensionless")
+            send("/wasm load missing-module.wasm",
+                 "Cannot load \\work\\missing-module.wasm:")
+            send("/wasm load fs0:child.wasm", "Invalid native workspace path")
+            send("/wasm load ../child.wasm", "Native path must stay inside the workspace")
+            send("/wasm load .wasm", "Module path must include a program name")
+            send("/clear", "Conversation cleared")
+            send("/wasm load /work/", "Module path must include a program name")
+            send("/wasm load", "Usage: /wasm load PATH")
+            send("/clear", "Conversation cleared")
+            send("/wasm load a b c", "Usage: /wasm load PATH")
+            print("PASS UEFI module loading: inferred names, explicit aliases, both separators, absolute paths and rejected invalid paths/arguments")
             for name in PROGRAMS:
-                send(f"/wasm load {name} \\work\\{name}.wasm", f"Loaded {name}")
-            send("/wasm start loop", "Process 1: Ready")
-            text = send("/wasm run parent", "Process 2: Exited(37)")
+                send(f"/wasm load {name}.wasm", f"Loaded {name}")
+            send("/wasm start loop", "PID 1: Running")
+            text = send("/wasm run parent", "PID 2: Failed (exit code 37)")
             assert "WASM_CHILD_731" in text
             send("/wasm kill 1", "Cancelled 1")
             send("/wasm reap 1", "Reaped 1: Exited(130)")
             send("/wasm reap 2", "Reaped 2: Exited(37)")
-            send("/wasm run trap", "Process 4: Trapped")
-            send("/wasm run child", "Process 5: Exited(37)")
+            send("/wasm run trap", "PID 4: Failed:")
+            send("/wasm run child", "PID 5: Failed (exit code 37)")
             connection.sendall(b"/wasm run loop\r")
             wait("/wasm run loop")
             connection.sendall(b"\x1b")
-            wait("Process 6: Exited(130)")
-            send("/wasm run child", "Process 7: Exited(37)")
-            text = send("/wasm run pipeline", "Process 8: Exited(0)")
+            wait("PID 6: Cancelled (exit code 130)")
+            send("/wasm run child", "PID 7: Failed (exit code 37)")
+            text = send("/wasm run pipeline", "PID 8: Completed (exit code 0)")
             assert "PIPELINE_BYTES_OK_196608" in text
             send("/wasm reap 9", "WASM: Unknown WASM process: 9")
             send("/wasm reap 10", "WASM: Unknown WASM process: 10")
-            text = send("/wasm run capture", "Process 11: Exited(0)")
+            text = send("/wasm run capture", "PID 11: Completed (exit code 0)")
             assert "C_SPAWN_CAPTURE_OK" in text
             send("/wasm reap 12", "WASM: Unknown WASM process: 12")
-            text = send("/wasm run poll", "Process 13: Exited(0)")
+            text = send("/wasm run poll", "PID 13: Completed (exit code 0)")
             assert "POLL_READY_OK" in text
             send("/wasm reap 14", "WASM: Unknown WASM process: 14")
-            text = send("/wasm run clock", "Process 15: Exited(0)")
+            text = send("/wasm run clock", "PID 15: Completed (exit code 0)")
             assert "FIRMWARE_CLOCK_WAIT_OK" in text
-            text = send("/wasm run shell_capture", "Process 16: Exited(0)")
+            text = send("/wasm run shell_capture", "PID 16: Completed (exit code 0)")
             assert "MULTI_CHILD_SHELL_CAPTURE_OK" in text
             for pid in (17, 18, 19):
                 send(f"/wasm reap {pid}", f"WASM: Unknown WASM process: {pid}")
-            text = send("/wasm run environment", "Process 20: Exited(0)")
+            text = send("/wasm run environment", "PID 20: Completed (exit code 0)")
             assert any(line.strip() == "PROCESS_ENVIRONMENT_OK" for line in text.splitlines())
             for child in (21, 22, 23, 24):
                 send(f"/wasm reap {child}", f"WASM: Unknown WASM process: {child}")
             if args.quickjs:
-                send("/wasm load quickjs \\work\\quickjs.wasm", "Loaded quickjs")
+                send("/wasm load quickjs.wasm", "Loaded quickjs")
                 script = ("if(typeof(std)!=='undefined'||typeof(os)!=='undefined')throw(Error('host'));"
                           "if(await(Promise.resolve(42))!==42)throw(Error('promise'));"
                           "if(Date.now()<1700000000000)throw(Error('clock'));"
                           "print('QUICKJS_ENGINE_OK')")
-                text = send(f"/wasm run quickjs -e {script}", "Process 25: Exited(0)")
+                text = send(f"/wasm run quickjs -e {script}", "PID 25: Completed (exit code 0)")
                 assert any(line.strip() == "QUICKJS_ENGINE_OK" for line in text.splitlines())
             if args.sjlj:
                 pid = 26 if args.quickjs else 25
                 send("/wasm load sjlj \\work\\sjlj.wasm", "Loaded sjlj")
-                text = send("/wasm run sjlj", f"Process {pid}: Exited(0)")
+                text = send("/wasm run sjlj", f"PID {pid}: Completed (exit code 0)")
                 assert any(line.strip() == "SJLJ_MULTI_INSTANCE_OK" for line in text.splitlines())
                 for child in (pid + 1, pid + 2):
                     send(f"/wasm reap {child}", f"WASM: Unknown WASM process: {child}")
             if args.ash_exec:
                 pid = 25 + int(bool(args.quickjs)) + 3 * int(bool(args.sjlj))
                 send("/wasm load ash_exec \\work\\ash_exec.wasm", "Loaded ash_exec")
-                text = send("/wasm run ash_exec", f"Process {pid}: Exited(37)")
+                text = send("/wasm run ash_exec", f"PID {pid}: Failed (exit code 37)")
                 assert any(line.strip() == "ASH_EXEC_FRESH_INSTANCE_OK" for line in text.splitlines())
                 child = pid + 1
                 send(f"/wasm reap {child}", f"WASM: Unknown WASM process: {child}")
             if args.ash:
                 pid = 25 + int(bool(args.quickjs)) + 3 * int(bool(args.sjlj)) + 2 * int(bool(args.ash_exec))
-                send("/wasm load ash \\work\\ash.wasm", "Loaded ash")
-                text = send("/wasm run ash -c echo${IFS}ASH_REAL_ENGINE_OK", f"Process {pid}: Exited(0)")
+                send("/wasm load ash.wasm", "Loaded ash")
+                text = send("/wasm run ash -c echo${IFS}ASH_REAL_ENGINE_OK", f"PID {pid}: Completed (exit code 0)")
                 assert any(line.strip() == "ASH_REAL_ENGINE_OK" for line in text.splitlines())
                 if args.quickjs:
                     script = (r'''Promise.all([$`echo\x20${"a'b"}`,$`echo\x20second`])'''
                               r'''.then(r=>{if(r[0].stdout!=="a'b\n"||r[1].stdout!=='second\n')throw(Error('capture'));'''
                               r"print('QUICKJS_REAL_ASH_OK')})")
-                    text = send(f"/wasm run quickjs -e {script}", f"Process {pid + 1}: Exited(0)")
+                    text = send(f"/wasm run quickjs -e {script}", f"PID {pid + 1}: Completed (exit code 0)")
                     assert any(line.strip() == "QUICKJS_REAL_ASH_OK" for line in text.splitlines())
                     for child in (pid + 2, pid + 3):
                         send(f"/wasm reap {child}", f"WASM: Unknown WASM process: {child}")
@@ -447,27 +581,27 @@ def main():
                     pid += 4 if args.quickjs else 1
                     send("/wasm load ash_child \\work\\ash_child.wasm", "Loaded ash_child")
                     script = "ash_child${IFS}exit${IFS}17;echo${IFS}ASH_EXTERNAL_STATUS:$?"
-                    text = send(f"/wasm run ash -c {script}", f"Process {pid}: Exited(0)")
+                    text = send(f"/wasm run ash -c {script}", f"PID {pid}: Completed (exit code 0)")
                     assert any(line.strip() == "ASH_EXTERNAL_STATUS:17" for line in text.splitlines())
                     send(f"/wasm reap {pid + 1}", f"WASM: Unknown WASM process: {pid + 1}")
                     if args.quickjs:
                         pid += 2
                         script = (r"$`ash_child\x20exit\x2017`.then(()=>{throw(Error('status'))},"
                                   r"r=>{if(r.exitCode!==17)throw(Error('status'));print('QUICKJS_ASH_EXTERNAL_OK')})")
-                        text = send(f"/wasm run quickjs -e {script}", f"Process {pid}: Exited(0)")
+                        text = send(f"/wasm run quickjs -e {script}", f"PID {pid}: Completed (exit code 0)")
                         assert any(line.strip() == "QUICKJS_ASH_EXTERNAL_OK" for line in text.splitlines())
                         for child in (pid + 1, pid + 2):
                             send(f"/wasm reap {child}", f"WASM: Unknown WASM process: {child}")
                     if args.ash_tasks:
                         pid += 3 if args.quickjs else 2
                         script = "ash_child${IFS}produce|ash_child${IFS}copy|ash_child${IFS}verify"
-                        text = send(f"/wasm run ash -c {script}", f"Process {pid}: Exited(0)")
+                        text = send(f"/wasm run ash -c {script}", f"PID {pid}: Completed (exit code 0)")
                         assert any(line.strip() == "ASH_BOUNDED_PIPELINE_OK" for line in text.splitlines())
                         for child in range(pid + 1, pid + 7):
                             send(f"/wasm reap {child}", f"WASM: Unknown WASM process: {child}")
                         pid += 7
                         script = "x=parent;value=$(x=child;echo${IFS}$x);echo${IFS}$value:$x"
-                        text = send(f"/wasm run ash -c {script}", f"Process {pid}: Exited(0)")
+                        text = send(f"/wasm run ash -c {script}", f"PID {pid}: Completed (exit code 0)")
                         assert any(line.strip() == "child:parent" for line in text.splitlines())
                         send(f"/wasm reap {pid + 1}", f"WASM: Unknown WASM process: {pid + 1}")
                         if args.quickjs:
@@ -475,7 +609,7 @@ def main():
                             script = (r"if((await($`value=$(ash_child\x20produce|ash_child\x20copy|ash_child\x20verify);"
                                       r"echo\x20$value`)).stdout!=='ASH_BOUNDED_PIPELINE_OK\n')throw(Error('pipeline'));"
                                       r"print('UEFI_ASH_TASKS_OK')")
-                            text = send(f"/wasm run quickjs -e {script}", f"Process {pid}: Exited(0)")
+                            text = send(f"/wasm run quickjs -e {script}", f"PID {pid}: Completed (exit code 0)")
                             assert any(line.strip() == "UEFI_ASH_TASKS_OK" for line in text.splitlines())
                             for child in range(pid + 1, pid + 9):
                                 send(f"/wasm reap {child}", f"WASM: Unknown WASM process: {child}")
@@ -485,36 +619,36 @@ def main():
                         else:
                             pid += 3 if args.quickjs else 2
                         script = "echo${IFS}UEFI_READ_INPUT|(read${IFS}-r${IFS}value;echo${IFS}$value)"
-                        text = send(f"/wasm run ash -c {script}", f"Process {pid}: Exited(0)")
+                        text = send(f"/wasm run ash -c {script}", f"PID {pid}: Completed (exit code 0)")
                         assert any(line.strip() == "UEFI_READ_INPUT" for line in text.splitlines())
                         for child in (pid + 1, pid + 2):
                             send(f"/wasm reap {child}", f"WASM: Unknown WASM process: {child}")
                         pid += 3
                         script = "echo${IFS}ready|(read${IFS}-t${IFS}1${IFS}value)"
-                        text = send(f"/wasm run ash -c {script}", f"Process {pid}: Exited(2)")
+                        text = send(f"/wasm run ash -c {script}", f"PID {pid}: Failed (exit code 2)")
                         assert "monotonic timeout clock is unavailable" in text
                         for child in (pid + 1, pid + 2):
                             send(f"/wasm reap {child}", f"WASM: Unknown WASM process: {child}")
                         if args.quickjs:
                             pid += 3
-                            script = (r'''if((await($`echo\x20${'one\x20two\x20λ'}|'''
+                            script = (r'''if((await($`echo\x20${'one\x20two\x20位'}|'''
                                       r'''(read\x20-r\x20a\x20b;echo\x20"$a:$b")`)).stdout!=='''
-                                      r"'one:two\x20λ\n')throw(Error('read'));print('UEFI_QUICKJS_READ_OK')")
-                            text = send(f"/wasm run quickjs -e {script}", f"Process {pid}: Exited(0)")
+                                      r"'one:two\x20位\n')throw(Error('read'));print('UEFI_QUICKJS_READ_OK')")
+                            text = send(f"/wasm run quickjs -e {script}", f"PID {pid}: Completed (exit code 0)")
                             assert any(line.strip() == "UEFI_QUICKJS_READ_OK" for line in text.splitlines())
                             for child in range(pid + 1, pid + 4):
                                 send(f"/wasm reap {child}", f"WASM: Unknown WASM process: {child}")
                         if args.ash_printf:
                             pid += 4 if args.quickjs else 3
                             script = "printf${IFS}'%d:%x'${IFS}-9223372036854775808${IFS}-2"
-                            text = send(f"/wasm run ash -c {script}", f"Process {pid}: Exited(0)")
+                            text = send(f"/wasm run ash -c {script}", f"PID {pid}: Completed (exit code 0)")
                             assert "-9223372036854775808:fffffffffffffffe" in text
                             if args.quickjs:
                                 pid += 1
                                 script = (r"const/**/r=await($`printf\x20'%b'\x20'a\\000b'`);"
                                           r"if(r.stdout!=='a\0b'||r.stderr!=='')throw(Error('binary'));"
                                           r"print('UEFI_QUICKJS_PRINTF_BINARY_OK')")
-                                text = send(f"/wasm run quickjs -e {script}", f"Process {pid}: Exited(0)")
+                                text = send(f"/wasm run quickjs -e {script}", f"PID {pid}: Completed (exit code 0)")
                                 assert any(line.strip() == "UEFI_QUICKJS_PRINTF_BINARY_OK" for line in text.splitlines())
                                 send(f"/wasm reap {pid + 1}", f"WASM: Unknown WASM process: {pid + 1}")
             if args.filesystem:
@@ -552,7 +686,7 @@ def main():
                 connection.sendall(f"/wasm run network 10.0.2.2 {network_port} blocked\r".encode())
                 wait("NETWORK_BLOCKED_READ", complete_line=True)
                 connection.sendall(b"\x1b")
-                wait("Exited(130)")
+                wait("exit code 130)")
                 network_cancelled.set()
                 send(f"/wasm run network 10.0.2.2 {network_port} graceful", "NETWORK_GRACEFUL_CLOSE_OK", complete_line=True)
                 send(f"/wasm run network 10.0.2.2 {network_port} nonblocking", "NETWORK_NONBLOCKING_OK", complete_line=True)
@@ -580,7 +714,7 @@ def main():
                     cases += [('posix_network', variant, 0 if errno == 0 else -2 if errno == 44 else -4, 'POSIX_DNS_OK') for variant, errno in variants]
                 if args.curl:
                     send("/wasm load curl \\work\\curl.wasm", "Loaded curl")
-                    cases += [('curl', variant, 0 if errno == 0 else 6, 'Exited(') for variant, errno in variants]
+                    cases += [('curl', variant, 0 if errno == 0 else 6, 'exit code ') for variant, errno in variants]
                 def dns_server():
                     try:
                         for program, variant, _, _ in cases:
@@ -603,11 +737,11 @@ def main():
                         send('/clear', 'Conversation cleared')
                     if program == 'curl':
                         text = send(f'/wasm run curl --silent --show-error --noproxy * --output curl-dns-{index}.bin http://MiXeD.Example.:{curl_server.server_port}/binary', marker)
-                        assert f'Exited({errno})' in text, text
+                        assert f'exit code {errno})' in text, text
                     else:
                         send(f'/wasm run {program} dns MiXeD.Example. {errno}', marker, complete_line=True)
-                        text = wait('Exited(')
-                    match = re.search(r'Process (\d+): Exited\((\d+)\)', text)
+                        text = wait('exit code ')
+                    match = re.search(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code (\d+)\)', text)
                     assert match, text
                     send(f'/wasm reap {match[1]}', f'Reaped {match[1]}: Exited({match[2]})')
                 dns_thread.join(timeout=5)
@@ -616,16 +750,16 @@ def main():
                 send("/wasm load curl \\work\\curl.wasm", "Loaded curl")
                 base = f"http://10.0.2.2:{curl_server.server_port}"
                 send("/clear", "Conversation cleared")
-                text = send(f"/wasm start curl --silent --show-error --noproxy * {base}/blocked", ": Ready")
-                match = re.search(r'Process (\d+): Ready', text)
+                text = send(f"/wasm start curl --silent --show-error --noproxy * {base}/blocked", ": Running")
+                match = re.search(r'PID (\d+): Running', text)
                 assert match, text
                 held_pid = match[1]
                 assert curl_server.blocked_started.wait(15), "Curl did not reach held HTTP response"
                 assert not curl_server.blocked_closed.is_set(), "Held response closed before cancellation"
                 send("/clear", "Conversation cleared")
-                text = send("/wasm run child", "Exited(37)")
+                text = send("/wasm run child", "exit code 37)")
                 assert "WASM_CHILD_731" in text, text
-                peer = re.search(r'Process (\d+): Exited\(37\)', text)
+                peer = re.search(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code 37\)', text)
                 assert peer, text
                 assert not curl_server.blocked_closed.is_set(), "Peer progress ended held curl connection"
                 send(f'/wasm reap {peer[1]}', f'Reaped {peer[1]}: Exited(37)')
@@ -639,20 +773,20 @@ def main():
                     # /wasm run reports child exits too. Wait for the command
                     # footer to become Ready before selecting the root status.
                     text = wait("Ready")
-                    roots = re.findall(r'Process (\d+): Exited\(0\)', text)
+                    roots = re.findall(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code 0\)', text)
                     assert roots, text
                     root = min(map(int, roots))
                     send(f'/wasm reap {root}', f'Reaped {root}: Exited(0)')
                 if args.python:
-                    send("/wasm load python \\work\\python.wasm", "Loaded python")
-                    code = ("import efi\n"
-                            f"r=efi.shell(['curl','--silent','--show-error','--noproxy','*','--data-binary','@curl-upload.bin','{base}/upload'])\n"
-                            f"assert r.stdout=='{digest}' and r.stderr_bytes==b''\n"
+                    send("/wasm load python.wasm", "Loaded python")
+                    code = ("import subprocess\n"
+                            f"r=subprocess.run(['curl','--silent','--show-error','--noproxy','*','--data-binary','@curl-upload.bin','{base}/upload'],capture_output=True,text=True,check=True)\n"
+                            f"assert r.stdout=='{digest}' and r.stderr==''\n"
                             "print('PYTHON_ASH_CURL_OK')\n")
                     send("/clear", "Conversation cleared")
-                    text = send(f"/wasm run python -e exec(bytes.fromhex('{code.encode().hex()}').decode())", "PYTHON_ASH_CURL_OK", complete_line=True)
+                    text = send(f"/wasm run python -c exec(bytes.fromhex('{code.encode().hex()}').decode())", "PYTHON_ASH_CURL_OK", complete_line=True)
                     text = wait("Ready")
-                    roots = re.findall(r'Process (\d+): Exited\(0\)', text)
+                    roots = re.findall(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code 0\)', text)
                     assert roots, text
                     root = min(map(int, roots))
                     send(f'/wasm reap {root}', f'Reaped {root}: Exited(0)')
@@ -666,18 +800,18 @@ def main():
                     f"--data-binary @curl-upload.bin --output curl-digest.txt {base}/upload",
                 ]:
                     send("/clear", "Conversation cleared")
-                    text = send(f"/wasm run curl --silent --show-error --noproxy * {arguments}", "Exited(")
-                    assert "Exited(0)" in text, text
-                    match = re.search(r'Process (\d+): Exited\(0\)', text)
+                    text = send(f"/wasm run curl --silent --show-error --noproxy * {arguments}", "exit code ")
+                    assert "exit code 0)" in text, text
+                    match = re.search(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code 0\)', text)
                     assert match, text
                     send(f'/wasm reap {match[1]}', f'Reaped {match[1]}: Exited(0)')
                 assert not curl_errors, curl_errors
                 for name, server, errors, _ in tls_cases:
                     send("/clear", "Conversation cleared")
-                    text = send(f"/wasm run curl --silent --show-error --noproxy * --cacert curl-{name}-ca.pem --output curl-{name}.bin https://10.0.2.2:{server.server_port}/binary", "Exited(")
+                    text = send(f"/wasm run curl --silent --show-error --noproxy * --cacert curl-{name}-ca.pem --output curl-{name}.bin https://10.0.2.2:{server.server_port}/binary", "exit code ")
                     expected = 35 if args.no_rdrand else 0 if name in ["tls12", "tls13"] else 60
-                    assert f"Exited({expected})" in text, text
-                    root = re.search(rf'Process (\d+): Exited\({expected}\)', text)
+                    assert f"exit code {expected})" in text, text
+                    root = re.search(rf'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code {expected}\)', text)
                     assert root, text
                     send(f'/wasm reap {root[1]}', f'Reaped {root[1]}: Exited({expected})')
                     assert server.requests == (["/binary"] if expected == 0 else []), server.requests
@@ -696,9 +830,9 @@ def main():
                     # expands into its filename instead of creating a token.
                     command = f"wolfssh {arguments}".replace(" ", "${IFS}")
                     script = f"({command}>ssh-{name}.out)2>ssh-{name}.err"
-                    send(f"/wasm run ash -c {script}", "Exited(")
+                    send(f"/wasm run ash -c {script}", "exit code ")
                     text = wait("Ready")
-                    roots = re.findall(rf'Process (\d+): Exited\({expected}\)', text)
+                    roots = re.findall(rf'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code {expected}\)', text)
                     assert roots, text
                     root = min(map(int, roots))
                     send(f'/wasm reap {root}', f'Reaped {root}: Exited({expected})')
@@ -708,8 +842,8 @@ def main():
                     assert ssh_peer.commands == [] and ssh_peer.auth_attempts == []
                 else:
                     send("/clear", "Conversation cleared")
-                    text = send(f"/wasm start wolfssh {ssh_arguments} blocked", ": Ready")
-                    held = re.search(r'Process (\d+): Ready', text)
+                    text = send(f"/wasm start wolfssh {ssh_arguments} blocked", ": Running")
+                    held = re.search(r'PID (\d+): Running', text)
                     assert held, text
                     wait_event(ssh_peer.blocked_started, "WolfSSH did not reach exec server")
                     run_ssh_shell(ssh_arguments + " large", "large", 0)
@@ -732,18 +866,18 @@ def main():
                         send("/clear", "Conversation cleared")
                         send(f"/wasm run quickjs -e {script}", "QUICKJS_ASH_WOLFSSH_OK", complete_line=True)
                         text = wait("Ready")
-                        root = min(map(int, re.findall(r'Process (\d+): Exited\(0\)', text)))
+                        root = min(map(int, re.findall(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code 0\)', text)))
                         send(f'/wasm reap {root}', f'Reaped {root}: Exited(0)')
                     if args.python:
-                        send("/wasm load python \\work\\python.wasm", "Loaded python")
-                        code = ("import efi\n"
-                                f"r=efi.shell('wolfssh {ssh_arguments} nonzero',check=False)\n"
-                                "assert r.status==23 and r.stdout_bytes==b'remote-output\\n' and r.stderr_bytes==b'remote-error\\n'\n"
+                        send("/wasm load \\work\\python.wasm", "Loaded python")
+                        code = ("import subprocess\n"
+                                f"r=subprocess.run('wolfssh {ssh_arguments} nonzero',shell=True,capture_output=True)\n"
+                                "assert r.returncode==23 and r.stdout==b'remote-output\\n' and r.stderr==b'remote-error\\n'\n"
                                 "print('PYTHON_ASH_WOLFSSH_OK')")
                         send("/clear", "Conversation cleared")
-                        send(f"/wasm run python -e exec(bytes.fromhex('{code.encode().hex()}').decode())", "PYTHON_ASH_WOLFSSH_OK", complete_line=True)
+                        send(f"/wasm run python -c exec(bytes.fromhex('{code.encode().hex()}').decode())", "PYTHON_ASH_WOLFSSH_OK", complete_line=True)
                         text = wait("Ready")
-                        root = min(map(int, re.findall(r'Process (\d+): Exited\(0\)', text)))
+                        root = min(map(int, re.findall(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code 0\)', text)))
                         send(f'/wasm reap {root}', f'Reaped {root}: Exited(0)')
                     assert not ssh_peer.blocked_closed.is_set(), "Peer progress closed held SSH"
                     send(f"/wasm kill {held[1]}", f"Cancelled {held[1]}")
@@ -751,63 +885,53 @@ def main():
                     send(f"/wasm reap {held[1]}", f"Reaped {held[1]}: Exited(130)")
                 assert ssh_peer.errors == [], ssh_peer.errors
             if args.python:
-                send("/wasm load python \\work\\python.wasm", "Loaded python")
+                send("/wasm load \\work\\python.wasm", "Loaded python")
+                send("/wasm run python python-standard.py", "UEFI_PYTHON_STANDARD_SCRIPT_OK", complete_line=True)
                 code = r"""
-import sys, math, builtins, _io, efi
-assert sys.version_info[:3] == (3, 14, 0)
+import sys, math, os, subprocess
+assert sys.version_info[:3] == (3, 14, 7)
 assert sys.version_info.releaselevel == 'final'
-assert sys.path == [] and not hasattr(builtins, 'open')
 assert sum(x*x for x in range(11)) == 385 and math.gcd(84, 30) == 6
-for name in ['posix', 'os', 'time', '_socket', 'select', '_signal']:
-    try:
-        __import__(name)
-    except ImportError:
-        pass
-    else:
-        raise AssertionError('Host module: ' + name)
+word = "quote'$();浣犲ソ"
+assert subprocess.check_output(['ash', '-c', 'printf "%s" "$1"', 'ash', word],text=True) == word
+r = subprocess.run(r"printf 'a\000\377'; printf error >&2",shell=True,capture_output=True)
+assert r.stdout == b'a\0\xff' and r.stderr == b'error'
 try:
-    _io.FileIO('python-shell.txt')
-except PermissionError:
-    pass
-else:
-    raise AssertionError('File interface available')
-word = "quote'$();你好"
-assert efi.shell(['printf', '%s', word]).stdout == word
-r = efi.shell(r"printf 'a\000\377'; printf error >&2")
-assert r.stdout_bytes == b'a\0\xff' and r.stderr_bytes == b'error'
-try:
-    efi.shell('exit 17')
-except efi.ShellError as error:
-    assert error.result.status == 17
+    subprocess.run('exit 17',shell=True,check=True)
+except subprocess.CalledProcessError as error:
+    assert error.returncode == 17
 else:
     raise AssertionError('Nonzero exit accepted')
 for index in range(7):
-    assert efi.shell(['printf', '%s', index]).stdout == str(index)
-efi.shell('printf PYTHON_SHELL_FILE>python-shell.txt')
-assert efi.shell('IFS= read -r v<python-shell.txt; printf "%s" "$v"').stdout == 'PYTHON_SHELL_FILE'
+    assert subprocess.check_output(['ash','-c','printf "%s" "$1"','ash',str(index)],text=True) == str(index)
+with open('python-shell.txt','w') as target:
+    target.write('PYTHON_SHELL_FILE')
+with open('python-shell.txt') as source:
+    assert source.read() == 'PYTHON_SHELL_FILE'
+assert os.waitstatus_to_exitcode(os.system('exit 23')) == 23
 print('UEFI_CPYTHON_SHELL_OK')
 """
                 # The current /wasm command splits on whitespace. Pass one
                 # source word and decode the real multiline UTF-8 program.
                 encoded = code.encode().hex()
-                send(f"/wasm run python -e exec(bytes.fromhex('{encoded}').decode())",
+                send(f"/wasm run python -c exec(bytes.fromhex('{encoded}').decode())",
                      "UEFI_CPYTHON_SHELL_OK", complete_line=True)
                 # Both roots must make progress: alpha waits for beta's file,
                 # and beta waits for alpha's file before writing its own.
-                alpha = "import efi;efi.shell('printf alpha>python-alpha.txt;while [ ! -f python-beta.txt ];do :;done');print('UEFI_PYTHON_ALPHA_OK')"
-                beta = "import efi;efi.shell('while [ ! -f python-alpha.txt ];do :;done;printf beta>python-beta.txt');print('UEFI_PYTHON_BETA_OK')"
-                send(f"/wasm start python -e exec(bytes.fromhex('{alpha.encode().hex()}').decode())",
-                     ": Ready")
-                send(f"/wasm run python -e exec(bytes.fromhex('{beta.encode().hex()}').decode())",
+                alpha = "import subprocess;subprocess.run('printf alpha>python-alpha.txt;while [ ! -f python-beta.txt ];do :;done',shell=True,check=True);print('UEFI_PYTHON_ALPHA_OK')"
+                beta = "import subprocess;subprocess.run('while [ ! -f python-alpha.txt ];do :;done;printf beta>python-beta.txt',shell=True,check=True);print('UEFI_PYTHON_BETA_OK')"
+                send(f"/wasm start python -c exec(bytes.fromhex('{alpha.encode().hex()}').decode())",
+                     ": Running")
+                send(f"/wasm run python -c exec(bytes.fromhex('{beta.encode().hex()}').decode())",
                      "UEFI_PYTHON_BETA_OK", complete_line=True)
                 wait("UEFI_PYTHON_ALPHA_OK", complete_line=True)
             if args.ash_math:
                 for name, _, _, _, status in math_cases():
                     send("/clear", "Conversation cleared")
                     script = f"(ash${{IFS}}math-{name}.sh>math-{name}.out)2>math-{name}.err"
-                    send(f"/wasm run ash -c {script}", "Exited(")
+                    send(f"/wasm run ash -c {script}", "exit code ")
                     text = wait("Ready")
-                    roots = re.findall(r'Process (\d+): Exited\((\d+)\)', text)
+                    roots = re.findall(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code (\d+)\)', text)
                     assert roots, text
                     root, actual_status = min((int(pid), int(code)) for pid, code in roots)
                     assert actual_status == status, (name, actual_status, status, text)
@@ -819,27 +943,27 @@ print('UEFI_CPYTHON_SHELL_OK')
                     send("/clear", "Conversation cleared")
                     send(f"/wasm run quickjs -e {script}", "QUICKJS_ASH_MATH_OK", complete_line=True)
                     text = wait("Ready")
-                    root = min(map(int, re.findall(r'Process (\d+): Exited\(0\)', text)))
+                    root = min(map(int, re.findall(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code 0\)', text)))
                     send(f'/wasm reap {root}', f'Reaped {root}: Exited(0)')
                 if args.python:
-                    code = ("import efi\n"
-                            "r=efi.shell('i=0;sum=0;while [ $i -lt 21 ];do sum=$((sum+i*i));i=$((i+1));done;echo CALC:$sum')\n"
-                            "assert r.stdout_bytes==b'CALC:2870\\n' and r.stderr_bytes==b''\n"
-                            "r=efi.shell('test invalid -eq 1',check=False)\n"
-                            "assert r.status==2 and r.stderr_bytes==b'invalid: out of range\\n'\n"
+                    code = ("import subprocess\n"
+                            "r=subprocess.run('i=0;sum=0;while [ $i -lt 21 ];do sum=$((sum+i*i));i=$((i+1));done;echo CALC:$sum',shell=True,capture_output=True,check=True)\n"
+                            "assert r.stdout==b'CALC:2870\\n' and r.stderr==b''\n"
+                            "r=subprocess.run('test invalid -eq 1',shell=True,capture_output=True)\n"
+                            "assert r.returncode==2 and r.stderr==b'invalid: out of range\\n'\n"
                             "print('PYTHON_ASH_MATH_OK')")
                     send("/clear", "Conversation cleared")
-                    send(f"/wasm run python -e exec(bytes.fromhex('{code.encode().hex()}').decode())", "PYTHON_ASH_MATH_OK", complete_line=True)
+                    send(f"/wasm run python -c exec(bytes.fromhex('{code.encode().hex()}').decode())", "PYTHON_ASH_MATH_OK", complete_line=True)
                     text = wait("Ready")
-                    root = min(map(int, re.findall(r'Process (\d+): Exited\(0\)', text)))
+                    root = min(map(int, re.findall(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code 0\)', text)))
                     send(f'/wasm reap {root}', f'Reaped {root}: Exited(0)')
             if args.ash_descriptors:
                 for name, _, _ in descriptor_cases():
                     send("/clear", "Conversation cleared")
                     script = f"(ash${{IFS}}fd-{name}.sh>fd-{name}.out)2>fd-{name}.err"
-                    send(f"/wasm run ash -c {script}", "Exited(")
+                    send(f"/wasm run ash -c {script}", "exit code ")
                     text = wait("Ready")
-                    roots = re.findall(r'Process (\d+): Exited\((\d+)\)', text)
+                    roots = re.findall(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code (\d+)\)', text)
                     assert roots, text
                     root, status = min((int(pid), int(code)) for pid, code in roots)
                     assert status == 0, (name, text)
@@ -848,9 +972,9 @@ print('UEFI_CPYTHON_SHELL_OK')
                 for name, _, _, _, status in heredoc_cases():
                     send("/clear", "Conversation cleared")
                     script = f"(ash${{IFS}}heredoc-{name}.sh>heredoc-{name}.out)2>heredoc-{name}.err"
-                    send(f"/wasm run ash -c {script}", "Exited(")
+                    send(f"/wasm run ash -c {script}", "exit code ")
                     text = wait("Ready")
-                    roots = re.findall(r'Process (\d+): Exited\((\d+)\)', text)
+                    roots = re.findall(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code (\d+)\)', text)
                     assert roots, text
                     root, actual_status = min((int(pid), int(code)) for pid, code in roots)
                     assert actual_status == status, (name, actual_status, status, text)
@@ -860,14 +984,14 @@ print('UEFI_CPYTHON_SHELL_OK')
                 send("/wasm load ash_task_input \\work\\ash_task_input.wasm", "Loaded ash_task_input")
                 send("/wasm run ash_task_input", "ASH_TASK_BINARY_REJECTION_OK", complete_line=True)
                 text = wait("Ready")
-                root = min(map(int, re.findall(r'Process (\d+): Exited\(0\)', text)))
+                root = min(map(int, re.findall(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code 0\)', text)))
                 send(f'/wasm reap {root}', f'Reaped {root}: Exited(0)')
             if args.descriptor_mapping:
                 send("/clear", "Conversation cleared")
                 send("/wasm load descriptor_mapping \\work\\descriptor_mapping.wasm", "Loaded descriptor_mapping")
                 send("/wasm run descriptor_mapping", "UEFI_DESCRIPTOR_MAPPING_OK", complete_line=True)
                 text = wait("Ready")
-                root = min(map(int, re.findall(r'Process (\d+): Exited\(0\)', text)))
+                root = min(map(int, re.findall(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code 0\)', text)))
                 send(f'/wasm reap {root}', f'Reaped {root}: Exited(0)')
             if args.random:
                 send("/wasm load random \\work\\random.wasm", "Loaded random")
@@ -914,7 +1038,7 @@ print('UEFI_CPYTHON_SHELL_OK')
                 if not args.no_rdrand and args.quickjs:
                     print("PASS actual UEFI QuickJS zx-like API to ash to WolfSSH with exact remote status and streams")
                 if not args.no_rdrand and args.python:
-                    print("PASS actual UEFI restricted CPython to ash to WolfSSH while another SSH waits")
+                    print("PASS actual UEFI CPython standard subprocess to ash to WolfSSH while another SSH waits")
             if args.curl:
                 with image.open("rb") as disk:
                     filesystem = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
@@ -935,7 +1059,7 @@ print('UEFI_CPYTHON_SHELL_OK')
                 if args.quickjs and args.ash:
                     print("PASS actual UEFI QuickJS zx-like API to ash to curl, concurrent shell capture and exact HTTP upload digest")
                 if args.python:
-                    print("PASS actual UEFI restricted CPython to ash to curl while another curl waits")
+                    print("PASS actual UEFI CPython standard subprocess to ash to curl while another curl waits")
                 if args.curl_tls:
                     if args.no_rdrand:
                         print("PASS actual UEFI curl TLS fails before HTTP when cryptographic entropy is unavailable")
@@ -947,7 +1071,9 @@ print('UEFI_CPYTHON_SHELL_OK')
                     assert filesystem.get("/work/python-shell.txt").open().read() == b"PYTHON_SHELL_FILE"
                     assert filesystem.get("/work/python-alpha.txt").open().read() == b"alpha"
                     assert filesystem.get("/work/python-beta.txt").open().read() == b"beta"
-                print("PASS actual UEFI CPython release, restricted interfaces, fresh ash capture, concurrent Python roots and persisted shell files")
+                    expected = bytes((i * 37 + i // 251 + 19) % 256 for i in range(196613))
+                    assert filesystem.get("/work/python-standard.bin").open().read() == expected
+                print("PASS actual UEFI CPython standard CLI, script imports, file interfaces, duplex subprocess capture, concurrent Python roots and persisted bytes")
             if args.random and not args.no_rdrand:
                 with image.open("rb") as disk:
                     filesystem = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
@@ -1033,7 +1159,7 @@ print('UEFI_CPYTHON_SHELL_OK')
                 if args.quickjs:
                     print("PASS actual UEFI QuickJS zx-like ash arithmetic and test error capture")
                 if args.python:
-                    print("PASS actual UEFI restricted CPython ash arithmetic and test error capture")
+                    print("PASS actual UEFI CPython standard subprocess ash arithmetic and test error capture")
             if args.ash_read:
                 print("PASS UEFI actual ash read pipeline, unavailable timeout clock and QuickJS capture when enabled")
             if args.ash_printf:

@@ -8,6 +8,8 @@ No relay or API credentials are needed. DNS uses an unprivileged local TCP port.
 import argparse
 from datetime import datetime, timedelta, timezone
 import json
+import re
+import shutil
 from pathlib import Path
 import socket
 import socketserver
@@ -16,6 +18,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from textwrap import dedent
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from cryptography import x509
@@ -58,6 +61,19 @@ class Provider(BaseHTTPRequestHandler):
     stream_started = threading.Event()
     stream_release = threading.Event()
     cancel_started = threading.Event()
+    code_steps = [
+        ("shell", {"command": "printf '%s\\n' 'a b' '中' > code-shell.txt\necho shell-out; echo shell-err >&2"}),
+        ("write", {"path": "ash.wasm", "content": "Already loaded; this replacement must not be compiled."}),
+        ("shell", {"command": "echo cached-ash"}),
+        ("python", {"code": "import subprocess\nfrom pathlib import Path\nr = subprocess.run(\"printf '%s' 'python child 中'\", shell=True, capture_output=True, text=True, check=True)\nPath('code-python.txt').write_text(r.stdout)\nprint(r.stdout)"}),
+        ("shell", {"command": "echo failure-out; echo failure-err >&2; exit 7"}),
+        ("python", {"code": "raise ValueError('code-error-419')"}),
+        ("python", {"code": "import sys\nsys.stdout.write('A' * 65536)\nsys.stderr.write('B' * 65537)"}),
+        ("shell", {"command": "echo forbidden\u0000"}),
+        ("python", {"code": "print('fresh-interpreter', 'subprocess' in globals())"}),
+    ]
+    code_expected = ["shell-out", "File saved", "cached-ash", "python child 中", "Exit code: 7", "code-error-419", "[Output truncated at 64 KiB]", "Tool error: Code must contain no NUL", "fresh-interpreter False"]
+    filesystem_tools = False
 
     def log_message(self, *_):
         pass
@@ -103,6 +119,9 @@ class Provider(BaseHTTPRequestHandler):
                 result = last["content"]
                 assert messages[-2]["reasoning_content"] == "reason 中 retained"
                 assert previous["extra_content"] == {"signature": "SIGNED_419"}
+        tools = request["tools"]
+        names = {tool["name"] if responses else tool["function"]["name"] for tool in tools}
+        assert names == {"read", "write", "edit", "shell", "python"}, names
         if prompt == "Quota error":
             body = b'{"error":{"message":"Insufficient quota"}}'
             self.send_response(402)
@@ -126,7 +145,8 @@ class Provider(BaseHTTPRequestHandler):
                  ("edit", {"path": "needle.txt", "old_text": "SEED_731", "new_text": "edited 中 853"}),
                  ("write", {"path": "created.txt", "content": "created 419\n"}),
                  ("edit", {"path": "ambiguous.txt", "old_text": "aa", "new_text": "X"})]
-        if previous:
+        code_previous = previous and (previous["call_id"] if responses else previous["id"]).startswith("code-")
+        if previous and not code_previous:
             step = int((previous["call_id"] if responses else previous["id"]).split("-")[1])
             expected = ["SEED_731", "File edited", "File saved", "Tool error: old_text has multiple matches; file was not changed"][step - 1]
             assert result == expected, (step, result)
@@ -134,7 +154,26 @@ class Provider(BaseHTTPRequestHandler):
             step = 0
         call = None
         text = "DIRECT_MODEL_VERIFIED"
-        if prompt == "Exercise the file tools" or previous:
+        if prompt == "Exercise code tools" or code_previous:
+            step = int((previous["call_id"] if responses else previous["id"]).split("-")[1]) if previous else 0
+            if previous:
+                expected = Provider.code_expected[step - 1]
+                assert expected in result, (step, result)
+                if step == 7 and not Provider.filesystem_tools:
+                    assert result.count("[Output truncated at 64 KiB]") == 1
+                    assert "A" * 65536 in result and "B" * 65536 in result
+                if step == 8 and not Provider.filesystem_tools:
+                    assert "forbidden\n" not in result
+            if step < len(Provider.code_steps):
+                name, arguments = Provider.code_steps[step]
+                call = {"id": f"code-{step+1}", "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}, "extra_content": {"signature": "SIGNED_419"}}
+                text = ""
+            else:
+                text = "CODE_TOOLS_VERIFIED"
+        elif prompt == "Cancel code tool":
+            call = {"id": "cancel-code", "type": "function", "function": {"name": "shell", "arguments": json.dumps({"command": "echo started > code-cancel-started.txt; (while :; do :; done) & wait"})}, "extra_content": {"signature": "SIGNED_419"}}
+            text = ""
+        elif prompt == "Exercise the file tools" or previous:
             if step < len(steps):
                 name, arguments = steps[step]
                 call = {"id": f"call-{step+1}", "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}, "extra_content": {"signature": "SIGNED_419"}}
@@ -210,13 +249,48 @@ def main():
     parser.add_argument("--qemu", default="qemu-system-x86_64")
     parser.add_argument("--accel", default="kvm", choices=["kvm", "whpx", "tcg"])
     parser.add_argument("--cpu", default="max", help="Guest CPU; HTTPS requires RDRAND")
+    parser.add_argument("--memory", type=int, default=256, help="Guest RAM in MiB")
     for name in ("code", "vars", "esp", "launcher", "output"):
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--api-format", default="chat_completions", choices=["chat_completions", "responses"])
     parser.add_argument("--tls-failure", choices=["untrusted", "hostname", "expired", "random"])
     parser.add_argument("--http", action="store_true", help="Use plaintext HTTP to test local-only transport and clean TCP EOF")
     parser.add_argument("--driver", type=Path, help="Optional EFI boot-service driver fixture")
+    parser.add_argument("--code-workspace", type=Path, help="Stage ash, Python and its library; exercise real model code tools")
+    parser.add_argument("--code-timeout", type=float, default=480, help="Maximum seconds for the complete code-tool sequence under TCG")
+    parser.add_argument("--code-cancel-only", action="store_true", help="Run only code cancellation/isolation checks; requires --code-workspace")
+    parser.add_argument("--filesystem-tools", action="store_true", help="Verify nested file-tool writes, mkdir, large writes and finite Python stdin")
     args = parser.parse_args()
+    if args.code_cancel_only and not args.code_workspace:
+        parser.error("--code-cancel-only requires --code-workspace")
+    if args.filesystem_tools:
+        if not args.code_workspace or args.code_cancel_only:
+            parser.error("--filesystem-tools requires --code-workspace and excludes --code-cancel-only")
+        Provider.filesystem_tools = True
+        Provider.code_steps = [
+            ("write", {"path": "scripts/deep/input.py", "content": "print('NESTED_SCRIPT_OK')\n"}),
+            ("shell", {"command": "python scripts/deep/input.py"}),
+            ("python", {"code": dedent("""
+                import os
+                os.makedirs('data/space dir')
+                payload = bytes(range(256)) * 32768
+                for size in (65535, 65536, 65537, 524287, 524288, 524289, 8388608):
+                    path = 'data/space dir/write-' + str(size)
+                    fd = os.open(path, os.O_WRONLY | os.O_CREAT)
+                    assert os.write(fd, payload[:size]) == size
+                    os.close(fd)
+                    offset = 0
+                    with open(path, 'rb') as source:
+                        while block := source.read(65536):
+                            assert block == payload[offset:offset + len(block)]
+                            offset += len(block)
+                    assert offset == size
+                print('FILESYSTEM_WRITES_OK')
+                """)}),
+            ("shell", {"command": "python - <<'PY'\nimport os\nassert not os.isatty(0)\nprint('HEREDOC_SCRIPT_OK')\nPY\n"}),
+            ("python", {"code": "import os, subprocess\nassert not any(os.isatty(fd) for fd in (0, 1, 2))\nfor source, expected in [(b'', b''), (b'print(731)\\n', b'731\\n')]:\n    r = subprocess.run(['python', '-'], input=source, capture_output=True)\n    assert (r.returncode, r.stdout, r.stderr) == (0, expected, b''), r\nprint('FINITE_STDIN_OK')"}),
+        ]
+        Provider.code_expected = ["File saved", "NESTED_SCRIPT_OK", "FILESYSTEM_WRITES_OK", "HEREDOC_SCRIPT_OK", "FINITE_STDIN_OK"]
     args.output.mkdir(parents=True, exist_ok=True)
     Provider.requests.clear()
     Provider.errors.clear()
@@ -250,6 +324,11 @@ def main():
         (tree / "EFI/AGENT/CONFIG.JSON").write_text(json.dumps(config))
         (tree / "work/needle.txt").write_text("SEED_731")
         (tree / "work/ambiguous.txt").write_text("aaa")
+        if args.code_workspace:
+            for name in ("ash.wasm", "python.wasm"):
+                shutil.copyfile(args.code_workspace / name, tree / "work" / name)
+            shutil.copytree(args.code_workspace / "lib", tree / "work/lib")
+            (tree / "work/background-loop.sh").write_bytes(b"while :; do :; done\n")
         if args.driver:
             (tree / "EFI/AGENT/DRIVERS").mkdir()
             (tree / "EFI/AGENT/DRIVERS/Probe.efi").write_bytes(args.driver.read_bytes())
@@ -260,7 +339,7 @@ def main():
         console.bind(("127.0.0.1", 0))
         console.listen()
         console.settimeout(40)
-        qemu = subprocess.Popen([args.qemu, "-machine", f"q35,accel={args.accel}", "-cpu", args.cpu, "-m", "256", "-display", "none", "-serial", "none", "-monitor", "none", "-no-reboot",
+        qemu = subprocess.Popen([args.qemu, "-machine", f"q35,accel={args.accel}", "-cpu", args.cpu, "-m", str(args.memory), "-display", "none", "-serial", "none", "-monitor", "none", "-no-reboot",
                                  "-drive", f"if=pflash,format=raw,readonly=on,file={args.code.resolve()}",
                                  "-drive", f"if=pflash,format=raw,snapshot=on,file={args.vars.resolve()}",
                                  "-drive", f"if=none,id=esp,format=raw,file={image}", "-device", "virtio-blk-pci,drive=esp", "-device", "virtio-serial-pci",
@@ -321,6 +400,39 @@ def main():
                 wait("Conversation cleared")
                 send("Exercise the file tools")
                 wait("DIRECT_TOOLS_VERIFIED", 70)
+                if args.code_workspace:
+                    send("/clear")
+                    wait("Conversation cleared")
+                    if args.code_cancel_only:
+                        send("/wasm load ash.wasm")
+                        wait("Loaded ash")
+                    else:
+                        send("Exercise code tools")
+                        wait("CODE_TOOLS_VERIFIED", args.code_timeout)
+                        send("/wasm ps")
+                        wait("Ready  •")
+                        print("PASS nested file tools, mkdir, 8 MiB writes and finite Python stdin" if args.filesystem_tools else "PASS real model shell/Python tools, cached WASM, source preservation, subprocess, failure, capture boundaries and fresh state", flush=True)
+                    send("/clear")
+                    wait("Conversation cleared")
+                    send("/wasm start ash background-loop.sh")
+                    visible = wait("WASM: ash background-loop.sh")
+                    background_pid = int(re.search(r"WASM: ash background-loop.sh.*PID (\d+)", visible).group(1))
+                    send("Cancel code tool")
+                    wait("Running shell")
+                    time.sleep(1)
+                    connection.sendall(b"\x1b")
+                    wait("Request cancelled")
+                    send("/clear")
+                    wait("Conversation cleared")
+                    send("/wasm ps")
+                    visible = wait(f"{background_pid}: Ready")
+                    records = re.findall(r"\b(\d+): (?:Ready|Waiting|Exited)", visible)
+                    assert records == [str(background_pid)], visible
+                    send(f"/wasm kill {background_pid}")
+                    wait(f"Cancelled {background_pid}")
+                    send(f"/wasm reap {background_pid}")
+                    wait(f"Reaped {background_pid}")
+                    print("PASS Esc cancels and reaps the tool tree while preserving an independent background root", flush=True)
                 send("/status")
                 wait("50.00%")
                 send("/clear")
@@ -358,6 +470,18 @@ def main():
                     fs = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
                     for name, expected in [("needle.txt", "edited 中 853".encode()), ("created.txt", b"created 419\n"), ("ambiguous.txt", b"aaa")]:
                         assert fs.get(f"/work/{name}").open().read() == expected
+                    if args.code_workspace:
+                        if not args.code_cancel_only:
+                            if args.filesystem_tools:
+                                assert fs.get('/work/scripts/deep/input.py').open().read() == b"print('NESTED_SCRIPT_OK')\n"
+                                for size in (65535, 65536, 65537, 524287, 524288, 524289, 8388608):
+                                    actual = fs.get(f'/work/data/space dir/write-{size}').open().read()
+                                    expected = (bytes(range(256)) * ((size + 255) // 256))[:size]
+                                    assert actual == expected, size
+                            else:
+                                for name, expected in [("code-shell.txt", "a b\n中\n"), ("code-python.txt", "python child 中")]:
+                                    assert fs.get(f"/work/{name}").open().read() == expected.encode()
+                        assert fs.get("/work/code-cancel-started.txt").open().read() == b"started\n"
                     try:
                         fs.get("/work/must-not-exist.txt")
                     except FileNotFoundError:

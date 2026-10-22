@@ -24,7 +24,7 @@ Store, linear memory, pending I/O and continuation, closing all descriptors.
 The terminal record retains its parent PID, status and shared stdout/stderr
 until wait/reap. Live children keep their inherited output and continue after
 their parent exits or is reaped. The
-firmware loader accepts modules up to 16 MiB. These are initial resource limits,
+firmware loader accepts modules up to 48 MiB. These are initial resource limits,
 not a sandbox or permission policy.
 
 Module registration validates and compiles functions eagerly. Lazy translation
@@ -34,14 +34,74 @@ fuel exhaustion and round-robin scheduling.
 
 ## Firmware commands
 
+The model receives `shell(command)` and `python(code)` in addition to the
+read/write/edit file tools. Shell code runs as `ash -c`; Python code runs as
+`python -c`. Source is passed as one unchanged argument, including whitespace,
+quotes and newlines. Source must be at most 60 KiB and contain no NUL bytes.
+The tools load workspace `ash.wasm` on first use, and `python.wasm` on first
+Python use. A registered name is reused, including a module loaded manually.
+Python requires the prepared standard library and startup adapter in `lib`.
+Each call starts a fresh process with empty finite stdin. Workspace files
+persist across calls; shell variables and interpreter globals do not.
+
+Tool results contain readable exit status and separate stdout/stderr sections.
+Capture retains the first 64 KiB of each stream, drains further bytes and marks
+truncation explicitly. Text uses UTF-8 with replacement for invalid bytes.
+The existing tool disclosure shows the result; execution adds no WASM panel.
+Esc cancels execution. Completion, cancellation and terminal-refresh failures
+cancel and reap all remaining descendants of that tool root. Independent
+background roots remain active. Original root IDs survive parent adoption.
+
+The model prompt describes an Alpine Linux-style BusyBox ash environment and
+states its actual WASM limits. POSIX shell syntax is available. Bash-only
+syntax, a Linux kernel, `apk` and arbitrary Linux binaries are unavailable.
+External commands still require registered WASM programs.
+
 ```text
-/wasm load NAME UEFI_PATH
+/wasm load PATH
+/wasm load NAME PATH
 /wasm start NAME [ARGS...]
 /wasm run NAME [ARGS...]
 /wasm ps
 /wasm kill PID
 /wasm reap PID
 ```
+
+`load PATH` registers the final filename without its `.wasm` suffix as the
+program name. The suffix is case-insensitive; other suffixes remain in the
+name. For example, `tools/ash.wasm` registers `ash`. Use `load NAME PATH` to
+select an explicit name, such as a separate alias for another module version.
+An empty filename or stem is rejected.
+
+Module paths accept `/` and `\` separators. Relative paths use the configured
+workspace; paths that start with either separator use the boot volume root.
+For example, `python.wasm` and `./python.wasm` load `\work\python.wasm` with the
+default workspace. `/work/python.wasm` and `\work\python.wasm` select that file
+explicitly. Parent traversal and volume prefixes such as `fs0:` are rejected.
+Copy guest binaries directly into the host workspace before starting the VM:
+
+```powershell
+Copy-Item .\artifacts\wasm-guests\*.wasm .\workspace\
+Copy-Item .\artifacts\wasm-guests\lib .\workspace\ -Recurse -Force
+```
+
+Then load and run Python in the firmware UI:
+
+```text
+/wasm load ash.wasm
+/wasm load python.wasm
+/wasm run python -c print(6*7)
+```
+
+Each `run` or `start` creates one output disclosure, collapsed by default.
+Its header shows the command, process ID and a readable running/completed/
+failed/cancelled status. Expand it with a click or Tab/Enter to read the
+command, status, standard output and standard error as plain text. Stream
+updates and completion edit the same disclosure and preserve its expanded
+state. Descendant output belongs to the same root command; child exits do
+not create separate notifications. Independent background roots have their
+own disclosures. Clearing the conversation discards earlier output; later
+background output creates a new collapsed disclosure.
 
 `start` returns to the UI while the process runs. `run` polls the UI and all
 ready processes until its root process exits; Esc cancels that root with status
@@ -207,7 +267,7 @@ Excess bytes are drained and the child is reaped, then capture reports failure.
 `print` supplies diagnostic output. No std/os modules, module loader, Node
 process/require, filesystem API or network API is installed.
 
-`guests/lib/shell.c` is the shared C capture layer for QuickJS and Python.
+`guests/lib/shell.c` is the C capture layer for QuickJS.
 It polls both output streams for all active commands and uses
 nonblocking wait to collect exits. This prevents stderr-before-stdout
 backpressure and early stream closure from blocking other commands.
@@ -219,50 +279,70 @@ not BusyBox ash execution. `scripts/smoke_ash.py --quickjs` separately verifies
 the real ash module, concurrent shell capture, parameter quoting and exit
 rejection. The firmware smoke accepts `--ash` to run the real shell too.
 
-## Restricted CPython
+## CPython
 
-The port uses the actual CPython 3.14.0 release from
-https://www.python.org/ftp/python/3.14.0/Python-3.14.0.tar.xz.
-`scripts/build_cpython.ps1` takes an explicit Windows WASI SDK directory and
-a matching Windows build Python through `-WasiSdk` and `-BuildPython`.
-`-Source`, `-Output`, `-MsysBash`, `-Uv` and `-Jobs` select local resources.
-Configure and make run in native MSYS2; compilation uses only the SDK compiler.
-`-Reconfigure` regenerates the configuration. The output is `python.wasm`
-and the upstream `python.LICENSE`.
+The port uses Brett Cannon's prebuilt CPython 3.14.7 WASI SDK 24 distribution,
+linked from the PSF webassembly project. This is an upstream maintainer build.
+The archive is `python-3.14.7-wasi_sdk-24.zip` from the
+`brettcannon/cpython-wasi-build` GitHub release `v3.14.7`.
+Run `./scripts/prepare_cpython.ps1`. Use `-Archive PATH` for a local archive,
+or `-Output PATH` to select the output directory. Preparation copies the binary
+unchanged and includes the full upstream `lib/python3.14` and license.
+It requires no CPython source tree, compiler, WASI SDK, MSYS2 or build Python.
 
-CPython uses its single-thread pthread-stub backend. Dynamic loading, socket
-and select modules, and unsupported readlink/realpath facilities are disabled.
-The build copies and patches the import core and FileIO source into its build
-directory. Built-in and frozen importers remain; filesystem, zip and dynamic
-extension importers are not installed. `sys.path` starts empty. Changing it
-does not enable file imports. The frontend freezes UTF-8 encodings and `efi`.
-Environment and site configuration, bytecode writes and signal-handler setup
-are disabled. `posix`, time, datetime, signal, faulthandler, locale and
-sysconfig native entry points are removed from the builtin table. `_decimal`
-is excluded. Builtin open, input and breakpoint are removed. FileIO accepts
-only integer descriptors 0–2 and no custom opener; alternate `_io` file
-open functions use the same restriction. These are interface restrictions,
-not a complete Python security sandbox.
+Copy both `python.wasm` and `lib` into the workspace. The upstream CLI supports
+`python -c CODE`, `python script.py`, and `python -m MODULE`.
+Standard `open`, FileIO and filesystem imports use that workspace.
+`lib/python3.14/site-packages/sitecustomize.py` installs the private Python
+adapter `_efi_process.py` at normal interpreter startup. Adapter failure exits
+with an error. `-S` disables site initialization and therefore disables the
+adapter. The packaged standard library and `subprocess.py` remain unchanged.
+`-I` retains site initialization and the installed adapter.
+The adapter disables bytecode writes. Dynamic extensions and native threads
+remain unavailable. `_socket` and `_decimal` are present in the prebuilt binary;
+socket creation still lacks a runtime backend and reports an error.
 
-Run `python -e CODE`. `import efi; efi.shell(command)` runs fresh real ash,
-waits cooperatively, captures both streams, drains and reaps the child.
-Text commands retain shell syntax; a list or tuple quotes each value as one
-word. `efi.quote(value)` is also available. Commands reject NUL and more than
-65,520 UTF-8 bytes. The result has `status`, `stdout_bytes`, `stderr_bytes`,
-and UTF-8 text properties `stdout` and `stderr` with replacement decoding.
-A nonzero exit raises `efi.ShellError` with `.result`; `check=False` returns
-that result directly. Each stream has a 512 KiB capture limit. Excess output
-is drained before reporting a capture error, so the next command can run.
+Use standard `subprocess.run`, `check_output`, `Popen` and `os.system`.
+The startup adapter patches the process hooks used by upstream `subprocess.py`
+and `os.system`. It uses ordinary WASI open/read/write on the internal
+`.efi-process` control endpoint to spawn fresh instances, map descriptors and
+wait cooperatively. That endpoint is process-local and cannot be inherited.
+Application code uses standard Python APIs. `shell=True` selects registered `ash`; argument
+lists with `shell=False` preserve individual words. Standard return codes,
+`CalledProcessError`, binary capture, text encoding/error policies, environment
+overrides, pipes, file redirections and `pass_fds` are supported. Python capture
+has no separate 512 KiB limit; available process memory still bounds it.
+
+For example, put this in `workspace/demo.py`, register `ash` and `python`,
+then run `/wasm run python demo.py`:
+
+```python
+import subprocess
+
+result = subprocess.run("echo hello", shell=True, capture_output=True, text=True, check=True)
+print(result.stdout, end="")
+```
+
+Executables must be registered. The backend maps `/bin/sh` to `ash`, and accepts
+registry names with `/bin/`, `/usr/bin/` or `./` prefixes. Filesystem PATH
+execution and a distinct custom `argv[0]` are unavailable. `cwd`, pre-exec
+callbacks, sessions/groups, credentials and umask changes raise `ENOTSUP`.
+Timeouts and process signals also raise `ENOTSUP`; firmware has no monotonic
+clock provider. `subprocess.DEVNULL` requires the currently absent `/dev/null`.
+Descriptor 3 is reserved for the workspace, and user descriptors end at 127.
+See [the transparency audit](port-transparency-audit.md) for remaining gaps.
 
 `scripts/test_cpython.py` runs the actual interpreter and ash through the
-native wasmi runner. It checks language execution, binary capture, quoting,
-exit errors, fresh instances, capture boundaries, disabled host interfaces,
-and concurrent Python children with independent module state and saved files.
+native wasmi runner. It checks file imports, standard CLI entry points, binary
+and text capture, argument boundaries, exit errors, environments, concurrent
+children, descriptor inheritance, duplex input/output and rejection before effects.
 `--test METHOD` selects a test. Firmware integration uses
 `scripts/smoke_wasm.py --python PATH --ash PATH`; it verifies saved FAT bytes
 and two Python roots that wait for each other's Shell-created files.
-`--memory` selects QEMU RAM in MiB (default 256). Execution memory is released
-at exit rather than retained by terminal records; process slots and captured
+`--memory` selects QEMU RAM in MiB (default 256).
+`--command-timeout` selects the per-command wait in seconds (default 45).
+The prebuilt distribution's verified TCG run used 512 MiB and 180 seconds.
+Execution memory is released at exit; process slots and captured
 output remain until reap.
 
 ## Nonlocal jumps for the BusyBox port
@@ -432,7 +512,11 @@ opened file type are removed from its descriptor. File readiness reports the
 bytes remaining at the current cursor and remains ready at EOF.
 
 The firmware implements these calls through EFI_FILE_PROTOCOL. File operations
-are synchronous and each read/write request is limited to 512 KiB. Append seeks
+are synchronous. Reads return at most 512 KiB per call. File writes validate
+all iovecs first, then transfer 64 KiB chunks without a 512 KiB call limit.
+Short writes return the completed prefix; errors after progress also return
+that prefix. An error before progress leaves the result pointer unchanged.
+Append seeks
 to the current file end before every write. Exclusive create checks existence
 before Open; no other guest can run between these steps in the single dispatcher.
 The host provider uses native file handles.
@@ -448,8 +532,22 @@ The actual libc fixture checks duplicate cursors, rights, negative/oversized
 sizes and 71 structured shrink/grow/overwrite operations. The integration
 driver compares saved file bytes with an independently computed bytearray.
 
-Directory creation/removal, rename/delete, timestamps, symlinks,
+`path_create_directory` creates a single directory on both providers. Missing
+parents, existing entries, non-directory components and capability violations
+return distinct errors. The model `write` tool creates missing parents.
+Native `path_rename` reaches the host provider, which also enables explicit
+Python bytecode compilation. Firmware rename/removal, timestamps, symlinks,
 filesystem PATH and complete working-directory state remain pending.
+Finite input and captured output use WASI UNKNOWN stream type. They are not
+terminals. Unchanged CPython `python -` executes redirected scripts and empty
+stdin without starting a REPL.
+
+Before model code runs, the firmware discovers root workspace `.wasm` files.
+It validates command names, binary headers and the 48 MiB module size bound.
+Discovered names participate in ash's program lookup before compilation. First
+spawn reads and compiles the module; later spawns reuse it. The `qjs` alias
+shares `quickjs.wasm`'s compiled module. Explicit registrations take precedence.
+Filesystem PATH entries and a persistent installation manifest remain pending.
 
 The `efi_process.dupfd(source, minimum)` import returns the lowest free descriptor
 at or above the minimum, or a negative POSIX errno. Ash uses it for saved
@@ -725,7 +823,7 @@ its exit status so completed metadata does not exhaust the process table.
 The actual native CLI also verifies `--max-time` on a held response and
 server-observed connection closure. The firmware integration holds a real
 curl response, runs another WASM instance, checks real QuickJS-to-ash-to-curl
-and restricted CPython-to-ash-to-curl uploads, then cancels the held curl.
+and CPython subprocess-to-ash-to-curl uploads, then cancels the held curl.
 The independent server verifies every upload byte and the callers verify its
 SHA256 response. The held connection must remain open through peer/application
 progress and close after cancellation. These checks exercise named applications
@@ -814,9 +912,8 @@ The minimum RAM for the complete set has not been measured.
 
 The target is a single-threaded, cooperative UEFI world for CPython, BusyBox ash
 with NOFORK, curl, WolfSSH, and QuickJS or QuickJS-NG. Shell commands must create
-fresh instances without `fork`. QuickJS and Python must expose a narrow command
-interface to the guest shell. QuickJS must provide a zx-like command API;
-other QuickJS/Python host interfaces are outside the requested scope.
+fresh instances without `fork`. Python uses standard `subprocess` and `os.system`
+interfaces. QuickJS provides the requested zx-like command API.
 
 The process ABI also provides `efi_process.input_snapshot(bytes, size)`.
 It copies at most 512 KiB into an anonymous read-only stream and returns a
@@ -870,7 +967,7 @@ Actual QEMU verification passes all math/test oracles within the complete
 512 MiB application regression in artifacts/wasm-applications-math-512.
 The dedicated 512 MiB artifacts/wasm-ash-math-languages run also passes both
 language interfaces: QuickJS concurrently captures the arithmetic loop and
-a failing test command; CPython checks the same loop and check=False error.
+a failing test command; CPython checks the same loop and captured nonzero status.
 Both require the exact sum-of-squares output CALC:2870 and test status 2 with
 the exact upstream diagnostic. QuickJS awaits the outer Promise so rejected
 assertions propagate to the root's status.

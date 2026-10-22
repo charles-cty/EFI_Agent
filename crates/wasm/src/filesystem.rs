@@ -83,6 +83,14 @@ pub trait FileSystem {
     fn open(&self, path: &str, options: OpenOptions) -> Result<Box<dyn File>, FileError>;
     fn metadata(&self, path: &str) -> Result<Metadata, FileError>;
     fn read_directory(&self, path: &str) -> Result<DirectoryEntries, FileError>;
+    /// Create one directory. The parent must exist; existing entries are errors.
+    fn create_directory(&self, _path: &str) -> Result<(), FileError> {
+        Err(FileError::Unsupported)
+    }
+    /// Move an entry within this filesystem, replacing a permitted destination.
+    fn rename(&self, _source: &str, _destination: &str) -> Result<(), FileError> {
+        Err(FileError::Unsupported)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,6 +117,12 @@ pub struct DirectoryEntries {
 impl DirectoryEntries {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, EntryType)> {
+        self.entries
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.kind))
     }
 
     pub fn push(&mut self, name: String, kind: EntryType) -> Result<(), FileError> {

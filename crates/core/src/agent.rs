@@ -54,7 +54,7 @@ impl Default for Agent {
             messages: vec![ChatMessage::text(
                 "system",
                 String::from(
-                    "You are a minimal coding assistant running in UEFI. Use read, write, and edit to inspect and change the configured workspace. Read files before editing. edit requires one exact match. Tool errors are real; do not claim a change succeeded if it failed. Do not assume a shell or operating system exists.",
+                    "You are a coding assistant with an Alpine Linux-style environment: BusyBox ash provides POSIX shell syntax, as on Alpine Linux. Use shell for commands and python for Python 3 code. These tools execute real WASM programs in UEFI and load their interpreters automatically. Each call starts a fresh process in the shared workspace; files persist, shell variables and Python globals do not. Use POSIX ash syntax; Bash-only syntax, a Linux kernel, apk, and arbitrary installed Linux programs are unavailable. External commands must be registered WASM programs. Python supports standard subprocess APIs through ash. Use read, write, and edit to inspect and change the configured workspace. Read files before editing. edit requires one exact match. Tool errors are real; do not claim an operation succeeded if it failed.",
                 ),
             )],
         }
@@ -235,9 +235,33 @@ struct Edit {
     new_text: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Shell {
+    command: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Python {
+    code: String,
+}
+
 fn operation(call: &ToolCall) -> Result<Operation, String> {
     let arguments = &call.function.arguments;
     match call.function.name.as_str() {
+        "shell" => {
+            let args: Shell = serde_json::from_str(arguments)
+                .map_err(|e| format!("Invalid shell arguments: {e}"))?;
+            Ok(Operation::Shell {
+                command: args.command,
+            })
+        }
+        "python" => {
+            let args: Python = serde_json::from_str(arguments)
+                .map_err(|e| format!("Invalid python arguments: {e}"))?;
+            Ok(Operation::Python { code: args.code })
+        }
         "read" => {
             let args: Read = serde_json::from_str(arguments)
                 .map_err(|e| format!("Invalid read arguments: {e}"))?;
@@ -292,8 +316,10 @@ pub fn edit_text(mut text: String, old: &str, new: &str) -> Result<String, Strin
 pub fn tool_definitions() -> serde_json::Value {
     serde_json::json!([
         {"type":"function","function":{"name":"read","description":"Read a UTF-8 file or list a directory in the workspace.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}},
-        {"type":"function","function":{"name":"write","description":"Create or overwrite a UTF-8 file in the workspace (512 KiB limit). Parent directory must exist.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":false}}},
-        {"type":"function","function":{"name":"edit","description":"Replace one exact occurrence of old_text with new_text. Fails if missing or ambiguous.","parameters":{"type":"object","properties":{"path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"}},"required":["path","old_text","new_text"],"additionalProperties":false}}}
+        {"type":"function","function":{"name":"write","description":"Create or overwrite a UTF-8 file in the workspace (512 KiB limit). Create missing parent directories.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":false}}},
+        {"type":"function","function":{"name":"edit","description":"Replace one exact occurrence of old_text with new_text. Fails if missing or ambiguous.","parameters":{"type":"object","properties":{"path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"}},"required":["path","old_text","new_text"],"additionalProperties":false}}},
+        {"type":"function","function":{"name":"shell","description":"Run a command in an Alpine Linux-style BusyBox ash shell (POSIX syntax, not full Bash). ash.wasm loads automatically once. Runs in the shared workspace with finite empty stdin. Each call has fresh shell state. External commands require registered WASM modules; apk and Linux executables are unavailable. Returns exit status, stdout and stderr; each stream is limited to 64 KiB with explicit truncation. Esc cancels the process tree.","parameters":{"type":"object","properties":{"command":{"type":"string","description":"Shell script passed unchanged to ash -c; supports quotes, newlines, pipes and redirections."}},"required":["command"],"additionalProperties":false}}},
+        {"type":"function","function":{"name":"python","description":"Run Python 3 code in the shared workspace of the Alpine Linux-style environment. python.wasm and BusyBox ash load automatically once; the packaged Python standard library must exist. Each call has fresh interpreter state; files persist. Standard subprocess APIs run ash commands. Native extensions, threads and ordinary Linux executables are unavailable. Returns exit status, stdout and stderr; each stream is limited to 64 KiB with explicit truncation. Esc cancels the process tree.","parameters":{"type":"object","properties":{"code":{"type":"string","description":"Python source passed unchanged to python -c; supports multi-line code."}},"required":["code"],"additionalProperties":false}}}
     ])
 }
 
@@ -301,6 +327,43 @@ pub fn tool_definitions() -> serde_json::Value {
 mod tests {
     use super::*;
     use alloc::string::ToString;
+
+    #[test]
+    fn code_tools_preserve_source_and_reject_invalid_calls() {
+        for (name, field, source) in [
+            ("shell", "command", "printf '%s\\n' 'a b'\necho 中 >&2"),
+            ("python", "code", "value = 'a b'\nprint(value, '中')"),
+        ] {
+            let mut call: ToolCall = serde_json::from_value(serde_json::json!({
+                "id": "code", "type": "function", "function": {
+                    "name": name, "arguments": serde_json::json!({field: source}).to_string()
+                }
+            }))
+            .unwrap();
+            let actual = match operation(&call).unwrap() {
+                Operation::Shell { command } => command,
+                Operation::Python { code } => code,
+                _ => panic!("Code tool must dispatch a code operation"),
+            };
+            assert_eq!(actual, source);
+            for invalid in [
+                "{}",
+                "{\"code\":12}",
+                "{\"command\":\"echo x\",\"extra\":true}",
+            ] {
+                call.function.arguments = invalid.into();
+                assert!(operation(&call).is_err());
+            }
+        }
+        let definitions = tool_definitions();
+        let names: Vec<_> = definitions
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["read", "write", "edit", "shell", "python"]);
+    }
     #[test]
     fn unique_edit_including_overlaps_and_unicode() {
         assert_eq!(

@@ -4,7 +4,7 @@ use wasmi::{Caller, Linker};
 
 use crate::{
     Context,
-    abi::{memory, range},
+    abi::{memory, range, vectors},
     filesystem::{Directory, FileError, OpenOptions},
     io::{self, Descriptor},
 };
@@ -86,6 +86,24 @@ fn open(
         let memory = memory(&caller)?;
         range(opened, 4, memory.data_size(&caller))?;
         let path = path(&caller, &directory, ptr, len)?;
+        if path == ".efi-process" {
+            if oflags != 0 || flags != 0 || rights & ((1 << 1) | (1 << 6)) != ((1 << 1) | (1 << 6))
+            {
+                return Err(28);
+            }
+            let available = (4..io::MAX_DESCRIPTORS)
+                .find(|fd| !caller.data().descriptors.contains_key(fd))
+                .ok_or(io::MFILE)?;
+            caller.data_mut().descriptors.insert(
+                available,
+                Descriptor::Control(Rc::new(RefCell::new(alloc::collections::VecDeque::new()))),
+            );
+            caller.data_mut().close_on_exec.insert(available);
+            memory
+                .write(&mut caller, opened as usize, &available.to_le_bytes())
+                .map_err(|_| 21)?;
+            return Ok(());
+        }
         let available = (0..io::MAX_DESCRIPTORS)
             .find(|fd| !caller.data().descriptors.contains_key(fd))
             .ok_or(io::MFILE)?;
@@ -157,11 +175,33 @@ pub(crate) fn link(linker: &mut Linker<Context>) {
     linker
         .func_wrap("wasi_snapshot_preview1", "path_readlink", readlink)
         .expect("Unique import");
+    linker
+        .func_wrap(
+            "wasi_snapshot_preview1",
+            "path_create_directory",
+            |caller: Caller<'_, Context>, fd: u32, ptr: u32, len: u32| -> i32 {
+                let result = (|| {
+                    let directory = directory(&caller, fd, 1 << 9)?;
+                    let memory = memory(&caller)?;
+                    let bytes =
+                        &memory.data(&caller)[range(ptr, len as usize, memory.data_size(&caller))?];
+                    let text = core::str::from_utf8(bytes).map_err(|_| 25)?;
+                    // A trailing slash requires a directory, which mkdir creates.
+                    let path = directory.resolve(text.trim_end_matches('/'))?;
+                    directory
+                        .filesystem
+                        .create_directory(&path)
+                        .map_err(FileError::errno)
+                })();
+                result.err().unwrap_or(0)
+            },
+        )
+        .expect("Unique import");
     // These operations have no provider implementation or granted rights yet.
     // Link callers so unsupported optional CLI features fail as domain errors.
     for (name, right) in [
-        ("path_create_directory", 1 << 9),
         ("path_unlink_file", 1 << 26),
+        ("path_remove_directory", 1 << 25),
     ] {
         linker
             .func_wrap(
@@ -193,9 +233,14 @@ pub(crate) fn link(linker: &mut Linker<Context>) {
                 let result = (|| {
                     let old = directory(&caller, old_fd, 1 << 16)?;
                     let new = directory(&caller, new_fd, 1 << 17)?;
-                    path(&caller, &old, old_ptr, old_len)?;
-                    path(&caller, &new, new_ptr, new_len)?;
-                    Err::<(), i32>(58)
+                    let source = path(&caller, &old, old_ptr, old_len)?;
+                    let destination = path(&caller, &new, new_ptr, new_len)?;
+                    if !Rc::ptr_eq(&old.filesystem, &new.filesystem) {
+                        return Err(75); // XDEV
+                    }
+                    old.filesystem
+                        .rename(&source, &destination)
+                        .map_err(FileError::errno)
                 })();
                 result.err().unwrap_or(0)
             },
@@ -227,6 +272,127 @@ pub(crate) fn link(linker: &mut Linker<Context>) {
         )
         .expect("Unique import");
     let wasi = "wasi_snapshot_preview1";
+    linker
+        .func_wrap(
+            wasi,
+            "fd_advise",
+            |caller: Caller<'_, Context>, fd: u32, _offset: u64, _length: u64, advice: u32| {
+                let result: Result<(), i32> = (|| {
+                    let descriptor = caller.data().descriptors.get(&fd).ok_or(io::BADF)?;
+                    if advice > 5 {
+                        return Err(28);
+                    }
+                    match descriptor {
+                        Descriptor::File { rights, .. } if rights & (1 << 7) != 0 => Err(58),
+                        Descriptor::File { .. } => Err(76),
+                        _ => Err(28),
+                    }
+                })();
+                result.err().unwrap_or(0)
+            },
+        )
+        .expect("Unique import");
+    linker
+        .func_wrap(
+            wasi,
+            "fd_filestat_set_times",
+            |caller: Caller<'_, Context>, fd: u32, _access: u64, _modify: u64, flags: u32| {
+                let result = (|| {
+                    let descriptor = caller.data().descriptors.get(&fd).ok_or(io::BADF)?;
+                    if flags & !15 != 0 || flags & 3 == 3 || flags & 12 == 12 {
+                        return Err(28);
+                    }
+                    let rights = match descriptor {
+                        Descriptor::File { rights, .. } => *rights,
+                        Descriptor::Directory(directory) => directory.rights,
+                        _ => return Err(28),
+                    };
+                    Err::<(), i32>(if rights & (1 << 23) == 0 { 76 } else { 58 })
+                })();
+                result.err().unwrap_or(0)
+            },
+        )
+        .expect("Unique import");
+    for (name, right) in [
+        ("fd_pread", (1 << 1) | (1 << 2)),
+        ("fd_pwrite", (1 << 6) | (1 << 2)),
+    ] {
+        linker
+            .func_wrap(
+                wasi,
+                name,
+                move |caller: Caller<'_, Context>,
+                      fd: u32,
+                      ptr: u32,
+                      count: u32,
+                      _offset: u64,
+                      output: u32| {
+                    let result = (|| {
+                        let descriptor = caller.data().descriptors.get(&fd).ok_or(io::BADF)?;
+                        match descriptor {
+                            Descriptor::File { rights, .. } if rights & right == right => (),
+                            Descriptor::File { .. } => return Err(76),
+                            _ => return Err(70),
+                        }
+                        range(output, 4, memory(&caller)?.data_size(&caller))?;
+                        vectors(&caller, ptr, count)?;
+                        Err::<(), i32>(58)
+                    })();
+                    result.err().unwrap_or(0)
+                },
+            )
+            .expect("Unique import");
+    }
+    linker
+        .func_wrap(
+            wasi,
+            "path_symlink",
+            |caller: Caller<'_, Context>,
+             old_ptr: u32,
+             old_len: u32,
+             fd: u32,
+             new_ptr: u32,
+             new_len: u32| {
+                let result = (|| {
+                    let directory = directory(&caller, fd, 1 << 24)?;
+                    range(
+                        old_ptr,
+                        old_len as usize,
+                        memory(&caller)?.data_size(&caller),
+                    )?;
+                    path(&caller, &directory, new_ptr, new_len)?;
+                    Err::<(), i32>(58)
+                })();
+                result.err().unwrap_or(0)
+            },
+        )
+        .expect("Unique import");
+    linker
+        .func_wrap(
+            wasi,
+            "path_link",
+            |caller: Caller<'_, Context>,
+             old_fd: u32,
+             flags: u32,
+             old_ptr: u32,
+             old_len: u32,
+             new_fd: u32,
+             new_ptr: u32,
+             new_len: u32| {
+                let result = (|| {
+                    let old = directory(&caller, old_fd, 1 << 11)?;
+                    let new = directory(&caller, new_fd, 1 << 12)?;
+                    if flags & !1 != 0 {
+                        return Err(28);
+                    }
+                    path(&caller, &old, old_ptr, old_len)?;
+                    path(&caller, &new, new_ptr, new_len)?;
+                    Err::<(), i32>(58)
+                })();
+                result.err().unwrap_or(0)
+            },
+        )
+        .expect("Unique import");
     linker
         .func_wrap(
             wasi,

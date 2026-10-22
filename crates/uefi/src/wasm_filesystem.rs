@@ -46,6 +46,31 @@ impl FirmwareFileSystem {
 }
 
 impl FileSystem for FirmwareFileSystem {
+    fn create_directory(&self, path: &str) -> Result<(), FileError> {
+        // EFI create opens an existing entry. Check first to implement mkdir.
+        match self.metadata(path) {
+            Ok(_) => return Err(FileError::Exists),
+            Err(FileError::NotFound) => {}
+            Err(failure) => return Err(failure),
+        }
+        let (parent, name) = path.rsplit_once('/').unwrap_or(("", path));
+        if name.is_empty() {
+            return Err(FileError::Exists);
+        }
+        let mut parent = self.open_handle(parent, FileMode::ReadWrite)?;
+        if !parent
+            .is_directory()
+            .map_err(|failure| error(failure.status()))?
+        {
+            return Err(FileError::NotDirectory);
+        }
+        let name = CString16::try_from(name).map_err(|_| FileError::Invalid)?;
+        parent
+            .open(&name, FileMode::CreateReadWrite, FileAttribute::DIRECTORY)
+            .map_err(|failure| error(failure.status()))?;
+        Ok(())
+    }
+
     fn open(&self, path: &str, options: OpenOptions) -> Result<Box<dyn File>, FileError> {
         // The dispatcher is single-threaded. No other guest runs between this
         // existence check and EFI Open, which has no exclusive-create flag.

@@ -1,13 +1,75 @@
 use alloc::{
+    collections::{BTreeMap, BTreeSet},
     format,
     rc::Rc,
     string::{String, ToString},
+    vec,
     vec::Vec,
 };
-use efi_agent_core::ui::App;
+use efi_agent_core::wasm_output::WasmOutput;
+use efi_agent_core::{config::resolve_module_path, ui::App};
 use efi_agent_wasm::{Status, World};
 
 use crate::{files, terminal};
+
+const TOOL_STREAM_LIMIT: usize = 64 * 1024;
+
+#[derive(Default)]
+struct ToolOutput {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    truncated: [bool; 2],
+}
+
+impl ToolOutput {
+    fn append(&mut self, stdout: &[u8], stderr: &[u8]) {
+        for (index, (target, bytes)) in [(&mut self.stdout, stdout), (&mut self.stderr, stderr)]
+            .into_iter()
+            .enumerate()
+        {
+            let count = bytes.len().min(TOOL_STREAM_LIMIT - target.len());
+            target.extend_from_slice(&bytes[..count]);
+            self.truncated[index] |= count < bytes.len();
+        }
+    }
+
+    fn result(&self, status: &Status) -> String {
+        let status = match status {
+            Status::Exited(code) => format!("Exit code: {code}"),
+            Status::Trapped(error) => format!("Trap: {error}"),
+            _ => unreachable!("Tool result requires a terminal process"),
+        };
+        let mut result = status;
+        for (index, (name, bytes)) in [
+            ("Standard output", &self.stdout),
+            ("Standard error", &self.stderr),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            result.push_str(&format!("\n\n{name}:\n{}", String::from_utf8_lossy(bytes)));
+            if self.truncated[index] {
+                result.push_str("\n[Output truncated at 64 KiB]");
+            }
+        }
+        result
+    }
+}
+
+fn module_name(path: &str) -> Result<&str, String> {
+    let filename = path
+        .rsplit(['/', '\\'])
+        .next()
+        .expect("Path has a final part");
+    let name = match filename.rsplit_once('.') {
+        Some((stem, extension)) if extension.eq_ignore_ascii_case("wasm") => stem,
+        _ => filename,
+    };
+    if name.is_empty() || matches!(name, "." | "..") {
+        return Err("Module path must include a program name".into());
+    }
+    Ok(name)
+}
 
 struct FirmwareRandom;
 impl efi_agent_wasm::random::Random for FirmwareRandom {
@@ -24,7 +86,12 @@ impl efi_agent_wasm::random::Random for FirmwareRandom {
 
 pub struct Runtime {
     world: World,
-    reported: Vec<u32>,
+    workspace: String,
+    outputs: BTreeMap<u32, WasmOutput>,
+    roots: BTreeMap<u32, u32>,
+    cancelled: BTreeSet<u32>,
+    output_changed: bool,
+    tool_outputs: BTreeMap<u32, ToolOutput>,
 }
 
 impl Runtime {
@@ -43,30 +110,139 @@ impl Runtime {
         )));
         Self {
             world,
-            reported: Vec::new(),
+            workspace: workspace.into(),
+            outputs: BTreeMap::new(),
+            roots: BTreeMap::new(),
+            cancelled: BTreeSet::new(),
+            output_changed: false,
+            tool_outputs: BTreeMap::new(),
         }
     }
 
     /// Dispatch one Wasm quantum at APPLICATION between firmware and UI polls.
     pub fn poll(&mut self, app: &mut App) -> bool {
         let progressed = self.world.step().is_some();
+        self.output_changed = false;
         let pids: Vec<_> = self.world.process_ids().collect();
-        for pid in pids {
-            let (stdout, stderr) = self.world.take_output(pid).expect("Listed process exists");
-            if !stdout.is_empty() {
-                app.message("wasm", String::from_utf8_lossy(&stdout).into_owned());
-            }
-            if !stderr.is_empty() {
-                app.message("wasm stderr", String::from_utf8_lossy(&stderr).into_owned());
-            }
-            let status = self.world.status(pid).expect("Listed process exists");
-            if !status.is_live() && !self.reported.contains(&pid) {
-                app.message("wasm", format!("Process {pid}: {status:?}"));
-                self.reported.push(pid);
+        // Retain each child's root even after its parent exits or is reaped.
+        for &pid in &pids {
+            if !self.roots.contains_key(&pid) {
+                let root = self.world.root(pid).expect("Listed process exists");
+                self.roots.insert(pid, root);
             }
         }
-        self.reported.retain(|pid| self.world.status(*pid).is_ok());
+        for pid in pids {
+            let (stdout, stderr) = self.world.take_output(pid).expect("Listed process exists");
+            let root = self.roots[&pid];
+            if let Some(output) = self.tool_outputs.get_mut(&root) {
+                output.append(&stdout, &stderr);
+                continue;
+            }
+            let status = match self.world.status(root) {
+                Ok(Status::Exited(0)) => String::from("Completed (exit code 0)"),
+                Ok(Status::Exited(code)) if self.cancelled.contains(&root) => {
+                    format!("Cancelled (exit code {code})")
+                }
+                Ok(Status::Exited(code)) => format!("Failed (exit code {code})"),
+                Ok(Status::Trapped(error)) => format!("Failed: {error}"),
+                Ok(_) => String::from("Running"),
+                Err(_) => String::from(self.outputs[&root].status()),
+            };
+            if pid == root || !stdout.is_empty() || !stderr.is_empty() {
+                self.output_changed |= self
+                    .outputs
+                    .get_mut(&root)
+                    .expect("Root has an output panel")
+                    .update(
+                        app,
+                        &String::from_utf8_lossy(&stdout),
+                        &String::from_utf8_lossy(&stderr),
+                        &status,
+                    );
+            }
+        }
+        self.roots.retain(|pid, _| self.world.status(*pid).is_ok());
+        self.outputs
+            .retain(|root, _| self.roots.values().any(|pid| pid == root));
+        self.cancelled
+            .retain(|root| self.outputs.contains_key(root));
         progressed
+    }
+
+    fn ensure_program(&mut self, name: &str) -> Result<(), String> {
+        if !self.world.has_program(name) {
+            let path = resolve_module_path(&self.workspace, &format!("{name}.wasm"))?;
+            let bytes =
+                files::read_wasm(&path).map_err(|error| format!("Cannot load {path}: {error}"))?;
+            self.world
+                .register(name, &bytes)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Execute model code without adding a second UI block to the tool result.
+    pub fn run_tool(
+        &mut self,
+        python: bool,
+        source: &str,
+        app: &mut App,
+        refresh: &mut impl FnMut(&mut App, bool) -> Result<bool, String>,
+    ) -> Result<String, String> {
+        if source.contains('\0') || source.len() > 60 * 1024 {
+            return Err("Code must contain no NUL and must be at most 60 KiB".into());
+        }
+        self.world
+            .discover_programs()
+            .map_err(|error| format!("Discover workspace programs: {error:?}"))?;
+        self.ensure_program("ash")?;
+        if python {
+            self.ensure_program("python")?;
+        }
+        let program = if python { "python" } else { "ash" };
+        let pid = self
+            .world
+            .spawn(vec![program.into(), "-c".into(), source.into()], Vec::new())
+            .map_err(|error| error.to_string())?;
+        self.roots.insert(pid, pid);
+        self.tool_outputs.insert(pid, ToolOutput::default());
+        let execution = (|| {
+            while self
+                .world
+                .status(pid)
+                .expect("Tool process exists")
+                .is_live()
+            {
+                self.poll(app);
+                if refresh(app, true)? {
+                    return Err(String::from("Request cancelled"));
+                }
+                crate::event_loop::dispatch();
+            }
+            Ok(())
+        })();
+        // Terminate descendants as well, including children adopted by PID 0.
+        // Unrelated background slash-command roots remain active.
+        let pids: Vec<_> = self
+            .world
+            .process_ids()
+            .filter(|child| self.world.root(*child).expect("Listed process exists") == pid)
+            .collect();
+        for &child in &pids {
+            self.world.cancel(child).expect("Tool process exists");
+        }
+        self.poll(app);
+        let status = self.world.status(pid).expect("Tool root exists");
+        let output = self
+            .tool_outputs
+            .remove(&pid)
+            .expect("Tool capture exists")
+            .result(status);
+        for child in pids {
+            self.world.reap(child).expect("Tool process is terminal");
+            self.roots.remove(&child);
+        }
+        execution.map(|()| output)
     }
 
     pub fn command(
@@ -77,28 +253,44 @@ impl Runtime {
     ) -> Result<String, terminal::Error> {
         let mut words = text.split_whitespace().skip(1);
         let result = match words.next() {
-            Some("load") => match (words.next(), words.next(), words.next()) {
-                (Some(name), Some(path), None) => files::read_wasm(path)
-                    .and_then(|bytes| {
-                        self.world
-                            .register(name, &bytes)
-                            .map_err(|error| error.to_string())
-                    })
-                    .map(|()| format!("Loaded {name}")),
-                _ => Err("Usage: /wasm load NAME UEFI_PATH".into()),
-            },
+            Some("load") => {
+                let module = match (words.next(), words.next(), words.next()) {
+                    (Some(path), None, None) => module_name(path).map(|name| (name, path)),
+                    (Some(name), Some(path), None) => Ok((name, path)),
+                    _ => Err("Usage: /wasm load PATH or /wasm load NAME PATH".into()),
+                };
+                module.and_then(|(name, path)| {
+                    resolve_module_path(&self.workspace, path)
+                        .and_then(|path| {
+                            files::read_wasm(&path)
+                                .map_err(|error| format!("Cannot load {path}: {error}"))
+                        })
+                        .and_then(|bytes| {
+                            self.world
+                                .register(name, &bytes)
+                                .map_err(|error| error.to_string())
+                        })
+                        .map(|()| format!("Loaded {name}"))
+                })
+            }
             Some(mode @ ("start" | "run")) => {
                 let args: Vec<String> = words.map(String::from).collect();
+                let command = args.join(" ");
                 match self.world.spawn(args, Vec::new()) {
                     Ok(pid) => {
+                        self.roots.insert(pid, pid);
+                        let mut output = WasmOutput::new(app, pid, command);
+                        output.update(app, "", "", "Running");
+                        self.outputs.insert(pid, output);
+                        refresh(app, false)?;
                         if mode == "run" {
                             while self.world.status(pid).is_ok_and(Status::is_live) {
-                                let messages = app.messages.len();
                                 self.poll(app);
-                                if app.messages.len() != messages {
+                                if self.output_changed {
                                     refresh(app, false)?;
                                 }
                                 if refresh(app, true)? {
+                                    self.cancelled.insert(pid);
                                     self.world.cancel(pid).expect("Running process exists");
                                     break;
                                 }
@@ -106,10 +298,7 @@ impl Runtime {
                             }
                             self.poll(app);
                         }
-                        Ok(format!(
-                            "Process {pid}: {:?}",
-                            self.world.status(pid).expect("Root process exists")
-                        ))
+                        Ok(String::new())
                     }
                     Err(error) => Err(error.to_string()),
                 }
@@ -130,6 +319,7 @@ impl Runtime {
                     words.next(),
                 ) {
                     (Some(pid), None) => if operation == "kill" {
+                        self.cancelled.insert(pid);
                         self.world.cancel(pid).map(|()| format!("Cancelled {pid}"))
                     } else {
                         self.world
@@ -141,7 +331,7 @@ impl Runtime {
                 }
             }
             _ => Ok(String::from(
-                "/wasm load NAME UEFI_PATH\n/wasm start NAME [ARGS...]\n/wasm run NAME [ARGS...] (Esc cancels)\n/wasm ps\n/wasm kill PID\n/wasm reap PID\nArguments are split on whitespace.",
+                "/wasm load PATH (name from filename)\n/wasm load NAME PATH (explicit name)\n/wasm start NAME [ARGS...]\n/wasm run NAME [ARGS...] (Esc cancels)\n/wasm ps\n/wasm kill PID\n/wasm reap PID\nRelative module paths use the workspace. / or \\ starts at the boot volume root.\nArguments are split on whitespace.",
             )),
         };
         Ok(result.unwrap_or_else(|error| format!("WASM: {error}")))

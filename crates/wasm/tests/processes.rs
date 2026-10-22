@@ -112,6 +112,7 @@ fn spawn_wait_exit_status_and_inherited_output() {
     let parent = world.spawn(vec!["parent".into()], vec![]).unwrap();
     assert_eq!(world.step(), Some(parent));
     let child = world.process_ids().find(|pid| *pid != parent).unwrap();
+    assert_eq!(world.root(child).unwrap(), parent);
     assert_eq!(world.step(), Some(child));
     assert_eq!(world.step(), Some(parent));
     assert_eq!(world.status(parent).unwrap(), &Status::Waiting(child));
@@ -159,6 +160,7 @@ fn exited_parent_can_be_reaped_before_live_child_reports_adoption_and_output() {
     assert_eq!(world.step(), Some(child));
     assert_eq!(world.step(), Some(parent));
     assert_eq!(world.reap(parent).unwrap(), Status::Exited(0));
+    assert_eq!(world.root(child).unwrap(), parent);
     finish(&mut world, child);
     assert_eq!(world.status(child).unwrap(), &Status::Exited(0));
     assert_eq!(world.take_output(child).unwrap().0, b"after-parent");
@@ -242,6 +244,20 @@ fn reject_unscheduled_start_and_excess_memory_without_consuming_pid() {
         r#"(module (memory (export "memory") 1) (func (export "_start")))"#,
     );
     assert_eq!(world.spawn(vec!["ok".into()], vec![]).unwrap(), 1);
+    register(
+        &mut world,
+        "allocation",
+        r#"(module
+      (import "efi_process" "spawn" (func $spawn (param i32 i32) (result i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 32) "large\00")
+      (func (export "_start")
+        (if (i32.ne (call $spawn (i32.const 32) (i32.const 6)) (i32.const -12)) (then unreachable))))"#,
+    );
+    let parent = world.spawn(vec!["allocation".into()], vec![]).unwrap();
+    finish(&mut world, parent);
+    assert_eq!(world.status(parent).unwrap(), &Status::Exited(0));
+    assert_eq!(world.process_ids().count(), 2);
 }
 
 #[test]

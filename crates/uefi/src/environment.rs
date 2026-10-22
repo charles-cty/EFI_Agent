@@ -1,4 +1,4 @@
-//! The firmware owns provider requests and boot-volume file operations.
+//! Firmware provider requests, boot-volume file operations and code tool dispatch.
 use crate::{dns, files, tls};
 use alloc::{
     format,
@@ -242,6 +242,7 @@ pub struct Interactive<'a> {
     pub runtime: &'a mut Runtime,
     pub poll: &'a mut dyn FnMut() -> bool,
     pub cancelled: bool,
+    pub execute_code: &'a mut dyn FnMut(bool, &str) -> Result<String, String>,
 }
 impl Interactive<'_> {
     fn check(&mut self) -> bool {
@@ -274,6 +275,8 @@ impl Environment for Interactive<'_> {
         }
         let config = &self.runtime.config;
         match operation {
+            Operation::Shell { command } => (self.execute_code)(false, &command),
+            Operation::Python { code } => (self.execute_code)(true, &code),
             Operation::Read { path } => files::read_or_list(&config.resolve(&path)?),
             Operation::Write { path, content } => {
                 files::write(&config.resolve(&path)?, &content)?;

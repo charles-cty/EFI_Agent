@@ -17,6 +17,7 @@ pub struct App {
     pub scroll: u16,
     pub quit: bool,
     pub selection_view: crate::serial::SelectionView,
+    pub transcript_generation: u64,
     disclosure_hits: Vec<(Rect, usize)>,
     focused: Option<usize>,
     disclosure_anchor: Option<(usize, u16)>,
@@ -34,6 +35,7 @@ impl Default for App {
             scroll: 0,
             quit: false,
             selection_view: crate::serial::SelectionView::default(),
+            transcript_generation: 0,
             disclosure_hits: Vec::new(),
             focused: None,
             disclosure_anchor: None,
@@ -109,6 +111,7 @@ impl App {
     }
 
     pub fn clear_messages(&mut self) {
+        self.transcript_generation += 1;
         self.messages.clear();
         self.disclosure_hits.clear();
         self.focused = None;

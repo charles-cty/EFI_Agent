@@ -7,6 +7,12 @@ pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Operation {
+    Shell {
+        command: String,
+    },
+    Python {
+        code: String,
+    },
     Status,
     Effort {
         value: Option<String>,

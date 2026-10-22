@@ -1,0 +1,120 @@
+//! A single disclosure for a running command and its streamed output.
+use crate::ui::App;
+use alloc::{format, string::String};
+
+pub struct WasmOutput {
+    index: usize,
+    generation: u64,
+    command: String,
+    pid: u32,
+    stdout: String,
+    stderr: String,
+    status: String,
+}
+
+impl WasmOutput {
+    pub fn new(app: &mut App, pid: u32, command: String) -> Self {
+        app.detail("wasm", String::new(), String::new());
+        Self {
+            index: app.messages.len() - 1,
+            generation: app.transcript_generation,
+            command,
+            pid,
+            stdout: String::new(),
+            stderr: String::new(),
+            status: String::new(),
+        }
+    }
+
+    pub fn update(&mut self, app: &mut App, stdout: &str, stderr: &str, status: &str) -> bool {
+        if stdout.is_empty() && stderr.is_empty() && self.status == status {
+            return false;
+        }
+        self.status = String::from(status);
+        // Recreate the disclosure after /clear instead of editing a reused row.
+        if self.generation != app.transcript_generation {
+            self.stdout.clear();
+            self.stderr.clear();
+            app.detail("wasm", String::new(), String::new());
+            self.index = app.messages.len() - 1;
+            self.generation = app.transcript_generation;
+        }
+        self.stdout.push_str(stdout);
+        self.stderr.push_str(stderr);
+        let message = &mut app.messages[self.index];
+        let mut label: String = self.command.chars().take(48).collect();
+        if label.len() < self.command.len() {
+            label.push('…');
+        }
+        message.title = format!("WASM: {label} — PID {}: {status}", self.pid);
+        message.content = format!("Command: {}", self.command);
+        if !self.stdout.is_empty() {
+            message.content.push_str("\n\nStandard output:\n");
+            message.content.push_str(&self.stdout);
+        }
+        if !self.stderr.is_empty() {
+            message.content.push_str("\n\nStandard error:\n");
+            message.content.push_str(&self.stderr);
+        }
+        message
+            .content
+            .push_str(&format!("\n\nPID {}: {status}", self.pid));
+        true
+    }
+
+    pub fn status(&self) -> &str {
+        &self.status
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::input::Key;
+    use ratatui::{buffer::Buffer, layout::Rect};
+
+    fn draw(app: &mut App) -> String {
+        let area = Rect::new(0, 0, 100, 30);
+        let mut buffer = Buffer::empty(area);
+        app.render(area, &mut buffer);
+        buffer.content().iter().map(|cell| cell.symbol()).collect()
+    }
+
+    #[test]
+    fn streamed_output_is_one_collapsed_readable_disclosure_and_keeps_user_choice() {
+        let mut app = App::default();
+        let mut output = WasmOutput::new(&mut app, 7, "python demo.py".into());
+        output.update(&mut app, "hello", "warning\n", "Running");
+        output.update(&mut app, " world\n", "", "Completed (exit code 0)");
+        assert_eq!(app.messages.len(), 1);
+        let collapsed = draw(&mut app);
+        assert!(collapsed.contains("[+] WASM: python demo.py"));
+        assert!(collapsed.contains("Completed (exit code 0)"));
+        assert!(!collapsed.contains("hello") && !collapsed.contains("warning"));
+        app.key(Key::Tab);
+        app.key(Key::Enter);
+        let expanded = draw(&mut app);
+        assert!(expanded.contains("Standard output:") && expanded.contains("hello world"));
+        assert!(expanded.contains("Standard error:") && expanded.contains("warning"));
+        output.update(&mut app, "late output\n", "", "Completed (exit code 0)");
+        assert!(app.messages[0].expanded);
+        assert!(draw(&mut app).contains("late output"));
+        app.key(Key::Enter);
+        assert!(!draw(&mut app).contains("late output"));
+    }
+
+    #[test]
+    fn clear_during_background_execution_does_not_overwrite_other_messages() {
+        let mut app = App::default();
+        let mut output = WasmOutput::new(&mut app, 8, "ash".into());
+        output.update(&mut app, "old", "", "Running");
+        app.clear_messages();
+        app.message("user", "keep me".into());
+        output.update(&mut app, "new", "", "Cancelled");
+        assert_eq!(app.messages.len(), 2);
+        assert_eq!(app.messages[0].content, "keep me");
+        assert!(!app.messages[1].expanded);
+        assert!(app.messages[1].content.contains("new"));
+        assert!(!app.messages[1].content.contains("old"));
+    }
+}

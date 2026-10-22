@@ -1,0 +1,66 @@
+# Command and filesystem environment delivery
+
+Status: in progress. The checks below define completion of the environment
+expansion. Initial native/firmware interfaces do not establish full completion.
+
+## Required commands
+
+Build the upstream BusyBox implementations of ls, cat, cp, mv, rm, mkdir,
+rmdir, touch, pwd, head, tail, wc, grep, sed, awk, find, sort, uniq, cut, tr,
+tee, xargs, basename, dirname, realpath, stat, du, df, date, sleep, env,
+printenv, seq, yes, true, false, which, od, hexdump, base64, sha256sum, tar,
+gzip, gunzip, unzip, zcat, ln and chmod. Keep the existing ash builtins.
+Each external invocation gets a fresh process, with one shared compiled
+multicall module. Preserve upstream parsing and command algorithms.
+
+## Delivery requirements
+
+- One namespace shared by shell, Python, C, model files and module resolution.
+  Workspace is `/`; mount `/bin`, `/dev`, `/tmp` and read-only `/proc` without
+  hiding colliding workspace entries. Provide null, zero, random and fd devices,
+  bounded shared temporary storage, and actual process information.
+- Directory creation, unlink/rmdir, rename replacement, symlink/readlink,
+  timestamps, capacity and enforced single-user POSIX modes. Preserve open file
+  identity through unlink/replacement and directory rename. Use protected,
+  versioned FAT metadata with recoverable updates and deferred reclamation.
+- Relative and absolute link traversal, stat/lstat differences, dangling links,
+  link loops, mount boundaries and archive destination containment.
+- Writes create missing parent directories and report specific operation/path
+  errors. File transfer uses bounded buffers, validated iovecs and normal short
+  transfer semantics. Calls above 512 KiB, including 8 MiB, must work.
+- Finite stdin is not a terminal. Unchanged prebuilt CPython supports `python -`
+  with files, pipes, here-documents and empty stdin. Enable normal import caches
+  when firmware mutation support is complete. Keep private Python adaptation;
+  retain the upstream interpreter binary and standard library unchanged.
+- A verified cooperative monotonic clock for sleep and timed operations.
+- Executable entries in `/bin`, consistent PATH, command -v/type/which,
+  subprocess/env/xargs, absolute and relative executable paths, and shebangs.
+  A validated installation manifest supports lazy modules and shared aliases.
+  Prepared curl, QuickJS/qjs and WolfSSH work without manual registration.
+  Additional supplied node/git modules follow the same rules; advertise them
+  only when working binaries are installed.
+- Conversation-owned live shell and Python sessions retain interpreter state,
+  environment and cwd. Use bounded private framing separate from finite command
+  stdin. Preserve readable captured results and one collapsed tool disclosure.
+  Clear resets sessions; exit, failure and cancellation report any state reset,
+  reap abandoned children, and preserve unrelated background roots.
+- Packaging and save preserve additions, modifications, deletions, empty
+  directories, links, modes and times. Detect host conflicts before changes,
+  retain recovery disks on failure, and preserve Windows-safe virtual metadata.
+  Include program manifests, libraries and licenses without duplicating modules.
+
+## Verification gates
+
+Use meaningful normal/error cases for all commands. Check transfer boundaries
+65535/65536/65537 and 524287/524288/524289, binary bytes, 8 MiB calls, invalid
+later iovecs before effects, partial writes, and open descriptors during mutation.
+Check pipelines above capacity, yes/head, text transformations, archive and
+compression round trips, extraction containment, modes/times and interrupted
+saves. Check consecutive sessions, failures, cancellation and reset.
+
+Run actual native guests, independent saved FAT checks, both model APIs through
+QEMU/OVMF, a full 512 MiB application regression, a focused 256 MiB check, and
+Windows WHPX separately. Run existing process, descriptor, filesystem, ash,
+Python and networking regressions, host/target Clippy, format and whitespace
+checks. Record actual evidence and failures in verification.md. No stub,
+registered name or unverified provider operation satisfies these requirements.

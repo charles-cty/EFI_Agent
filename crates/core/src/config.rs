@@ -109,6 +109,23 @@ impl AgentConfig {
     }
 }
 
+/// Resolve a module path on the boot volume, relative to the configured workspace.
+pub fn resolve_module_path(workspace: &str, path: &str) -> Result<String, String> {
+    let root = components(workspace)?;
+    if !workspace.starts_with('\\') || root.is_empty() {
+        return Err("Workspace must be an absolute UEFI directory".into());
+    }
+    let module = components(path)?;
+    if module.is_empty() {
+        return Err("Module path must name a file".into());
+    }
+    if path.starts_with(['\\', '/']) {
+        Ok(format!("\\{}", module.join("\\")))
+    } else {
+        Ok(format!("\\{}\\{}", root.join("\\"), module.join("\\")))
+    }
+}
+
 fn components(path: &str) -> Result<Vec<&str>, String> {
     if path
         .chars()
@@ -131,6 +148,55 @@ fn components(path: &str) -> Result<Vec<&str>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn module_paths_use_the_workspace_or_explicit_boot_volume_root() {
+        let workspace = "\\projects\\demo";
+        for path in ["python.wasm", "./python.wasm", ".\\python.wasm"] {
+            assert_eq!(
+                resolve_module_path(workspace, path).unwrap(),
+                "\\projects\\demo\\python.wasm"
+            );
+        }
+        for path in [
+            "modules/python.wasm",
+            "modules\\python.wasm",
+            "modules/./python.wasm",
+        ] {
+            assert_eq!(
+                resolve_module_path(workspace, path).unwrap(),
+                "\\projects\\demo\\modules\\python.wasm"
+            );
+        }
+        for path in [
+            "/work/python.wasm",
+            "\\work\\python.wasm",
+            "/work\\python.wasm",
+        ] {
+            assert_eq!(
+                resolve_module_path(workspace, path).unwrap(),
+                "\\work\\python.wasm"
+            );
+        }
+        assert_eq!(
+            resolve_module_path("\\work", "work/python.wasm").unwrap(),
+            "\\work\\work\\python.wasm"
+        );
+        for path in [
+            "",
+            ".",
+            "/",
+            "../python.wasm",
+            "modules/../python.wasm",
+            "C:\\python.wasm",
+            "fs0:\\python.wasm",
+            "python.wasm\0",
+            "python.wasm.",
+        ] {
+            assert!(resolve_module_path(workspace, path).is_err(), "{path:?}");
+        }
+        assert!(resolve_module_path("relative", "python.wasm").is_err());
+    }
+
     #[test]
     fn native_paths_are_rooted_and_traversal_is_rejected() {
         let config = AgentConfig {

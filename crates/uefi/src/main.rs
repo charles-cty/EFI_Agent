@@ -87,7 +87,7 @@ fn submit(
         app.capabilities.clone()
     } else if text == "/help" {
         String::from(
-            "/help  Show commands\n/caps  Probe network and CPU random generator capabilities\n/wasm  Manage WASM programs and processes\n/effort [value]  Show or set reasoning effort (provider validates values)\n/status  Show actual API, history, token and cache data\n/clear  Start a new conversation\n/quit, /exit  Exit\nSend a prompt to run the coding agent (read, write, edit tools).",
+            "/help  Show commands\n/caps  Probe network and CPU random generator capabilities\n/wasm  Manage WASM programs and processes\n/effort [value]  Show or set reasoning effort (provider validates values)\n/status  Show actual API, history, token and cache data\n/clear  Start a new conversation\n/quit, /exit  Exit\nSend a prompt to run the coding agent (read, write, edit, shell, python tools).",
         )
     } else if text == "/status" {
         let history = agent.history_status().unwrap_or_else(|error| error);
@@ -137,10 +137,27 @@ fn submit(
                 }
                 cancelled.get()
             };
+            let mut execute_code = |python, source: &str| {
+                let mut ui = ui.borrow_mut();
+                let (app, refresh, wasm) = &mut *ui;
+                let mut refresh_code = |app: &mut App, input| match refresh(app, input) {
+                    Ok(stop) => {
+                        cancelled.set(cancelled.get() || stop);
+                        Ok(cancelled.get())
+                    }
+                    Err(error) => {
+                        *render_error.borrow_mut() = Some(error);
+                        cancelled.set(true);
+                        Err(String::from("Terminal refresh failed"))
+                    }
+                };
+                wasm.run_tool(python, source, app, &mut refresh_code)
+            };
             let mut environment = environment::Interactive {
                 runtime: runtime_state,
                 poll: &mut control,
                 cancelled: false,
+                execute_code: &mut execute_code,
             };
             let mut streaming_row = None;
             let mut tool_row = None;
@@ -213,7 +230,9 @@ fn submit(
             "Model environment is not configured. Provide EFI/AGENT/CONFIG.JSON with API credentials and a boot-volume workspace.",
         )
     };
-    app.message("assistant", response);
+    if !response.is_empty() {
+        app.message("assistant", response);
+    }
     app.status = String::from("Ready");
     refresh(app, false)?;
     Ok(())

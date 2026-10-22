@@ -50,6 +50,17 @@ impl NativeFileSystem {
 }
 
 impl FileSystem for NativeFileSystem {
+    fn rename(&self, source: &str, destination: &str) -> Result<(), FileError> {
+        if source.is_empty() || destination.is_empty() {
+            return Err(FileError::Access);
+        }
+        fs::rename(self.path(source)?, self.path(destination)?).map_err(error)
+    }
+
+    fn create_directory(&self, path: &str) -> Result<(), FileError> {
+        fs::create_dir(self.path(path)?).map_err(error)
+    }
+
     fn open(&self, path: &str, options: OpenOptions) -> Result<Box<dyn File>, FileError> {
         let path = self.path(path)?;
         let exists = match fs::metadata(&path) {

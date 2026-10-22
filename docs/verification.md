@@ -3394,3 +3394,439 @@ resolved the deep test-file status. Broad WSL Git status was slow on this Window
 checkout and was stopped; remaining inspection used Windows Git. One child
 process exited before the stop command reached it. No reset, clean, checkout,
 Git configuration change, build or application test was performed.
+
+## Workspace-relative WASM module loading (2026-10-21)
+
+`/wasm load NAME PATH` now resolves relative paths against the configured
+workspace. Both slash separators are accepted, including `./python.wasm` and
+`.\python.wasm`. Paths beginning with slash or backslash resolve from the boot
+volume root. The existing component validator rejects parent traversal, volume
+prefixes, control characters and invalid native filename characters. Missing
+file errors show the resolved path. This uses the runtime's workspace even when
+model configuration is absent; the default is `\work`.
+
+The five local guest binaries were moved from workspace/wasm into workspace
+after confirming no QEMU process was running. The empty subdirectory was removed.
+Python now loads with `/wasm load python python.wasm`. The documentation copy
+command places guest binaries directly in the workspace. Build inputs remain
+under artifacts/wasm-guests.
+
+Windows-native verification passed:
+
+- All 46 efi-agent-core tests, including module resolution with a custom nested
+  workspace, nested relative paths, absolute paths, empty paths and invalid paths.
+- Release x86_64-unknown-uefi build and Clippy with warnings denied; formatting
+  and Git whitespace checks.
+- Actual QEMU/OVMF with 512 MiB and TCG through scripts/smoke_wasm.py. Six path
+  forms loaded real modules; missing files, volume prefixes and traversal failed
+  as expected. The base process/pipe/clock/environment checks also passed.
+- Actual CPython, QuickJS and ash loaded through bare workspace filenames.
+  Language execution, shell capture, concurrent Python roots and independent
+  saved FAT byte checks passed. Evidence is artifacts/wasm-module-paths.log and
+  artifacts/wasm-module-paths. This run does not establish WHPX behavior.
+
+Bypassed inspection issues: a search for nested AGENTS.md files returned no
+matches and stopped a chained read; the source reads were rerun directly.
+Two guessed source paths did not exist; targeted searches located the files.
+A broad WSL Git diff was slow while traversing the pre-existing dirty Shell
+submodules and was stopped; Windows Git supplied the review. One documentation
+patch did not match its context and was reapplied with the exact lines.
+No Shell source, submodule commit or Git configuration was changed.
+
+## Python standard interfaces and transparency audit (2026-10-21)
+
+This record supersedes the earlier restricted-Python interface descriptions.
+The public `efi` module and custom `-e` entry point were removed. The guest uses
+upstream `Py_RunMain`, FileIO and filesystem imports, and freezes upstream
+`subprocess.py` with its dependencies. An internal `_posixsubprocess` backend
+maps standard pipes, descriptor inheritance, environments and wait status onto
+fresh cooperative WASM instances. `os.system` uses the same process ABI.
+Timeouts are rejected before helper functions start a child. Process signals,
+cwd and other unsupported process settings return explicit errors.
+
+Enabling upstream posix also exposed optional WASI imports that previously
+prevented module instantiation. The runtime now links advise, positioned I/O,
+descriptor timestamps, remove-directory, symlink and hard-link entry points.
+Unavailable operations retain descriptor/rights/range checks and return errors.
+They do not claim successful file mutation. ABI integration checks verify
+denied operations have no provider effects or changed output parameters.
+
+The process tests target asymmetric boundaries: empty and quoted argument
+words with shell metacharacters, strict versus replacement UTF-8 decoding,
+196,613 bytes across 64 KiB pipes in both directions, reversed stderr, capture
+of 524,289 bytes, descriptor 0 reused after stdin closure, reserved fd 3 and
+out-of-range fd 128, valid fd 127, inherited nonstandard descriptors, and 140 child cycles.
+An independent saved-file comparison verifies bytes outside the guest process.
+
+Windows-native verification passed:
+
+- All 11 actual CPython/ash integration tests through the Release wasmi runner.
+  File imports, standard script and `-m` entry points, binary/text capture,
+  environment replacement/inheritance, concurrent Python, redirection,
+  `pass_fds`, status errors and rejection before effects pass. Evidence:
+  `artifacts/python-transparent-native.log`.
+- A final `build_cpython.ps1 -Reconfigure` run recreated the entire generated
+  build tree and passed the same 11 tests, including script/-m entry points
+  and fd 127. With QEMU stopped, the rebuilt binary was copied to
+  `workspace/python.wasm`; no separate workspace wasm directory is used.
+- All efi-agent-core and efi-agent-wasm tests, including the expanded optional
+  operation ABI case; Clippy with warnings denied; Release UEFI build;
+  formatting and Git whitespace checks. Evidence:
+  `artifacts/python-transparent-rust-tests.log`.
+- Actual QEMU/OVMF with TCG and 512 MiB: module path forms, standard Python
+  script and import, file operations, 196,613-byte duplex subprocess capture,
+  two concurrent Python roots, real ash capture, QuickJS, base process/pipe/
+  clock/environment cases and independent saved FAT byte checks. Evidence:
+  `artifacts/wasm-python-transparent-final.log` and
+  `artifacts/wasm-python-transparent-final`.
+- The 512 MiB TCG application combination also passes with actual curl/TLS,
+  DNS/POSIX networking, WolfSSH, QuickJS, ash arithmetic and Python. Standard
+  Python calls curl directly with an argument list and captures WolfSSH through
+  ash while independent HTTP/SSH requests remain blocked. Cancellation and
+  saved-byte checks pass. Evidence:
+  `artifacts/wasm-python-transparent-applications.log` and
+  `artifacts/wasm-python-transparent-applications`.
+
+The same-root audit is in `docs/port-transparency-audit.md`. Remaining findings
+include QuickJS entry/library gaps, Python socket and library packaging,
+registry-only executable lookup, and whitespace-only firmware argument parsing.
+The checks above do not establish WHPX, arbitrary Python package support,
+filesystem executable loading, process signals or timeouts.
+
+Bypassed implementation and environment issues:
+
+- Targeted file searches corrected guessed test/source paths. Freezer inputs
+  were corrected for Python 3.14's collections.abc alias and modules already
+  frozen by upstream, which initially caused duplicate link symbols.
+- CPython posix uses multiphase initialization. Adapter functions were moved
+  into an appended module-exec slot instead of treating its definition as an
+  initialized module. A Rust result-type inference error was also corrected.
+- Old copied import.c and FileIO sources and objects remained in the build
+  tree. Make's local-source preference kept the restricted importer even after
+  regenerating Makefile and running clean. Removing those obsolete copies and
+  rebuilding restored upstream imports and script execution.
+  The build now rejects source shadows and `-Reconfigure` recreates its generated
+  build tree so the same stale-source failure cannot pass unnoticed.
+- A nested shell quoting error sent make to PowerShell; a literal heredoc
+  corrected the shell boundary. Patch context and delete/add conflicts were
+  resolved with exact contexts and sequential patches.
+- The first firmware duplex test generated its data in a Python loop under
+  double interpretation and exceeded its 45-second budget. The passing case
+  loads independently
+  generated input from FAT, retains both large pipe transfers and verifies
+  saved output outside the VM. The first timeout alone did not establish a
+  runtime deadlock. Upstream HACL endian-macro redefinition warnings remain
+  in the successful CPython build log.
+- The descriptor-127 test first used ash redirection syntax, which returned
+  status 1. It now calls standard Python os.write on the inherited descriptor
+  and verifies the saved bytes, so shell syntax does not mask descriptor behavior.
+
+## Prebuilt CPython and Python process patch (2026-10-21)
+
+This record supersedes the source-build Python implementation above. The
+interpreter is Brett Cannon's CPython 3.14.7 WASI SDK 24 release, linked from
+PSF webassembly. `scripts/prepare_cpython.ps1` downloads or accepts the release
+archive, copies `python.wasm` unchanged, includes the complete upstream
+standard library and license, and installs two Python files in site-packages.
+No CPython configure, make, freezing, compiler or C adapter step remains.
+The prepared and extracted binaries have identical SHA256 values in the local
+check. The binary is 30,522,756 bytes. The workspace contains `python.wasm`
+and `lib/python3.14` directly.
+
+`sitecustomize` installs the private `_efi_process` monkey patch. Upstream
+`subprocess.py` remains unchanged. Process creation, pipes, descriptor mapping,
+inheritance flags and cooperative wait use standard WASI descriptor calls on
+the process-local `.efi-process` endpoint. The endpoint defaults to
+close-on-exec and runtime spawn rejects explicit inheritance. Malformed frames,
+oversized arguments and invalid descriptor maps reject before effects. One
+unread eight-byte response blocks further requests with AGAIN.
+
+Windows-native verification:
+
+- All 11 existing actual-interpreter/ash integration cases pass with the
+  prepared 3.14.7 distribution. Evidence: `artifacts/python-monkey-native.log`.
+  They cover CLI/script/-m, imports/files, binary/text capture, argument words,
+  statuses, explicit/inherited environments, 196,613-byte duplex transfer,
+  capture above 512 KiB, concurrent Python, descriptor 0/127 boundaries and
+  repeated children.
+- An additional site/timeout test passes: `-I` still loads the adapter, `-S`
+  disables it, Decimal arithmetic works, and positional Popen wait/communicate
+  timeouts raise ENOTSUP. Evidence: `artifacts/python-monkey-site.log`.
+- All core/wasm tests pass; Clippy with warnings denied and formatting pass.
+  Evidence: `artifacts/python-monkey-rust-final.log`. Two new control-protocol
+  tests cover malformed frames, unread response bounds, protected control
+  descriptor replacement and rejection without descriptor allocation. A new
+  WASI socket test verifies explicit errors, range/flag validation and unchanged
+  output sentinels. These targeted suites and Clippy also pass after that addition.
+- The Release UEFI application builds. Actual QEMU/OVMF TCG with 512 MiB passes
+  the Python/ash/QuickJS combination, standard script imports and file APIs,
+  duplex subprocess capture, two concurrent Python roots, module paths, base
+  process/pipe/clock/environment cases and independently verified saved FAT
+  bytes. Evidence: `artifacts/wasm-python-monkey-long.log` and
+  `artifacts/wasm-python-monkey-long`. Per-command timeout was 180 seconds.
+- The complete 512 MiB TCG application combination also passes with the current
+  prebuilt distribution: curl HTTP/TLS 1.2/1.3 and certificate rejection,
+  DNS/POSIX networking, WolfSSH trust/authentication/streams/status, QuickJS,
+  ash arithmetic, random, and Python. Standard Python calls actual curl and
+  WolfSSH while another HTTP/SSH request remains waiting. Concurrent progress,
+  cancellation with peer-observed closure and independent saved FAT bytes pass.
+  Evidence: `artifacts/wasm-python-monkey-applications.log` and
+  `artifacts/wasm-python-monkey-applications`. Command timeout was 180 seconds.
+
+Limits: process names still require registration; cwd, process signals,
+timeouts, credentials/groups and distinct custom argv[0] remain unsupported.
+The full library includes `_decimal` and `_socket`, but socket creation lacks
+a runtime backend. Native probing verifies Decimal arithmetic and explicit
+socket failure (WASI NOTSUP 58). Ordinary file open defaults to inheritable
+under this libc; the audit records the consequence for `close_fds=False` and
+`os.system`. Dynamic extensions and native threads remain unavailable. WHPX
+and minimum RAM were not verified for this distribution. Complete application
+results before this section used the former custom binary.
+
+Bypassed issues and errors:
+
+- GitHub API rate limiting prevented the initial asset query. A direct release
+  download succeeded through the available Windows proxy. Proxy configuration
+  was transient and was not added to the repository.
+- A misplaced initial endpoint patch and Rust result/style errors were corrected
+  before verification. Protocol review added unread-response bounds, protected
+  descriptor checks and overflow-safe frame-size checks.
+- The original 16 MiB firmware module limit rejected the unchanged prebuilt
+  binary. The loader now permits 48 MiB, matching the existing packaging bound.
+- The initial QEMU run exceeded the old 45-second command wait during the Python
+  script. A configurable command timeout and the 180-second rerun preserve the
+  same duplex/concurrency/independent-byte checks and pass.
+- A temporary native probe referenced an absent fixture. It was rerun using
+  the packaged license and passed. Temporary probe source was not added.
+
+## Filename-derived WASM registration (2026-10-21)
+
+`/wasm load PATH` now derives the program name from the final path component,
+removing a case-insensitive `.wasm` suffix. Other suffixes remain in the name.
+`/wasm load ash.wasm` registers `ash`; `/wasm load tools/python.wasm` registers
+`python`. `/wasm load NAME PATH` remains available for an explicit alias.
+Empty filenames/stems and incorrect command arity fail before reading a module.
+Help and examples use the short form.
+
+The subtle cases are separator handling, removing only the final suffix,
+uppercase suffixes, empty stems, and preserving explicit alias semantics.
+The firmware integration checks relative/dot-relative/absolute paths with
+both separators, `child.variant.WASM` -> `child.variant`, extensionless names,
+explicit aliases, missing files, traversal/volume rejection, empty stems,
+trailing separators, absent arguments and excess arguments. It clears earlier
+messages before repeated markers so stale output cannot satisfy the checks.
+
+Windows-native Release UEFI build, target Clippy with warnings denied,
+formatting and whitespace checks pass. Actual QEMU/OVMF TCG at 512 MiB also
+passes the new load cases, short-form ash/Python loading, standard Python
+scripts/imports/files, duplex subprocess capture, concurrent Python roots,
+independently verified saved FAT bytes and base process/pipe/clock/environment
+checks. Evidence: `artifacts/wasm-load-filenames.log` and
+`artifacts/wasm-load-filenames`. No implementation or test errors required a
+workaround in this change.
+
+## Consolidated WASM output disclosure (2026-10-22)
+
+Each top-level `/wasm run` or `/wasm start` now owns one UI disclosure. It is
+collapsed by default. Its header contains a shortened command, PID and readable
+running/completed/failed/cancelled status. The body contains the full command,
+standard output and standard error in separate plain-text sections, followed
+by the final status. Empty stream sections are omitted. The UI updates the
+same message across output chunks and completion and preserves the user's
+expansion choice. It adds no second assistant completion message. Descendant
+output belongs to its original root even after adoption; child exits create
+no separate notifications. Concurrent roots keep independent panels.
+
+The important boundaries are multiple output chunks versus multiple blocks,
+stdout versus stderr, child versus independent-root output, clearing messages
+while a background root is live, and actual cancellation versus an application
+returning 130. A transcript generation prevents updates from editing an index
+reused after `/clear`. Quiet long-running commands render their initial panel
+before entering the dispatcher loop.
+
+All 116 Windows-native core/wasm tests pass, including rendered UI assertions for
+default collapse, merged stream chunks, keyboard expansion/collapse, retained
+expansion on updates, and message isolation after clear. Release UEFI build,
+target Clippy with warnings denied, host core Clippy, formatting and whitespace
+checks pass. Evidence: `artifacts/wasm-output-core-tests.log`.
+
+Actual QEMU/OVMF TCG at 512 MiB passes the dedicated output-panel integration:
+actual Python subprocess capture, direct ash stdout/stderr, one collapsed
+panel, hidden output before expansion, keyboard disclosure, nonzero status,
+trap, Esc cancellation, independent background/root panels and continued
+background status after clear. Evidence: `artifacts/wasm-output-panel-verified`
+and `artifacts/wasm-output-panel-verified.log`. This is a UI integration check;
+it does not rerun the full network application combination.
+The final dedicated rerun also verifies an application returning 130 is
+labelled Failed, while explicit cancellation is labelled Cancelled. Evidence:
+`artifacts/wasm-output-panel-final-all.log` and its matching directory.
+The existing base process integration also passes with the new disclosures:
+module path/name cases, child status/output, traps, cancellation and recovery,
+large pipelines, concurrent C capture, poll/clock and process environments.
+Evidence: `artifacts/wasm-output-base-latest.log` and its matching directory.
+
+Issues corrected during implementation and verification:
+
+- An initial quiet-loop panel was created without an immediate redraw. An
+  explicit initial render fixes the missing Running header before first output.
+- The old integration expected separate process notifications. It now expands
+  real disclosures and checks readable PID/status text. Repeated clicks before
+  a redraw toggled the panel repeatedly; it now waits for expansion. Disclosure
+  anchoring can leave the body below the viewport, so the test scrolls down and
+  waits for the reported viewport to reach its bottom before checking output.
+  A later regression attempt interleaved a mouse escape sequence with Esc
+  cancellation; the test now waits for cancellation without sending mouse input.
+  It expands the latest command panel so an older cancelled panel cannot pull
+  the viewport away from the command being checked.
+- A Windows Python edit used CRLF and Git reported conversion to LF. The script
+  was normalized to LF. Overlapping builds briefly waited on Cargo's artifact
+  lock and then completed. An interrupted test left its own QEMU child, which
+  was stopped by its recorded PID; the existing user VM was left running.
+
+## Model shell and Python tools (2026-10-22)
+
+Both provider APIs now advertise `shell(command)` and `python(code)` alongside
+the three file tools. Firmware executes the source unchanged through `ash -c`
+or `python -c`. The first call loads the required workspace WASM modules;
+later calls reuse the registered modules. Python also loads ash for standard
+subprocess calls. Each call has fresh process state and shares workspace files.
+The model prompt describes Alpine Linux-style BusyBox ash with the actual
+WASM limits, including unavailable Bash syntax, Linux binaries and apk.
+
+Checks distinguish quoted/multiline source from whitespace tokenization,
+cached registration from repeated loading, stdout from stderr, a normal
+nonzero exit from a host failure, exactly 65536 bytes from 65537 bytes, and a
+tool descendant from an independent background root. Capture drains both
+streams and retains at most 64 KiB each, with an explicit truncation marker.
+Completion and cancellation cancel and reap remaining tool descendants.
+The world now retains original root identity across adoption and reaping.
+
+All 117 Windows-native core/wasm tests pass. They include source preservation,
+invalid tool arguments and original-root identity after parent reaping.
+UEFI and host core/wasm Clippy pass with warnings denied. Release UEFI build,
+formatting and whitespace checks pass.
+
+Actual QEMU/OVMF TCG at 256 MiB passes the Chat Completions tool loop through
+a local test provider. It checks real ash and prebuilt Python execution,
+Python subprocess capture, UTF-8 file content, nonzero exit, Python traceback,
+capture boundaries, NUL rejection and fresh interpreter globals. Replacing
+the on-disk ash.wasm with invalid text after first use does not affect later
+shell or Python subprocess calls, proving that registration is reused.
+Saved FAT bytes are checked independently. Evidence:
+`artifacts/model-tools-chat/serial.bin` and its matching screen/QEMU records.
+No external language model or provider credentials are needed for this check.
+
+The Responses API also passes all nine code-tool calls with the 480-second
+sequence deadline. Evidence: `artifacts/model-tools-responses-final/serial.bin`.
+That run then failed the independent-background check because its generated
+shell script had Windows CRLF endings and ash returned status 2. The fixture
+now writes explicit LF bytes. The focused `--code-cancel-only` integration
+runs the affected cancellation/isolation checks without repeating Python
+startup or output checks.
+The focused rerun passes on the final Release EFI: Esc cancels and reaps
+the shell root and its child, while a separate ash loop remains Ready.
+The test then cancels/reaps that independent root and verifies saved FAT
+bytes, including proof that the cancelled tool started before Esc.
+Evidence: `artifacts/model-tools-cancellation/serial.bin` and its matching
+screen/QEMU records. The complete network application suite was not rerun.
+
+Issues bypassed during implementation and verification:
+
+- Initial source-location glob probes did not match files. Inspection then
+  used the actual agent, environment and firmware runtime paths.
+- The first integration command selected a nonexistent Release launcher.
+  The test uses the existing Windows Debug launcher and the Release EFI.
+- A PowerShell WMI filter lost quotes across the Bash boundary. The process
+  probe used `Where-Object` with a literal program name instead.
+- A documentation patch used a missing context line. It was reapplied at
+  the actual end of the preceding verification section.
+- The requested Alpine Linux label would overstate the implemented runtime.
+  The prompt uses Alpine Linux-style BusyBox ash and states the actual limits.
+- The first Responses run reached the 240-second whole-sequence test deadline
+  during the third Python call under TCG. The integration timeout is now
+  configurable and defaults to 480 seconds. The Chat Completions sequence
+  had passed the same code and output-boundary checks.
+- Windows `write_text` translated the background shell fixture to CRLF.
+  The fixture now uses `write_bytes` to retain LF shell syntax.
+
+## Filesystem environment expansion: initial interfaces (2026-10-22)
+
+Implemented directory creation on the native and firmware providers, with WASI
+rights and path validation. The write model tool creates missing parents and
+reports failing paths and operations. Native rename now reaches the filesystem
+provider. File writes validate all iovecs and the result range before effects,
+then transfer 64 KiB chunks. Valid file calls above 512 KiB no longer fail at
+the output-cache limit. Partial writes retain their completed prefix.
+
+Finite stdin and captured output now report WASI stream types instead of
+CHARACTER_DEVICE. The unchanged prebuilt CPython binary executes `python -`
+with finite stdin, empty stdin and ash here-documents without a REPL banner.
+Explicit native py_compile and compileall create nested caches. Automatic
+import bytecode writes remain disabled pending firmware rename/delete support.
+
+Model code tools discover workspace `.wasm` files before execution, validate
+headers and sizes, and compile on first spawn. The qjs alias shares the
+QuickJS image. Existing loaded programs survive source-file replacement.
+Discovery commits new entries only after the complete scan validates.
+
+The new native filesystem integration checks nested directories, trailing
+slashes, existing entries, missing/non-directory parents, descriptor rights,
+invalid memory before effects, cross-directory rename replacing an open file,
+retained source/destination descriptors, 8 MiB multi-iovec bytes, and module
+discovery/alias reuse. Actual CPython checks sizes 65535/65536/65537,
+524287/524288/524289 and 8388608 against independent host bytes. The full
+14-case CPython integration passes with the Release runner; evidence is in
+`artifacts/filesystem-cpython-native.log`.
+All 121 core/wasm tests and host/UEFI Clippy with warnings denied pass.
+
+Actual Windows WHPX with 512 MiB passes the new model-tool sequence, tree
+cancellation/background isolation, the base Chat Completions/HTTP checks,
+and independent FAT verification of all seven transfer sizes. Evidence:
+`artifacts/filesystem-tools-whpx-512`. This establishes WHPX execution for
+these interfaces; the complete network application combination is still pending.
+Actual 512 MiB QEMU TCG also passes the same filesystem, cancellation and FAT
+checks through the Responses API in `artifacts/filesystem-tools-tcg-512`.
+
+Remaining delivery includes the common mounted namespace, virtual devices and
+temporary/process files, complete firmware rename/delete/link/mode/time
+semantics, the BusyBox applets, unified PATH, persistent interpreter sessions,
+workspace deletion/metadata save, and full combined firmware/WHPX verification.
+
+Issues encountered and corrected:
+
+- WSL Git status was slow on the mounted source tree. Windows Git completed
+  the same inspection promptly.
+- The EFI directory-type API returns Result<bool>. The first build used a
+  boolean directly; propagating the API error corrected the build.
+- The Debug interpreter exceeded the native runner's 60-second deadline.
+  The independent Release runner passed both new Python checks in 15 seconds.
+- Linking over the running Windows Debug runner failed with LNK1104. The
+  Release runner uses a separate executable and avoids the active-file lock.
+- A PowerShell WMI process-filter probe had incorrect nested quoting. Existing
+  process handles supplied the required status; the probe was unnecessary.
+- UEFI's recursive directory helper inspected an empty parent of an absolute
+  path. Actual firmware exposed the error; explicit component traversal fixes
+  it and checks existing components for directory type.
+- Initial firmware code checks reproduced an installed Python file that ash
+  could not execute. Workspace discovery and lazy compilation correct this
+  registration boundary without requiring an earlier Python tool call.
+- Two patch applications did not match formatted source. Reading the current
+  blocks and applying exact contexts resolved them without partial edits.
+- A check command accidentally passed -c to uv run. uv rejected the option;
+  the separate format and whitespace checks completed successfully.
+- A 256 MiB firmware check completed the 8 MiB write but failed when its
+  Python oracle retained both the source payload and a whole-file read copy.
+  The oracle now compares bounded chunks and also verifies saved FAT bytes.
+  The subsequent 256 MiB combined sequence failed at Python-to-Python spawn;
+  the 512 MiB WHPX sequence passes. The 256 MiB limitation remains under review.
+- Python's private process endpoint also had a compiled-only program lookup.
+  It now consults discovered modules, like ash. A raw endpoint integration
+  check verifies an uncompiled alias before its first spawn.
+- Spawn error handling mapped all module/instantiation failures to ENOEXEC.
+  Memory allocation and memory-quota failures now map to ENOMEM in both
+  process interfaces. The Python adapter translates that error explicitly.
+  An actual child with a 1025-page initial memory verifies the quota failure,
+  correct errno and absence of child PID allocation. The first check exposed
+  Wasmi's nested Instantiation error wrapper; handling that wrapper passes.
+- A dependency source lookup used an outdated file location. Searching the
+  relevant crate's source located the current error definitions.

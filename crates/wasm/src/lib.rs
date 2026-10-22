@@ -9,6 +9,7 @@ pub mod filesystem;
 mod filesystem_abi;
 mod io;
 pub mod network;
+mod process_control;
 pub mod random;
 mod socket;
 pub use io::{MAX_DESCRIPTORS, PIPE_CAPACITY};
@@ -70,6 +71,7 @@ pub enum Error {
     ArgumentsTooLarge,
     BadDescriptor,
     InvalidModule(wasmi::Error),
+    ProgramFile(filesystem::FileError),
     UnknownProcess(Pid),
     NotExited(Pid),
 }
@@ -83,6 +85,7 @@ impl fmt::Display for Error {
             Self::ArgumentsTooLarge => f.write_str("WASM arguments and environment exceed 64 KiB"),
             Self::BadDescriptor => f.write_str("Invalid WASM descriptor"),
             Self::InvalidModule(error) => write!(f, "WASM module: {error}"),
+            Self::ProgramFile(error) => write!(f, "WASM program file: {error:?}"),
             Self::UnknownProcess(pid) => write!(f, "Unknown WASM process: {pid}"),
             Self::NotExited(pid) => write!(f, "WASM process {pid} has not exited"),
         }
@@ -92,6 +95,38 @@ impl core::error::Error for Error {}
 impl From<wasmi::Error> for Error {
     fn from(error: wasmi::Error) -> Self {
         Self::InvalidModule(error)
+    }
+}
+
+impl Error {
+    fn spawn_errno(&self) -> i32 {
+        use wasmi::errors::{ErrorKind, InstantiationError, MemoryError, TableError};
+        match self {
+            Self::UnknownProgram(_) => -2,
+            Self::ProcessLimit => -11,
+            Self::BadDescriptor => -9,
+            Self::InvalidArguments => -22,
+            Self::ArgumentsTooLarge => -7,
+            Self::InvalidModule(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::Memory(
+                        MemoryError::OutOfSystemMemory
+                            | MemoryError::ResourceLimiterDeniedAllocation
+                    ) | ErrorKind::Table(TableError::OutOfSystemMemory)
+                        | ErrorKind::Instantiation(InstantiationError::FailedToInstantiateMemory(
+                            MemoryError::OutOfSystemMemory
+                                | MemoryError::ResourceLimiterDeniedAllocation
+                        ))
+                        | ErrorKind::Instantiation(InstantiationError::FailedToInstantiateTable(
+                            TableError::OutOfSystemMemory
+                        ))
+                ) =>
+            {
+                -12
+            }
+            _ => -8,
+        }
     }
 }
 
@@ -116,6 +151,7 @@ struct Context {
 struct Process {
     // Wait/reap metadata and inherited output must outlive the Wasm Store.
     parent: Pid,
+    root: Pid,
     stdout: Rc<RefCell<Vec<u8>>>,
     stderr: Rc<RefCell<Vec<u8>>>,
     status: Status,
@@ -129,6 +165,7 @@ struct Execution {
     continuation: Option<TypedResumableCall<()>>,
     reply: i32,
     wait_status: u32,
+    control_wait: Option<(u32, u32, u32)>,
     pending_io: Option<abi::IoRequest>,
 }
 
@@ -147,6 +184,8 @@ pub struct World {
     engine: Engine,
     linker: wasmi::Linker<Context>,
     programs: BTreeMap<String, Module>,
+    program_files: BTreeMap<String, String>,
+    compiled_files: BTreeMap<String, Module>,
     processes: BTreeMap<Pid, Process>,
     ready: VecDeque<Pid>,
     next_pid: Pid,
@@ -178,6 +217,8 @@ impl World {
             engine,
             linker,
             programs: BTreeMap::new(),
+            program_files: BTreeMap::new(),
+            compiled_files: BTreeMap::new(),
             processes: BTreeMap::new(),
             ready: VecDeque::new(),
             next_pid: 1,
@@ -194,6 +235,126 @@ impl World {
             return Err(Error::InvalidArguments);
         }
         let module = Module::new(&self.engine, wasm)?;
+        self.programs.insert(name.into(), module);
+        Ok(())
+    }
+
+    pub fn has_program(&self, name: &str) -> bool {
+        self.programs.contains_key(name) || self.program_files.contains_key(name)
+    }
+
+    /// Discover workspace modules without compiling them. Existing installations
+    /// retain their loaded image when a workspace file changes.
+    pub fn discover_programs(&mut self) -> Result<(), filesystem::FileError> {
+        use filesystem::{EntryType, FileError, OpenOptions};
+        let fs = self.filesystem.as_ref().ok_or(FileError::Unsupported)?;
+        let entries = fs.read_directory("")?;
+        let mut pending = BTreeMap::new();
+        for (path, kind) in entries.iter() {
+            if kind != EntryType::File {
+                continue;
+            }
+            let Some(stem) = path.get(..path.len().saturating_sub(5)) else {
+                continue;
+            };
+            if !path
+                .get(stem.len()..)
+                .is_some_and(|suffix| suffix.eq_ignore_ascii_case(".wasm"))
+            {
+                continue;
+            }
+            if stem.is_empty() {
+                return Err(FileError::Invalid);
+            }
+            if self.has_program(stem) {
+                continue;
+            }
+            if fs.metadata(path)?.size > filesystem::MAX_RESIZE_BYTES {
+                return Err(FileError::FileTooLarge);
+            }
+            let mut file = fs.open(
+                path,
+                OpenOptions {
+                    read: true,
+                    write: false,
+                    create: false,
+                    exclusive: false,
+                    truncate: false,
+                    append: false,
+                },
+            )?;
+            let mut header = [0; 8];
+            let mut used = 0;
+            while used < header.len() {
+                let count = file.read(&mut header[used..])?;
+                if count == 0 {
+                    return Err(FileError::Invalid);
+                }
+                used += count;
+            }
+            if header != *b"\0asm\x01\0\0\0" {
+                return Err(FileError::Invalid);
+            }
+            pending.insert(stem.into(), path.into());
+        }
+        self.program_files.extend(pending);
+        if !self.has_program("qjs")
+            && let Some(path) = self.program_files.get("quickjs").cloned()
+        {
+            self.program_files.insert("qjs".into(), path);
+        }
+        Ok(())
+    }
+
+    fn load_program(&mut self, name: &str) -> Result<(), Error> {
+        use filesystem::{FileError, OpenOptions};
+        if self.programs.contains_key(name) {
+            return Ok(());
+        }
+        let path = self
+            .program_files
+            .get(name)
+            .ok_or_else(|| Error::UnknownProgram(name.into()))?
+            .clone();
+        let module = if let Some(module) = self.compiled_files.get(&path) {
+            module.clone()
+        } else {
+            let fs = self
+                .filesystem
+                .as_ref()
+                .expect("Program files require a filesystem");
+            let load = || {
+                let mut file = fs.open(
+                    &path,
+                    OpenOptions {
+                        read: true,
+                        write: false,
+                        create: false,
+                        exclusive: false,
+                        truncate: false,
+                        append: false,
+                    },
+                )?;
+                let size = file.metadata()?.size;
+                if size > filesystem::MAX_RESIZE_BYTES {
+                    return Err(FileError::FileTooLarge);
+                }
+                let mut bytes = vec![0; size as usize];
+                let mut used = 0;
+                while used < bytes.len() {
+                    let end = (used + io::PIPE_CAPACITY).min(bytes.len());
+                    let count = file.read(&mut bytes[used..end])?;
+                    if count == 0 {
+                        return Err(FileError::Io);
+                    }
+                    used += count;
+                }
+                Ok(bytes)
+            };
+            let module = Module::new(&self.engine, &load().map_err(Error::ProgramFile)?)?;
+            self.compiled_files.insert(path, module.clone());
+            module
+        };
         self.programs.insert(name.into(), module);
         Ok(())
     }
@@ -291,6 +452,7 @@ impl World {
         if self.processes.len() >= MAX_PROCESSES {
             return Err(Error::ProcessLimit);
         }
+        self.load_program(name)?;
         let module = self
             .programs
             .get(name)
@@ -328,6 +490,12 @@ impl World {
             let explicit = descriptor_map.is_some();
             for (target, source) in descriptor_map.unwrap_or_else(|| vec![(0, 0), (1, 1), (2, 2)]) {
                 if let Some(descriptor) = table.get(&source) {
+                    if matches!(descriptor, io::Descriptor::Control(_)) {
+                        if explicit {
+                            return Err(Error::BadDescriptor);
+                        }
+                        continue;
+                    }
                     if explicit {
                         inherited.insert(target, descriptor.duplicate());
                     } else if !self.processes[&parent]
@@ -393,10 +561,16 @@ impl World {
             .ok_or_else(|| wasmi::Error::new("Missing memory export"))?;
         let entry = instance.get_typed_func::<(), ()>(&store, "_start")?;
         self.next_pid = next_pid;
+        let root = if parent == 0 {
+            pid
+        } else {
+            self.processes[&parent].root
+        };
         self.processes.insert(
             pid,
             Process {
                 parent,
+                root,
                 stdout,
                 stderr,
                 status: Status::Ready,
@@ -407,6 +581,7 @@ impl World {
                     continuation: None,
                     reply: 0,
                     wait_status: 0,
+                    control_wait: None,
                     pending_io: None,
                 }),
             },
@@ -425,6 +600,21 @@ impl World {
 
     pub fn process_ids(&self) -> impl Iterator<Item = Pid> + '_ {
         self.processes.keys().copied()
+    }
+
+    pub fn parent(&self, pid: Pid) -> Result<Pid, Error> {
+        self.processes
+            .get(&pid)
+            .map(|process| process.parent)
+            .ok_or(Error::UnknownProcess(pid))
+    }
+
+    /// Original root identity survives parent exit, adoption and reaping.
+    pub fn root(&self, pid: Pid) -> Result<Pid, Error> {
+        self.processes
+            .get(&pid)
+            .map(|process| process.root)
+            .ok_or(Error::UnknownProcess(pid))
     }
 
     pub fn take_output(&mut self, pid: Pid) -> Result<(Vec<u8>, Vec<u8>), Error> {
@@ -530,20 +720,19 @@ impl World {
 
     fn handle(&mut self, pid: Pid, action: abi::Action) {
         let reply = match action {
+            abi::Action::Control { fd, bytes, written } => {
+                self.control(pid, fd, &bytes, written);
+                return;
+            }
             abi::Action::Yield => 0,
-            abi::Action::ProgramExists(name) => i32::from(self.programs.contains_key(&name)),
+            abi::Action::ProgramExists(name) => i32::from(self.has_program(&name)),
             abi::Action::Spawn {
                 args,
                 environment,
                 descriptors,
             } => match self.spawn_child(pid, args, environment, Vec::new(), descriptors) {
                 Ok(child) => child as i32,
-                Err(Error::UnknownProgram(_)) => -2,
-                Err(Error::ProcessLimit) => -11,
-                Err(Error::BadDescriptor) => -9,
-                Err(Error::InvalidArguments) => -22,
-                Err(Error::ArgumentsTooLarge) => -7,
-                Err(_) => -8,
+                Err(error) => error.spawn_errno(),
             },
             abi::Action::Io(request) => {
                 let process = self.processes.get_mut(&pid).expect("Caller exists");
@@ -619,12 +808,25 @@ impl World {
             return;
         }
         let execution = parent.execution.as_mut().expect("Waiting parent is live");
-        let result = execution.memory.write(
-            &mut execution.store,
-            execution.wait_status as usize,
-            &code.to_le_bytes(),
-        );
-        execution.reply = if result.is_ok() { child as i32 } else { -14 };
+        let control_wait = execution.control_wait.take();
+        let result = if let Some((fd, written, count)) = control_wait {
+            process_control::respond(execution, fd, written, count, child as i32, code)
+        } else {
+            execution.memory.write(
+                &mut execution.store,
+                execution.wait_status as usize,
+                &code.to_le_bytes(),
+            )
+        };
+        execution.reply = if result.is_ok() {
+            if control_wait.is_some() {
+                0
+            } else {
+                child as i32
+            }
+        } else {
+            -14
+        };
         parent.status = Status::Ready;
         self.ready.push_back(parent_pid);
         // A failed status write must allow the parent to retry waitpid.
