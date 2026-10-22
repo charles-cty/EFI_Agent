@@ -58,10 +58,7 @@ def main() -> None:
             input=b"!invalid!\n", capture_output=True, timeout=60,
         )
         assert invalid_base64.returncode != 0, invalid_base64
-        digest = run(args.runner, workspace, "sha256sum", "binary.bin")
-        assert digest.returncode == 0, digest
-        assert digest.stdout == "be45cb2605bf36bebde684841a28f0fd43c69850a3dce5fedba69928ee3a8991  binary.bin\n", digest
-        print("PASS realpath, od, base64 and sha256sum direct/ash/error cases")
+        print("PASS realpath, od and base64 direct/ash/error cases")
 
 
 if __name__ == "__main__":

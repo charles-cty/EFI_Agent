@@ -226,7 +226,6 @@ impl World {
                 | "realpath"
                 | "od"
                 | "base64"
-                | "sha256sum"
                 | "sed"
                 | "sleep"
                 | "yes"

@@ -4565,12 +4565,3 @@ decode and line-wrap options. The focused path fixture covers binary encoding,
 decoding, wrapping, ash dispatch and malformed input. Windows WASI SDK/Binaryen
 compilation and WHPX execution remain pending because those tools were not
 configured in the current environment.
-
-## 2026-10-22 upstream sha256sum
-
-BusyBox sha256sum now uses the upstream `md5_sha1_sum.c` implementation with
-the SHA256 path enabled and the portable `hash_md5_sha.c` implementation. The
-shared image exposes `sha256sum` through ash and runtime program lookup; its
-focused path fixture checks the exact digest for binary input. Windows WASI
-SDK/Binaryen compilation and WHPX execution remain pending because those tools
-were not configured in the current environment.
