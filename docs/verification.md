@@ -4053,3 +4053,17 @@ One added EOF test initially referenced an undefined options variable; explicit
 read-only options correct the test compilation. Rust formatting was applied
 after the first format check found a multiline assertion difference.
 
+The runtime lookup/spawn resolver accepts `/bin/NAME` for registered modules,
+including already compiled modules and BusyBox aliases. The focused
+`program_paths` integration plus the lazy discovery filesystem case pass:
+compiled-only custom names, ash/awk aliases, discovered QuickJS/qjs reuse,
+and rejection of absent or differently prefixed/cased paths. Evidence:
+`artifacts/program-paths-check.log`. This is an execution prefix; real `/bin`
+entries, PATH search and shebang resolution remain incomplete.
+
+After the grep/mount changes, the complete `efi-agent-wasm` suite, test-target
+Clippy with warnings denied, and formatting checks pass. Evidence:
+`artifacts/grep-wasm-regression.log`, `artifacts/grep-clippy-final.log`, and
+`artifacts/grep-format-final.log`. These checks do not replace actual firmware
+or WHPX verification of the new applets.
+

@@ -257,6 +257,8 @@ fn workspace_modules_load_on_demand_and_aliases_share_the_compiled_image() {
     world.discover_programs().unwrap();
     assert!(world.has_program("quickjs"));
     assert!(world.has_program("qjs"));
+    assert!(world.has_program("/bin/quickjs"));
+    assert!(world.has_program("/bin/qjs"));
     assert!(!world.has_program("node"));
     let lookup = wat::parse_str(r#"(module
       (import "wasi_snapshot_preview1" "path_open" (func $open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))
@@ -285,12 +287,12 @@ fn workspace_modules_load_on_demand_and_aliases_share_the_compiled_image() {
         world.step();
     }
     assert_eq!(world.status(lookup).unwrap(), &Status::Exited(0));
-    let first = world.spawn(vec!["quickjs".into()], vec![]).unwrap();
+    let first = world.spawn(vec!["/bin/quickjs".into()], vec![]).unwrap();
     world.step();
     assert_eq!(world.status(first).unwrap(), &Status::Exited(0));
     fs::write(workspace.0.join("quickjs.wasm"), b"changed on disk").unwrap();
     world.discover_programs().unwrap();
-    let alias = world.spawn(vec!["qjs".into()], vec![]).unwrap();
+    let alias = world.spawn(vec!["/bin/qjs".into()], vec![]).unwrap();
     world.step();
     assert_eq!(world.status(alias).unwrap(), &Status::Exited(0));
     fs::write(workspace.0.join("bad.wasm"), b"invalid").unwrap();

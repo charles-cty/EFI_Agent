@@ -24,6 +24,10 @@ native integration passes 33 cases, including limits, failures and long lines.
 Staged corrections reject -m 0 before reading and report input/output failures.
 Recursive grep exposed virtual mount names in ordinary child directory views;
 those views now retain their underlying namespace anchor without root mounts.
+Runtime lookup/spawn accepts /bin-prefixed registered names and applet aliases.
+Focused host checks cover compiled-only modules, lazy discovered aliases, and
+rejection of absent/incorrect paths. Filesystem PATH and executable bin entries
+still require implementation.
 
 The common no_std efi-agent-filesystem crate now owns provider interfaces and
 a persistent inode namespace. Two checksummed metadata generations preserve

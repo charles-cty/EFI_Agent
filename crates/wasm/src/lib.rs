@@ -200,6 +200,7 @@ impl World {
     /// Names implemented by the BusyBox multicall guest. They resolve to the
     /// ash image while retaining argv[0], so the guest can select the applet.
     fn ash_applet(name: &str) -> bool {
+        let name = name.strip_prefix("/bin/").unwrap_or(name);
         matches!(
             name,
             "ash"
@@ -263,6 +264,7 @@ impl World {
     }
 
     pub fn has_program(&self, name: &str) -> bool {
+        let name = name.strip_prefix("/bin/").unwrap_or(name);
         self.programs.contains_key(name)
             || self.program_files.contains_key(name)
             || (Self::ash_applet(name)
@@ -334,6 +336,7 @@ impl World {
 
     fn load_program(&mut self, name: &str) -> Result<(), Error> {
         use filesystem::{FileError, OpenOptions};
+        let name = name.strip_prefix("/bin/").unwrap_or(name);
         if self.programs.contains_key(name) {
             return Ok(());
         }
@@ -478,7 +481,11 @@ impl World {
         if self.processes.len() >= MAX_PROCESSES {
             return Err(Error::ProcessLimit);
         }
-        let module_name = if Self::ash_applet(name) { "ash" } else { name };
+        let module_name = if Self::ash_applet(name) {
+            "ash"
+        } else {
+            name.strip_prefix("/bin/").unwrap_or(name)
+        };
         self.load_program(module_name)?;
         let module = self
             .programs
