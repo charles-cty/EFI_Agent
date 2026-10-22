@@ -310,9 +310,12 @@ impl World {
                 }
                 20 | 21 => {
                     let fd = word(bytes, 1)?;
-                    let path = core::str::from_utf8(&bytes[8..]).map_err(|_| -22)?;
+                    let path = match core::str::from_utf8(&bytes[8..]) {
+                        Ok(path) => path,
+                        Err(_) => return Ok((22, 0)),
+                    };
                     if path.is_empty() || path.contains('\0') {
-                        return Err(-22);
+                        return Ok((22, 0));
                     }
                     let directory = match self.processes[&pid]
                         .execution()
@@ -322,21 +325,23 @@ impl World {
                         .get(&fd)
                     {
                         Some(crate::io::Descriptor::Directory(directory)) => directory.clone(),
-                        Some(_) => return Err(-54),
-                        None => return Err(-9),
+                        Some(_) => return Ok((54, 0)),
+                        None => return Ok((9, 0)),
                     };
                     let right = if operation == 20 { 1 << 26 } else { 1 << 25 };
                     if directory.rights & right != right {
-                        return Err(-76);
+                        return Ok((76, 0));
                     }
-                    let path = directory.resolve(path).map_err(|error| -error)?;
+                    let path = match directory.resolve(path) {
+                        Ok(path) => path,
+                        Err(error) => return Ok((error, 0)),
+                    };
                     let result = if operation == 20 {
                         directory.filesystem.unlink(&path)
                     } else {
                         directory.filesystem.remove_directory(&path)
                     };
-                    result.map_err(|error| -FileError::errno(error))?;
-                    Ok((0, 0))
+                    Ok((result.map_or_else(FileError::errno, |_| 0), 0))
                 }
                 16 => {
                     let context = self

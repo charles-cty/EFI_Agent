@@ -14,8 +14,6 @@ def install(request):
     original_open = os.open
     original_chdir = os.chdir
     original_scandir = os.scandir
-    original_remove = os.remove
-    original_rmdir = os.rmdir
 
     def at_path(path, dir_fd):
         path = os.fspath(path)
@@ -269,22 +267,26 @@ def install(request):
         return Scanner('.' if path is None else path)
 
     def remove(path, *, dir_fd=None):
-        if dir_fd is None:
-            dir_fd = 3
-        encoded = os.fsencode(os.fspath(path))
+        resolved, directory_fd = at_path(path, dir_fd)
+        directory_fd = operator.index(directory_fd)
+        if directory_fd < 0 or directory_fd >= 128:
+            raise OSError(errno.EBADF, os.strerror(errno.EBADF), path)
+        encoded = os.fsencode(resolved)
         if b'\0' in encoded:
             raise ValueError('embedded null byte')
-        error, _ = request(20, operator.index(dir_fd), payload=encoded)
+        error, _ = request(20, directory_fd, payload=encoded)
         if error:
             raise OSError(error, os.strerror(error), path)
 
     def rmdir(path, *, dir_fd=None):
-        if dir_fd is None:
-            dir_fd = 3
-        encoded = os.fsencode(os.fspath(path))
+        resolved, directory_fd = at_path(path, dir_fd)
+        directory_fd = operator.index(directory_fd)
+        if directory_fd < 0 or directory_fd >= 128:
+            raise OSError(errno.EBADF, os.strerror(errno.EBADF), path)
+        encoded = os.fsencode(resolved)
         if b'\0' in encoded:
             raise ValueError('embedded null byte')
-        error, _ = request(21, operator.index(dir_fd), payload=encoded)
+        error, _ = request(21, directory_fd, payload=encoded)
         if error:
             raise OSError(error, os.strerror(error), path)
 
