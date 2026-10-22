@@ -4555,3 +4555,13 @@ Provider errors retain their standard Python errno values. Rust formatting,
 `efi-agent-wasm` compilation, Python bytecode compilation and the seven existing
 filesystem mutation tests pass. A focused Windows WHPX Python deletion run has
 not yet been performed.
+
+## 2026-10-22 upstream base64
+
+BusyBox base64 now uses the upstream `uudecode.c` encoder/decoder and shared
+`uuencode.c` helpers. The shared image enables BASE64, exposes the `base64`
+applet through ash and runtime program lookup, and supports standard encode,
+decode and line-wrap options. The focused path fixture covers binary encoding,
+decoding, wrapping, ash dispatch and malformed input. Windows WASI SDK/Binaryen
+compilation and WHPX execution remain pending because those tools were not
+configured in the current environment.

@@ -43,7 +43,22 @@ def main() -> None:
         ), octal
         invalid = run(args.runner, workspace, "od", "--invalid", "binary.bin")
         assert invalid.returncode != 0, invalid
-        print("PASS realpath and od direct/ash/error cases")
+        encoded = run(args.runner, workspace, "base64", "binary.bin")
+        assert encoded.returncode == 0, encoded
+        assert encoded.stdout == "AAECAwQFBgcICQoLDA0ODw==\n", encoded
+        decoded = subprocess.run(
+            [str(args.runner.resolve()), str(workspace.resolve()), "base64", "-d"],
+            input=encoded.stdout, capture_output=True, text=False, timeout=60,
+        )
+        assert decoded.returncode == 0 and decoded.stdout == bytes(range(16)), decoded
+        wrapped = run(args.runner, workspace, "ash", "-c", "printf hello | base64 -w 4")
+        assert wrapped.returncode == 0 and wrapped.stdout == "aGVs\nbG8=\n", wrapped
+        invalid_base64 = subprocess.run(
+            [str(args.runner.resolve()), str(workspace.resolve()), "base64", "-d"],
+            input=b"!invalid!\n", capture_output=True, timeout=60,
+        )
+        assert invalid_base64.returncode != 0, invalid_base64
+        print("PASS realpath, od and base64 direct/ash/error cases")
 
 
 if __name__ == "__main__":
