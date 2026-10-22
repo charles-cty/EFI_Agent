@@ -272,6 +272,18 @@ impl FileSystem for VirtualFileSystem {
         let destination = self.mounted(destination);
         let source = source.as_str();
         let destination = destination.as_str();
+        if let (Some(source), Some(destination)) = (
+            source.strip_prefix("tmp/"),
+            destination.strip_prefix("tmp/"),
+        ) {
+            let mut files = self.tmp.borrow_mut();
+            if files.contains_key(destination) {
+                return Err(FileError::Exists);
+            }
+            let data = files.remove(source).ok_or(FileError::NotFound)?;
+            files.insert(destination.into(), data);
+            return Ok(());
+        }
         if Self::virtual_entry(source).is_some() || Self::virtual_entry(destination).is_some() {
             return Err(FileError::ReadOnly);
         }
