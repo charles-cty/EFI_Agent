@@ -15,6 +15,10 @@ checks 20 semantic cases and an independent 195000-byte pipe oracle; existing
 ash math/test regression passes. This does not establish firmware awk behavior.
 Other utility applets still include handwritten subsets and need upstream
 replacement. The wider command/mount/session delivery remains incomplete.
+Sed also uses its upstream parser and editor, plus upstream getopt32, linked
+lists and line readers. Windows native checks pass 23 semantic/error cases
+and temporary-file cleanup. In-place content/backup behavior is verified;
+mode preservation still requires an effective guest metadata interface.
 
 The common no_std efi-agent-filesystem crate now owns provider interfaces and
 a persistent inode namespace. Two checksummed metadata generations preserve

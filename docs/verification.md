@@ -3994,3 +3994,29 @@ it fixes command discovery. Initial diagnostic assertions assumed an applet
 prefix and a different syntax diagnostic; the test now checks the actual
 upstream diagnostics and exact exit status.
 
+## Upstream BusyBox sed integration
+
+The upstream 1.37.0 sed parser/editor replaces the handwritten literal
+substitution applet. Its build uses upstream getopt32, linked-list and line
+reader helpers. WASI lacks mkstemp; the platform helper uses runtime entropy
+and exclusive creation. File ownership is fixed in the single-user namespace,
+so the staged source omits the unavailable fchown call.
+
+`scripts/test_busybox_sed.py` passes 23 Windows Release native WASM cases:
+basic/extended regex, global substitution, captures, numeric/regex/end
+addresses, multiple expressions, script files, hold space, branches,
+transliteration, multiline edits, file read/write, missing final newline,
+NUL bytes, a 196613-byte line, in-place replacement/backups, long options,
+and missing-file/regex/parser/option errors. A separate namespace listing
+checks temporary-name cleanup. Evidence: `artifacts/sed-integration.log`.
+The awk integration suite also passes the resulting shared image in
+`artifacts/sed-awk-regression.log`.
+
+These checks establish content behavior. In-place mode preservation still
+requires a guest metadata interface because SDK fchmod does not implement the
+namespace modes. Firmware/WHPX sed checks remain pending. Initial compilation
+exposed missing WASI mkstemp/fchown declarations and libbb string_array_len;
+platform helpers and the fixed-ownership adaptation resolve those build errors.
+The malformed bracket test reaches sed delimiter validation before regex
+compilation; separate parser and regex cases now verify both diagnostics.
+

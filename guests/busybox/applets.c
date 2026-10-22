@@ -28,45 +28,7 @@ static int applet_sleep(int argc, char **argv)
     return nanosleep(&delay, NULL);
 }
 
-static int applet_sed(int argc, char **argv)
-{
-    if (argc < 2 || strncmp(argv[1], "s/", 2) != 0)
-        return 2;
-    const char *separator = strchr(argv[1] + 2, '/');
-    if (!separator)
-        return 2;
-    const char *replacement = separator + 1;
-    const char *end = strchr(replacement, '/');
-    if (!end)
-        return 2;
-    size_t needle_size = (size_t)(separator - (argv[1] + 2));
-    size_t replacement_size = (size_t)(end - replacement);
-    FILE *input = argc > 2 ? fopen(argv[2], "rb") : stdin;
-    if (!input)
-        return 2;
-    char needle[256];
-    if (needle_size == 0 || needle_size >= sizeof(needle))
-        return 2;
-    memcpy(needle, argv[1] + 2, needle_size);
-    needle[needle_size] = '\0';
-    char *line = NULL;
-    size_t capacity = 0;
-    while (getline(&line, &capacity, input) >= 0) {
-        char *match = strstr(line, needle);
-        if (match) {
-            fwrite(line, 1, (size_t)(match - line), stdout);
-            fwrite(replacement, 1, replacement_size, stdout);
-            fputs(match + needle_size, stdout);
-        } else {
-            fputs(line, stdout);
-        }
-    }
-    free(line);
-    if (input != stdin)
-        fclose(input);
-    return 0;
-}
-
+int sed_main(int argc, char **argv);
 int awk_main(int argc, char **argv);
 
 static int copy_stream(int input, int output, long limit)
@@ -301,7 +263,7 @@ int efi_busybox_applet(int argc, char **argv)
     if (strcmp(name, "mv") == 0) return applet_cp_mv(argc, argv, 1);
     if (strcmp(name, "date") == 0) return applet_date();
     if (strcmp(name, "sleep") == 0) return applet_sleep(argc, argv);
-    if (strcmp(name, "sed") == 0) return applet_sed(argc, argv);
+    if (strcmp(name, "sed") == 0) return sed_main(argc, argv);
     if (strcmp(name, "awk") == 0) return awk_main(argc, argv);
     fputs("busybox: applet is unavailable\n", stderr);
     return 127;

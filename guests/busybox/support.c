@@ -13,6 +13,8 @@ const char defoptindvar[] = "OPTIND=1";
 const char *applet_name = "ash";
 const char *bb_busybox_exec_path = "ash";
 int bb_got_signal;
+int xfunc_error_retval = 2;
+void (*die_func)(void);
 
 const char *bb_basename(const char *path)
 {
@@ -53,7 +55,9 @@ void bb_simple_perror_msg(const char *text)
 
 void xfunc_die(void)
 {
-    exit(2);
+    if (die_func)
+        die_func();
+    exit(xfunc_error_retval);
 }
 
 void bb_simple_error_msg_and_die(const char *text)
