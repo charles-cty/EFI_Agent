@@ -88,14 +88,14 @@ def main() -> None:
         assert invalid_hex.returncode != 0, invalid_hex
         xargs = subprocess.run(
             [str(args.runner.resolve()), str(workspace.resolve()), "xargs", "-n1", "printf", "<%s>\n"],
-            input=b"a b\n'c d'\n", capture_output=True, text=True, timeout=60,
+            input=b"a b\n'c d'\n", capture_output=True, timeout=60,
         )
-        assert xargs.returncode == 0 and xargs.stdout == "<a>\n<b>\n<c d>\n", xargs
+        assert xargs.returncode == 0 and xargs.stdout == b"<a>\n<b>\n<c d>\n", xargs
         zero = subprocess.run(
             [str(args.runner.resolve()), str(workspace.resolve()), "xargs", "-0", "-n1", "printf", "[%s]\n"],
-            input=b"a\0b c\0", capture_output=True, text=True, timeout=60,
+            input=b"a\0b c\0", capture_output=True, timeout=60,
         )
-        assert zero.returncode == 0 and zero.stdout == "[a]\n[b c]\n", zero
+        assert zero.returncode == 0 and zero.stdout == b"[a]\n[b c]\n", zero
         print("PASS realpath, od, base64, sha256sum, ln, hexdump and xargs cases")
 
 

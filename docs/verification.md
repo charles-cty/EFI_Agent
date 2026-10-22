@@ -4543,7 +4543,7 @@ options with a nonzero status. The focused host runner regression passes
 binary input, exact output, malformed-option failure and coexistence with the
 realpath checks. Windows WASI SDK 34 and Binaryen compilation completes with
 only the existing upstream format warnings. A focused WHPX run has not yet
-been performed for this applet; hexdump remains unimplemented.
+been performed for this applet.
 
 ## 2026-10-22 Python filesystem deletion
 
