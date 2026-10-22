@@ -2,6 +2,7 @@
 use crate::{dns, files, tls};
 use alloc::{
     format,
+    rc::Rc,
     string::{String, ToString},
     vec::Vec,
 };
@@ -243,6 +244,7 @@ pub struct Interactive<'a> {
     pub poll: &'a mut dyn FnMut() -> bool,
     pub cancelled: bool,
     pub execute_code: &'a mut dyn FnMut(bool, &str) -> Result<String, String>,
+    pub filesystem: Rc<dyn efi_agent_filesystem::FileSystem>,
 }
 impl Interactive<'_> {
     fn check(&mut self) -> bool {
@@ -273,13 +275,14 @@ impl Environment for Interactive<'_> {
         if self.check() {
             return Err("Request cancelled; operation was not executed".into());
         }
-        let config = &self.runtime.config;
+        let filesystem = self.filesystem.as_ref();
+        use efi_agent_filesystem::text;
         match operation {
             Operation::Shell { command } => (self.execute_code)(false, &command),
             Operation::Python { code } => (self.execute_code)(true, &code),
-            Operation::Read { path } => files::read_or_list(&config.resolve(&path)?),
+            Operation::Read { path } => text::read_or_list(filesystem, &path),
             Operation::Write { path, content } => {
-                files::write(&config.resolve(&path)?, &content)?;
+                text::write(filesystem, &path, &content)?;
                 Ok("File saved".into())
             }
             Operation::Edit {
@@ -287,10 +290,9 @@ impl Environment for Interactive<'_> {
                 old_text,
                 new_text,
             } => {
-                let path = config.resolve(&path)?;
-                let text = files::read(&path)?;
+                let text = text::read(filesystem, &path)?;
                 let edited = agent::edit_text(text, &old_text, &new_text)?;
-                files::write(&path, &edited)?;
+                text::write(filesystem, &path, &edited)?;
                 Ok("File edited".into())
             }
             _ => Err("Control requests are not file tools".into()),

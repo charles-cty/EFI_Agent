@@ -544,12 +544,14 @@ dependencies = [
  "crossterm",
  "ctrlc",
  "efi-agent-core",
+ "efi-agent-filesystem",
  "fatfs",
  "fscommon",
  "gpt",
  "ratatui",
  "serde",
  "serde_json",
+ "sha2",
  "vt100",
 ]
 
@@ -582,6 +584,7 @@ name = "efi-agent-uefi"
 version = "0.1.0"
 dependencies = [
  "efi-agent-core",
+ "efi-agent-filesystem",
  "efi-agent-wasm",
  "getrandom 0.2.17",
  "ratatui",

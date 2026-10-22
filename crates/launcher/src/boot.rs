@@ -1,7 +1,6 @@
 //! Build a private writable VM disk and persist guest workspace changes.
 use efi_agent_core::config::AgentConfig;
 use std::{
-    collections::BTreeMap,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -11,16 +10,22 @@ type Error = Box<dyn std::error::Error>;
 
 const SHELL_STARTUP: &[u8] = b"@echo -off\r\n# EDK II sets homefilesystem to the volume that loaded this Shell.\r\necho Connecting installed firmware drivers...\r\nconnect -r\r\n# Use the mandatory common text mode for display and serial console sinks.\r\nmode 80 25\r\necho Starting EFI Agent.\r\n\"%homefilesystem%\\EFI\\AGENT\\AGENT.EFI\"\r\necho EFI Agent returned. Shell commands are now available.\r\n";
 
-fn shell_assets() -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), Error> {
+struct ShellAssets {
+    binary: Vec<u8>,
+    license: Vec<u8>,
+    source: Vec<u8>,
+}
+
+fn shell_assets() -> Result<ShellAssets, Error> {
     let shell = std::env::var_os("EFI_AGENT_SHELL")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("vendor/uefi-shell/shellx64.efi"));
     let source = Path::new("vendor/uefi-shell");
-    Ok((
-        fs::read(&shell)?,
-        fs::read(source.join("License.txt"))?,
-        fs::read(source.join("README.md"))?,
-    ))
+    Ok(ShellAssets {
+        binary: fs::read(&shell)?,
+        license: fs::read(source.join("License.txt"))?,
+        source: fs::read(source.join("README.md"))?,
+    })
 }
 
 pub fn configuration() -> Result<AgentConfig, Error> {
@@ -99,7 +104,7 @@ pub struct Disk {
     pub image: PathBuf,
     directory: PathBuf,
     workspace: PathBuf,
-    baseline: BTreeMap<PathBuf, Vec<u8>>,
+    baseline: crate::workspace::Snapshot,
     preserve: bool,
 }
 impl Disk {
@@ -140,7 +145,8 @@ impl Disk {
             if work.exists() {
                 fs::remove_dir_all(&work)?;
             }
-            copy_tree(&workspace, &work)?;
+            let baseline = snapshot(&workspace)?;
+            crate::workspace::stage(&baseline, &work)?;
             write_configuration(&tree)?;
             fs::write(tree.join("EFI/AGENT/VM.TXT"), b"serial\n")?;
             let image = directory.join("vm.img");
@@ -148,7 +154,6 @@ impl Disk {
                 tree.to_string_lossy().into(),
                 image.to_string_lossy().into(),
             ])?;
-            let baseline = snapshot(&work)?;
             Ok(Self {
                 image,
                 directory: directory.clone(),
@@ -165,44 +170,10 @@ impl Disk {
     pub fn save(&self) -> Result<(), Error> {
         let extracted = self.directory.join("saved");
         extract(&self.image, &extracted)?;
-        let changed = snapshot(&extracted.join("work"))?;
-        let current = snapshot(&self.workspace)?;
-        // Validate all conflicts before overwriting any host file. Guest file
-        // tools have no delete operation, so absent files do not delete host data.
-        for (path, bytes) in &changed {
-            if self.baseline.get(path) != Some(bytes)
-                && current.get(path) != self.baseline.get(path)
-            {
-                return Err(
-                    format!("Host workspace changed during VM run: {}", path.display()).into(),
-                );
-            }
-        }
-        for (path, bytes) in changed {
-            if self.baseline.get(&path) == Some(&bytes) {
-                continue;
-            }
-            let destination = self.workspace.join(&path);
-            let parent = destination.parent().ok_or("Missing workspace parent")?;
-            fs::create_dir_all(parent)?;
-            let temporary = parent.join(format!(".efi-agent-{}.tmp", std::process::id()));
-            let mut output = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temporary)?;
-            let result = (|| {
-                output.write_all(&bytes)?;
-                output.sync_all()?;
-                drop(output);
-                fs::rename(&temporary, &destination)
-            })(); // Windows rename replaces a regular existing file.
-            if result.is_err() {
-                let _ = fs::remove_file(&temporary);
-            }
-            result?;
-        }
-        Ok(())
+        let changed = crate::workspace::guest(&extracted.join("work"), &self.baseline)?;
+        crate::workspace::save(&self.workspace, &self.baseline, &changed)
     }
+
     pub fn preserve(&mut self) {
         self.preserve = true;
     }
@@ -280,40 +251,8 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), Error> {
     }
     copy(source, destination, 0, &mut Budget::default())
 }
-fn snapshot(root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, Error> {
-    fn collect(
-        root: &Path,
-        path: &Path,
-        depth: usize,
-        result: &mut BTreeMap<PathBuf, Vec<u8>>,
-        budget: &mut Budget,
-    ) -> Result<(), Error> {
-        checked_metadata(path)?;
-        for entry in fs::read_dir(path)? {
-            let entry = entry?;
-            let metadata = checked_metadata(&entry.path())?;
-            budget.entry(
-                if metadata.is_file() {
-                    metadata.len()
-                } else {
-                    0
-                },
-                depth,
-            )?;
-            if metadata.is_dir() {
-                collect(root, &entry.path(), depth + 1, result, budget)?;
-            } else {
-                result.insert(
-                    entry.path().strip_prefix(root)?.into(),
-                    fs::read(entry.path())?,
-                );
-            }
-        }
-        Ok(())
-    }
-    let mut files = BTreeMap::new();
-    collect(root, root, 0, &mut files, &mut Budget::default())?;
-    Ok(files)
+fn snapshot(root: &Path) -> Result<crate::workspace::Snapshot, Error> {
+    crate::workspace::host(root)
 }
 
 fn reserved_name(name: &str) -> bool {
@@ -403,7 +342,11 @@ pub fn package(args: Vec<String>) -> Result<(), Error> {
     }
     let efi = Path::new(&args[0]);
     configuration()?;
-    let (shell, license, source) = shell_assets()?;
+    let ShellAssets {
+        binary: shell,
+        license,
+        source,
+    } = shell_assets()?;
     let output = Path::new(&args[1]);
     for (mode, name) in [("vm", "esp"), ("native", "native-esp")] {
         let tree = output.join(name);

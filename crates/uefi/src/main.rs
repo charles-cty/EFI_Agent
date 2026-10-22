@@ -119,6 +119,7 @@ fn submit(
         refresh(app, false)?;
         let render_error = RefCell::new(None);
         let cancelled = Cell::new(false);
+        let filesystem = wasm.filesystem();
         let result = {
             let ui = RefCell::new((&mut *app, &mut refresh, &mut *wasm));
             let mut control = || {
@@ -158,6 +159,7 @@ fn submit(
                 poll: &mut control,
                 cancelled: false,
                 execute_code: &mut execute_code,
+                filesystem,
             };
             let mut streaming_row = None;
             let mut tool_row = None;
@@ -305,7 +307,11 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
             .map_or(([1, 1, 1, 1], 53), |runtime| {
                 (runtime.config.dns_address, runtime.config.dns_port)
             }),
-    );
+    )
+    .map_err(|error| {
+        uefi::println!("Workspace initialization failed: {error:?}");
+        terminal::Error(Status::VOLUME_CORRUPTED)
+    })?;
     // VM mode is explicit. The launcher ESP has no motherboard UART enabled.
     if vm && let Ok(handles) = boot::find_handles::<Serial>() {
         for handle in handles {
@@ -417,6 +423,10 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
                         .map_err(|_| terminal::Error(Status::DEVICE_ERROR))?;
                 }
             }
+            wasm.flush_workspace().map_err(|error| {
+                uefi::println!("{error}");
+                terminal::Error(Status::DEVICE_ERROR)
+            })?;
             terminal.show_cursor()?;
             return Ok(());
         }
@@ -472,6 +482,10 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
                 .map_err(|_| terminal::Error(Status::DEVICE_ERROR))?;
         }
     }
+    wasm.flush_workspace().map_err(|error| {
+        uefi::println!("{error}");
+        terminal::Error(Status::DEVICE_ERROR)
+    })?;
     terminal.show_cursor()?;
     Ok(())
 }

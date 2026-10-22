@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from wasm_namespace_fixture import DirectoryWorkspace
 
 
 class CPythonIntegration(unittest.TestCase):
@@ -58,7 +59,7 @@ else:
 print('STANDARD_PYTHON_OK')
 """)
         self.assertEqual(result.stdout, b"STANDARD_PYTHON_OK\n")
-        self.assertEqual((self.tree / "python-file.bin").read_bytes(), b"a\0\xff")
+        self.assertEqual(DirectoryWorkspace(self.tree).read("python-file.bin"), b"a\0\xff")
 
     def test_site_initialization_and_positional_timeouts(self):
         for flags, code in [
@@ -198,7 +199,7 @@ for index in range(140):
 print('POPEN_DESCRIPTORS_OK')
 """)
         self.assertEqual(result.stdout, b"POPEN_DESCRIPTORS_OK\n")
-        self.assertEqual((self.tree / "passed.txt").read_bytes(), b"mapped")
+        self.assertEqual(DirectoryWorkspace(self.tree).read("passed.txt"), b"mapped")
 
     def test_errors_are_reported_before_effects(self):
         result = self.execute(r"""
@@ -266,8 +267,8 @@ assert subprocess.check_output('read word; printf %s "$word"', shell=True, input
 print('DESCRIPTOR_BOUNDARIES_OK')
 """)
         self.assertEqual(result.stdout, b"DESCRIPTOR_BOUNDARIES_OK\n")
-        self.assertEqual((self.tree / "system-inherited.txt").read_bytes(), b"inherited")
-        self.assertEqual((self.tree / "last-descriptor.txt").read_bytes(), b"edge")
+        self.assertEqual(DirectoryWorkspace(self.tree).read("system-inherited.txt"), b"inherited")
+        self.assertEqual(DirectoryWorkspace(self.tree).read("last-descriptor.txt"), b"edge")
 
     def test_standard_script_filename(self):
         for arguments in (["script.py"], ["-m", "script"]):
@@ -299,7 +300,7 @@ assert os.path.isfile('nested/space dir/cache/__pycache__/module.cpython-314.pyc
 print('DIRECTORIES_WRITES_CACHE_OK')
 """)
         self.assertEqual(result.stdout, b"DIRECTORIES_WRITES_CACHE_OK\n")
-        data = (self.tree / 'nested/space dir/data-8388608').read_bytes()
+        data = DirectoryWorkspace(self.tree).read('nested/space dir/data-8388608')
         self.assertEqual(data, bytes(range(256)) * 32768)
 
     def test_finite_stdin_executes_as_script(self):

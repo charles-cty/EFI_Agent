@@ -9,6 +9,7 @@ use alloc::{boxed::Box, rc::Rc, string::String, vec::Vec};
 pub mod namespace;
 #[cfg(feature = "std")]
 pub mod native;
+pub mod text;
 
 pub const MAX_DIRECTORY_ENTRIES: usize = 4096;
 pub const MAX_DIRECTORY_BYTES: usize = 512 * 1024;

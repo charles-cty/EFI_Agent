@@ -1,5 +1,58 @@
 # Verification record
 
+## 2026-10-22: Mounted namespace and logical workspace persistence
+
+Firmware and the native runner now mount the persistent namespace. Model file
+tools and module loading share it. Launcher staging and save use logical
+snapshots, including deletions, empty directories, links and metadata, with
+conflicts checked before effects. Protected Windows-safe link placeholders
+retain virtual metadata without requiring host symlink privileges.
+
+Windows-native verification passes 18 filesystem and 19 launcher tests. The
+launcher tests include actual FAT pack/extract/export/save/reload/restage and
+same-size, same-mtime host replacement detection. The filesystem cases include
+deferred read-close access times, explicit read-only flush persistence and
+writable-close failure recovery. Host all-target Clippy and UEFI target Clippy
+pass with warnings denied.
+
+All 14 CPython integration cases pass with the Release run_guest runner and
+the unchanged prebuilt interpreter, including standard imports, descriptor
+mapping, concurrency, duplex/capture boundaries, nested directories, 8 MiB
+writes, finite stdin and bytecode compilation. Result checks independently
+decode the CRC-checked namespace generations and backing bytes instead of
+assuming logical filenames are physical host paths. Native module discovery
+also uses the logical namespace. The real native timestamp source is enabled.
+
+The existing focused Responses QEMU/OVMF TCG 512 MiB run in
+artifacts/namespace-tools-tcg-512 verifies nested model writes, shared
+shell/Python files, finite stdin, mutation/open-file identity and independent
+logical FAT bytes. That run predates the latest flush changes. Current binary
+WHPX verification passes the same complete Responses sequence at 512 MiB with
+qemu64,+rdrand in artifacts/namespace-tools-whpx-512, including cancellation,
+the next request and independent saved FAT content. The native libc/ash/
+QuickJS filesystem regression also passes file cursors, append/resize,
+directory cookies and positioning, Unicode globbing, random bytes, fresh-task
+file sharing and language capture against logical namespace bytes. Virtual
+mounts, BusyBox applet delivery, command resolution and persistent sessions
+remain incomplete.
+
+Issues corrected during this integration:
+
+- The Debug runner exceeded its 60-second execution deadline for 11 of 14
+  Python cases. The same suite passes in 34.8 seconds total with the Release
+  runner and real namespace timestamps. The execution deadline is unchanged.
+- Tests read newly created logical files at raw host paths and failed with
+  FileNotFoundError. Independent namespace readers now check the actual bytes.
+- Read-only closes previously rewrote the whole journal for access times.
+  They now defer persistence; explicit flush retains its metadata semantics.
+- A new test assumed OpenOptions implements Default. It now supplies the
+  explicit supported options; the complete suite passes.
+- An earlier native integration used `?` with FileError as a standard Error;
+  contextual conversion fixes the compile failure. An initial command used
+  the wrong launcher package name; subsequent commands use efi-agent.
+- One earlier build accidentally invoked Linux Cargo in the Windows tree.
+  All results reported here use Windows Cargo from the Windows project path.
+
 ## 2026-10-22: Persistent filesystem foundation and WASI mutations
 
 The follow-up common filesystem suite has 14 passing cases. Its additional

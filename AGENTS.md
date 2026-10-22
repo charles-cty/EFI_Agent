@@ -16,9 +16,14 @@ directory views survive rename; detached open files retain identity until the
 last close. Native-backed integration covers recovery, permissions, links and
 structured mutations. WASI mutation, readlink, stat lookup flags and timestamp
 imports delegate to providers; unsupported providers return explicit errors.
-The namespace is not yet installed by firmware or the native guest runner.
-Launcher export must interpret its logical snapshot before that integration;
-raw FAT paths are backing storage, not the guest tree. Virtual mounts, applets,
+Firmware and the native guest runner now install the namespace. Model file
+tools and module loading use that same tree. Launcher staging and export use
+logical snapshots; raw FAT paths are backing storage, not the guest tree.
+The launcher suite verifies FAT stage/export/save/reload with empty directories,
+links, modes, timestamps and deletions. The Release native runner passes all
+14 CPython integration cases. Read-only closes defer access-time persistence;
+explicit file/workspace flush persists it. Writable-close errors are retained
+and reported at the execution boundary. Virtual mounts, applets,
 sessions and the remaining delivery in docs/environment-work.md are incomplete.
 
 ## Architecture
@@ -28,8 +33,8 @@ Each process has an independent Store and memory. A single APPLICATION-TPL
 dispatcher resumes retained call stacks after explicit yield, child wait,
 or fuel exhaustion. `/wasm` loads registered command modules and starts,
 runs, lists, cancels, or reaps their processes. Module paths accept slash or
-backslash separators. Relative paths use the configured workspace; absolute
-paths use the boot volume root. Guest binaries sit directly in the workspace,
+backslash separators. Relative and absolute module paths use the configured
+workspace namespace. Guest binaries sit directly in the workspace,
 so `/wasm load python.wasm` loads Python without a separate directory.
 `/wasm load PATH` infers the registered name from the final filename, removing
 a case-insensitive .wasm suffix. `/wasm load NAME PATH` selects an explicit

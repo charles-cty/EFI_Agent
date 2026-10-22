@@ -6,11 +6,12 @@ use alloc::{
     vec,
     vec::Vec,
 };
+use efi_agent_core::ui::App;
 use efi_agent_core::wasm_output::WasmOutput;
-use efi_agent_core::{config::resolve_module_path, ui::App};
+use efi_agent_filesystem::{FileError, FileSystem, namespace::Namespace};
 use efi_agent_wasm::{Status, World};
 
-use crate::{files, terminal};
+use crate::terminal;
 
 const TOOL_STREAM_LIMIT: usize = 64 * 1024;
 
@@ -86,7 +87,7 @@ impl efi_agent_wasm::random::Random for FirmwareRandom {
 
 pub struct Runtime {
     world: World,
-    workspace: String,
+    filesystem: Rc<Namespace>,
     outputs: BTreeMap<u32, WasmOutput>,
     roots: BTreeMap<u32, u32>,
     cancelled: BTreeSet<u32>,
@@ -99,23 +100,48 @@ impl Runtime {
         workspace: &str,
         ipv4: Option<efi_agent_core::config::StaticIpv4>,
         dns: ([u8; 4], u16),
-    ) -> Self {
+    ) -> Result<Self, FileError> {
+        use efi_agent_wasm::clock::{Clock, ClockId};
+        let filesystem = Rc::new(Namespace::open(
+            Rc::new(crate::wasm_filesystem::FirmwareFileSystem(workspace.into())),
+            Some(Rc::new(|| {
+                crate::wasm_clock::FirmwareClock
+                    .now(ClockId::Realtime)
+                    .map_err(|_| FileError::Io)
+            })),
+        )?);
         let mut world = World::new();
         world.set_clock(Rc::new(crate::wasm_clock::FirmwareClock));
         world.set_random(Rc::new(FirmwareRandom));
         world.set_network(Rc::new(crate::tcp::cooperative::FirmwareNetwork(ipv4)));
         world.set_dns_server(dns.0, dns.1);
-        world.set_filesystem(Rc::new(crate::wasm_filesystem::FirmwareFileSystem(
-            workspace.into(),
-        )));
-        Self {
+        world.set_filesystem(filesystem.clone());
+        Ok(Self {
             world,
-            workspace: workspace.into(),
+            filesystem,
             outputs: BTreeMap::new(),
             roots: BTreeMap::new(),
             cancelled: BTreeSet::new(),
             output_changed: false,
             tool_outputs: BTreeMap::new(),
+        })
+    }
+
+    pub fn filesystem(&self) -> Rc<dyn FileSystem> {
+        self.filesystem.clone()
+    }
+
+    /// Report deferred close errors as well as explicit metadata flush errors.
+    pub fn flush_workspace(&self) -> Result<(), String> {
+        let flush = self.filesystem.flush();
+        let mut errors = self.filesystem.take_errors();
+        if let Err(error) = flush {
+            errors.push(error);
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("Workspace flush/close failed: {errors:?}"))
         }
     }
 
@@ -171,9 +197,13 @@ impl Runtime {
 
     fn ensure_program(&mut self, name: &str) -> Result<(), String> {
         if !self.world.has_program(name) {
-            let path = resolve_module_path(&self.workspace, &format!("{name}.wasm"))?;
-            let bytes =
-                files::read_wasm(&path).map_err(|error| format!("Cannot load {path}: {error}"))?;
+            let path = format!("{name}.wasm");
+            let bytes = efi_agent_filesystem::text::read_bytes(
+                self.filesystem.as_ref(),
+                &path,
+                48 * 1024 * 1024,
+            )
+            .map_err(|error| format!("Cannot load {path}: {error}"))?;
             self.world
                 .register(name, &bytes)
                 .map_err(|error| error.to_string())?;
@@ -242,7 +272,12 @@ impl Runtime {
             self.world.reap(child).expect("Tool process is terminal");
             self.roots.remove(&child);
         }
-        execution.map(|()| output)
+        let storage = self.flush_workspace();
+        match (execution, storage) {
+            (Ok(()), Ok(())) => Ok(output),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(format!("{output}\n{error}")),
+            (Err(execution), Err(storage)) => Err(format!("{output}\n{execution}\n{storage}")),
+        }
     }
 
     pub fn command(
@@ -260,17 +295,17 @@ impl Runtime {
                     _ => Err("Usage: /wasm load PATH or /wasm load NAME PATH".into()),
                 };
                 module.and_then(|(name, path)| {
-                    resolve_module_path(&self.workspace, path)
-                        .and_then(|path| {
-                            files::read_wasm(&path)
-                                .map_err(|error| format!("Cannot load {path}: {error}"))
-                        })
-                        .and_then(|bytes| {
-                            self.world
-                                .register(name, &bytes)
-                                .map_err(|error| error.to_string())
-                        })
-                        .map(|()| format!("Loaded {name}"))
+                    efi_agent_filesystem::text::read_bytes(
+                        self.filesystem.as_ref(),
+                        path,
+                        48 * 1024 * 1024,
+                    )
+                    .and_then(|bytes| {
+                        self.world
+                            .register(name, &bytes)
+                            .map_err(|error| error.to_string())
+                    })
+                    .map(|()| format!("Loaded {name}"))
                 })
             }
             Some(mode @ ("start" | "run")) => {

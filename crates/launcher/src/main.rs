@@ -4,6 +4,7 @@ mod pack;
 mod paste;
 mod selection;
 mod vm;
+mod workspace;
 
 fn main() {
     if let Err(error) = run() {

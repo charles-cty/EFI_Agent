@@ -7,11 +7,13 @@ rust-version.workspace = true
 
 [dependencies]
 efi-agent-core.workspace = true
+efi-agent-filesystem = { workspace = true, features = ["std"] }
 ratatui = { workspace = true, features = ["crossterm"] }
 crossterm = "0.29"
 ctrlc = "3.5"
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
+sha2 = { version = "0.10", default-features = false }
 fatfs = { path = "../../vendor/fatfs" }
 fscommon = "0.1"
 gpt = "4.1"

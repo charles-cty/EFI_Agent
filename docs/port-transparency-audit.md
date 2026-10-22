@@ -52,10 +52,12 @@ input are also outside the interface defects above.
 
 The common persistent namespace and WASI mutation adapters have native-backed
 tests for inode lifetime, directory rename, links, modes, timestamps and
-recovery. These checks install the namespace explicitly. Normal firmware and
-native runner mounting, Python mode reporting and mutation adaptation, and
-launcher logical export remain incomplete. This foundation does not establish
-that the reported firmware unlink, rename or chmod defects are resolved.
+recovery. Firmware and the native runner now mount this namespace, shared with
+model file tools and module loading. Launcher logical staging/export/save has
+an actual FAT round-trip test. Focused QEMU evidence verifies Python unlink,
+rename, symlinks, open-file identity and directory mutations against saved
+logical FAT bytes. Python mode reporting and mutation adaptation remain
+incomplete; these checks do not establish the chmod defect as resolved.
 
 The 2026-10-22 filesystem expansion connects directory creation to native and
 firmware providers, and rename to the native provider. File writes now use

@@ -289,6 +289,28 @@ impl Namespace {
         core::mem::take(&mut *self.inner().errors.borrow_mut())
     }
 
+    /// Restore trusted packaging metadata in one committed generation.
+    /// Resolve every path without following its final symlink before changing
+    /// permissions. Identity, contents and link targets stay in this namespace.
+    pub fn restore_metadata(&self, entries: &[(String, Metadata)]) -> Result<(), FileError> {
+        let mut candidate = self.inner().state.borrow().clone();
+        for (path, metadata) in entries {
+            if metadata.mode & !0o7777 != 0 {
+                return Err(FileError::Invalid);
+            }
+            let id = self.walk(path, false)?;
+            let node = candidate.nodes.get_mut(&id).ok_or(FileError::NotFound)?;
+            if node.kind != metadata.kind {
+                return Err(FileError::Invalid);
+            }
+            node.mode = metadata.mode;
+            node.accessed = metadata.accessed;
+            node.modified = metadata.modified;
+            node.created = metadata.created;
+        }
+        self.inner().commit(candidate)
+    }
+
     pub fn snapshot(&self) -> Result<Vec<SnapshotEntry>, FileError> {
         self.inner().check()?;
         let state = self.inner().state.borrow();
@@ -976,7 +998,11 @@ impl File for OpenFile {
 
 impl Drop for OpenFile {
     fn drop(&mut self) {
-        if let Err(error) = self.flush() {
+        // Read-only closes defer access-time persistence to an explicit fsync
+        // or workspace flush, instead of rewriting the journal on every read.
+        if self.write
+            && let Err(error) = self.flush()
+        {
             self.inner.record(error);
         }
         self.handle.take();

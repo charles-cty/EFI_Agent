@@ -1,3 +1,4 @@
+use efi_agent_filesystem::namespace::Namespace;
 use efi_agent_wasm::clock::{Clock, ClockError, ClockId};
 use efi_agent_wasm::{Status, World};
 #[path = "support/native_fs.rs"]
@@ -5,7 +6,7 @@ mod native_fs;
 #[path = "support/native_net.rs"]
 mod native_net;
 use std::{
-    env, fs,
+    env,
     io::{self, Write},
     path::PathBuf,
     rc::Rc,
@@ -53,20 +54,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| "1.1.1.1:53".into())
         .parse()?;
     world.set_dns_server(dns_server.ip().octets(), dns_server.port());
-    world.set_filesystem(Rc::new(native_fs::NativeFileSystem(directory.clone())));
-    for entry in fs::read_dir(directory)? {
-        let path = entry?.path();
-        if path
-            .extension()
-            .is_some_and(|extension| extension == "wasm")
-        {
-            let name = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .ok_or("Invalid program name")?;
-            world.register(name, &fs::read(&path)?)?;
-        }
-    }
+    let filesystem = Rc::new(
+        Namespace::open(
+            Rc::new(native_fs::NativeFileSystem(directory.clone())),
+            Some(Rc::new(|| {
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|_| efi_agent_wasm::filesystem::FileError::Io)?
+                    .as_nanos()
+                    .try_into()
+                    .map_err(|_| efi_agent_wasm::filesystem::FileError::Overflow)
+            })),
+        )
+        .map_err(|error| format!("Initialize workspace namespace: {error:?}"))?,
+    );
+    world.set_filesystem(filesystem.clone());
+    world
+        .discover_programs()
+        .map_err(|error| format!("Discover workspace programs: {error:?}"))?;
     let root = world.spawn(argv, Vec::new())?;
     let deadline = Instant::now() + std::time::Duration::from_secs(60);
     while Instant::now() < deadline {
@@ -79,11 +84,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         io::stdout().write_all(&stdout)?;
         io::stderr().write_all(&stderr)?;
         match world.status(root)? {
-            Status::Exited(0) => return Ok(()),
-            Status::Exited(code) => return Err(format!("Guest exited with {code}").into()),
-            Status::Trapped(error) => return Err(format!("Guest trapped: {error}").into()),
+            Status::Exited(0) => {
+                flush(&filesystem)?;
+                return Ok(());
+            }
+            Status::Exited(code) => {
+                flush(&filesystem)?;
+                return Err(format!("Guest exited with {code}").into());
+            }
+            Status::Trapped(error) => {
+                flush(&filesystem)?;
+                return Err(format!("Guest trapped: {error}").into());
+            }
             _ => {}
         }
     }
     Err("Guest did not exit within 60 seconds".into())
+}
+
+fn flush(filesystem: &Namespace) -> Result<(), Box<dyn std::error::Error>> {
+    let result = filesystem.flush();
+    let mut errors = filesystem.take_errors();
+    if let Err(error) = result {
+        errors.push(error);
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("Workspace flush/close failed: {errors:?}").into())
+    }
 }

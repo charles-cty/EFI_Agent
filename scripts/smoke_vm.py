@@ -28,6 +28,7 @@ from cryptography.x509.oid import NameOID
 import pyte
 from dissect.fat import FATFS
 from dissect.util.stream import RangeStream
+from wasm_namespace_fixture import FatWorkspace
 
 
 class DNS(socketserver.BaseRequestHandler):
@@ -289,8 +290,34 @@ def main():
                 """)}),
             ("shell", {"command": "python - <<'PY'\nimport os\nassert not os.isatty(0)\nprint('HEREDOC_SCRIPT_OK')\nPY\n"}),
             ("python", {"code": "import os, subprocess\nassert not any(os.isatty(fd) for fd in (0, 1, 2))\nfor source, expected in [(b'', b''), (b'print(731)\\n', b'731\\n')]:\n    r = subprocess.run(['python', '-'], input=source, capture_output=True)\n    assert (r.returncode, r.stdout, r.stderr) == (0, expected, b''), r\nprint('FINITE_STDIN_OK')"}),
+            ("python", {"code": dedent("""
+                import os
+                os.makedirs('mutation/empty')
+                with open('mutation/original', 'wb') as f:
+                    f.write(b'original bytes')
+                with open('mutation/replaced', 'wb') as f:
+                    f.write(b'old destination')
+                old = open('mutation/replaced', 'rb')
+                os.rename('mutation/original', 'mutation/replaced')
+                assert old.read() == b'old destination'
+                old.close()
+                os.symlink('replaced', 'mutation/link')
+                assert os.readlink('mutation/link') == 'replaced'
+                assert open('mutation/link', 'rb').read() == b'original bytes'
+                retained = open('mutation/replaced', 'rb')
+                os.unlink('mutation/replaced')
+                assert retained.read() == b'original bytes'
+                retained.close()
+                assert not os.path.exists('mutation/link') and os.path.lexists('mutation/link')
+                os.rmdir('mutation/empty')
+                os.rename('mutation', 'moved-mutation')
+                with open('moved-mutation/result', 'w') as f:
+                    f.write('MUTATION_SHARED_OK\\n')
+                print('MUTATION_IDENTITY_OK')
+                """)}),
+            ("shell", {"command": "read -r result < moved-mutation/result; printf '%s\\n' \"$result\""}),
         ]
-        Provider.code_expected = ["File saved", "NESTED_SCRIPT_OK", "FILESYSTEM_WRITES_OK", "HEREDOC_SCRIPT_OK", "FINITE_STDIN_OK"]
+        Provider.code_expected = ["File saved", "NESTED_SCRIPT_OK", "FILESYSTEM_WRITES_OK", "HEREDOC_SCRIPT_OK", "FINITE_STDIN_OK", "MUTATION_IDENTITY_OK", "MUTATION_SHARED_OK"]
     args.output.mkdir(parents=True, exist_ok=True)
     Provider.requests.clear()
     Provider.errors.clear()
@@ -468,26 +495,26 @@ def main():
             if not args.tls_failure:
                 with image.open("rb") as disk:
                     fs = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
+                    workspace = FatWorkspace(fs)
                     for name, expected in [("needle.txt", "edited 中 853".encode()), ("created.txt", b"created 419\n"), ("ambiguous.txt", b"aaa")]:
-                        assert fs.get(f"/work/{name}").open().read() == expected
+                        assert workspace.read(name) == expected
                     if args.code_workspace:
                         if not args.code_cancel_only:
                             if args.filesystem_tools:
-                                assert fs.get('/work/scripts/deep/input.py').open().read() == b"print('NESTED_SCRIPT_OK')\n"
+                                assert workspace.read('scripts/deep/input.py') == b"print('NESTED_SCRIPT_OK')\n"
                                 for size in (65535, 65536, 65537, 524287, 524288, 524289, 8388608):
-                                    actual = fs.get(f'/work/data/space dir/write-{size}').open().read()
+                                    actual = workspace.read(f'data/space dir/write-{size}')
                                     expected = (bytes(range(256)) * ((size + 255) // 256))[:size]
                                     assert actual == expected, size
+                                assert workspace.read('moved-mutation/result') == b'MUTATION_SHARED_OK\n'
+                                assert workspace.entries['moved-mutation/link']['target'] == 'replaced'
+                                for removed in ('mutation', 'moved-mutation/empty', 'moved-mutation/original', 'moved-mutation/replaced'):
+                                    assert removed not in workspace.entries, removed
                             else:
                                 for name, expected in [("code-shell.txt", "a b\n中\n"), ("code-python.txt", "python child 中")]:
-                                    assert fs.get(f"/work/{name}").open().read() == expected.encode()
-                        assert fs.get("/work/code-cancel-started.txt").open().read() == b"started\n"
-                    try:
-                        fs.get("/work/must-not-exist.txt")
-                    except FileNotFoundError:
-                        pass
-                    else:
-                        raise AssertionError("Truncated tool call wrote a file")
+                                    assert workspace.read(name) == expected.encode()
+                        assert workspace.read('code-cancel-started.txt') == b"started\n"
+                    assert 'must-not-exist.txt' not in workspace.entries, 'Truncated tool call wrote a file'
                     if args.driver:
                         assert fs.get("/work/driver-started.txt").open().read() == b"1"
                 print("PASS actual FAT file bytes and no truncated tool execution", flush=True)

@@ -1,20 +1,25 @@
 # WASM process world
 
 The common `efi-agent-filesystem` crate supplies no_std provider types and an
-optional persistent inode namespace. The namespace stores logical directories,
+persistent inode namespace used by firmware and the native guest runner.
+The namespace stores logical directories,
 links, modes and times in two checksummed metadata generations above raw
 backing files. It retains open-file and directory identity across mutations.
 WASI unlink/rmdir, rename across directory views, symlink/readlink, lookup
 flags and path/descriptor timestamps now call provider methods. Raw providers
-can reject unimplemented operations explicitly. The native integration tests
-install this namespace directly; normal firmware and run_guest installation,
-logical launcher export and virtual mounts remain pending.
+can reject unimplemented operations explicitly. Model file tools and module
+loading share the mounted namespace. Virtual mounts remain pending.
 
 `namespace::read_snapshot` reads the committed logical tree without recovery
 writes or garbage collection. It exposes validated backing paths to host
 export code only. The firmware raw provider now implements deletion and volume
-capacity; actual firmware verification remains pending before enabling the
-persistent namespace in normal boot.
+capacity. Launcher staging, logical export and host save preserve directory
+entries, links and metadata, with host conflicts checked before save effects.
+Its integration suite includes an actual FAT save/reload/restage round trip.
+Read-only closes defer access-time persistence to explicit file/workspace
+flush. Writable closes flush and retain failures for the execution boundary.
+Absolute `/wasm load` paths now select the workspace root, matching guest and
+model file paths, rather than the raw boot-volume root.
 
 The UEFI application embeds wasmi 2 with `alloc` and no Rust standard library.
 `crates/wasm` contains the firmware-independent process world.

@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 efi-agent-core.workspace = true
+efi-agent-filesystem.workspace = true
 efi-agent-wasm = { path = "../wasm" }
 ratatui.workspace = true
 serde.workspace = true

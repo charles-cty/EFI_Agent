@@ -76,6 +76,81 @@ fn read(fs: &dyn FileSystem, path: &str) -> Vec<u8> {
 }
 
 #[test]
+fn model_files_share_guest_namespace_and_validate_before_creating_parents() {
+    use efi_agent_filesystem::text;
+    let work = Workspace::new();
+    let namespace = work.open();
+    text::write(&namespace, "scripts/deep/input.py", "print(731)\n").unwrap();
+    assert_eq!(read(&namespace, "scripts/deep/input.py"), b"print(731)\n");
+    namespace.rename("scripts", "renamed").unwrap();
+    assert_eq!(
+        text::read(&namespace, "/renamed/deep/input.py").unwrap(),
+        "print(731)\n"
+    );
+    namespace.symlink("renamed/deep/input.py", "link").unwrap();
+    text::write(&namespace, "link", "replacement").unwrap();
+    assert_eq!(read(&namespace, "renamed/deep/input.py"), b"replacement");
+    namespace.unlink("renamed/deep/input.py").unwrap();
+    assert!(
+        text::read(&namespace, "link")
+            .unwrap_err()
+            .contains("NotFound")
+    );
+    assert!(text::write(&namespace, "new/../escape", "bad").is_err());
+    assert_eq!(namespace.metadata("new").unwrap_err(), FileError::NotFound);
+    assert!(text::write(&namespace, "new/deep/input", &"x".repeat(524289)).is_err());
+    assert_eq!(namespace.metadata("new").unwrap_err(), FileError::NotFound);
+    let limit = "x".repeat(524288);
+    text::write(&namespace, "limit", &limit).unwrap();
+    assert_eq!(text::read(&namespace, "limit").unwrap(), limit);
+    assert!(text::read_bytes(&namespace, "limit", 524287).is_err());
+    assert_eq!(text::read_or_list(&namespace, "renamed/deep").unwrap(), "");
+    assert!(
+        text::read_or_list(&namespace, ".")
+            .unwrap()
+            .contains("renamed\n")
+    );
+}
+
+#[test]
+fn packaging_metadata_restores_links_without_following_and_rejects_partial_batches() {
+    use efi_agent_filesystem::Metadata;
+    let work = Workspace::new();
+    let namespace = work.open();
+    write(&namespace, "target", b"bytes");
+    namespace.symlink("target", "link").unwrap();
+    let mut link = Metadata::new(EntryType::Symlink, 0);
+    link.mode = 0o123;
+    link.accessed = 135;
+    link.modified = 246;
+    link.created = 357;
+    let batch = [("link".into(), link), ("absent".into(), link)];
+    assert_eq!(namespace.restore_metadata(&batch), Err(FileError::NotFound));
+    assert_ne!(namespace.symlink_metadata("link").unwrap().mode, link.mode);
+    namespace.restore_metadata(&batch[..1]).unwrap();
+    assert_eq!(namespace.metadata("target").unwrap().mode, 0o644);
+    drop(namespace);
+    let namespace = work.open();
+    let restored = namespace.symlink_metadata("link").unwrap();
+    assert_eq!(
+        (
+            restored.mode,
+            restored.accessed,
+            restored.modified,
+            restored.created
+        ),
+        (0o123, 135, 246, 357)
+    );
+    assert_eq!(read(&namespace, "target"), b"bytes");
+    let mut invalid = link;
+    invalid.kind = EntryType::File;
+    assert_eq!(
+        namespace.restore_metadata(&[("link".into(), invalid)]),
+        Err(FileError::Invalid)
+    );
+}
+
+#[test]
 fn unlink_and_replacement_retain_open_file_identity_and_collect_after_last_close() {
     let work = Workspace::new();
     fs::write(work.0.join("source"), b"SOURCE").unwrap();
@@ -599,6 +674,72 @@ fn failed_clock_prevents_resize_and_reads_before_effects() {
     assert_eq!(file.read(&mut bytes).unwrap(), 9);
     assert_eq!(&bytes, b"unchanged");
     assert_eq!(file.metadata().unwrap().accessed, 193);
+}
+
+#[test]
+fn read_close_defers_access_time_but_explicit_flush_persists_it() {
+    use efi_agent_filesystem::namespace::read_snapshot;
+    let work = Workspace::new();
+    fs::write(work.0.join("file"), b"bytes").unwrap();
+    let time = Rc::new(Cell::new(193));
+    let clock = time.clone();
+    let namespace = Namespace::open(work.raw(), Some(Rc::new(move || Ok(clock.get())))).unwrap();
+    let saved_access = || {
+        read_snapshot(work.raw().as_ref())
+            .unwrap()
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.path == "file")
+            .unwrap()
+            .metadata
+            .accessed
+    };
+    let original = saved_access();
+    time.set(original + 731);
+    assert_eq!(read(&namespace, "file"), b"bytes");
+    assert_eq!(namespace.metadata("file").unwrap().accessed, original + 731);
+    assert_eq!(saved_access(), original);
+    let mut file = namespace
+        .open(
+            "file",
+            OpenOptions {
+                write: false,
+                create: false,
+                ..options()
+            },
+        )
+        .unwrap();
+    file.flush().unwrap();
+    assert_eq!(saved_access(), original + 731);
+    time.set(original + 937);
+    assert_eq!(read(&namespace, "file"), b"bytes");
+    namespace.flush().unwrap();
+    assert_eq!(saved_access(), original + 937);
+}
+
+#[test]
+fn failed_writable_close_is_reported_and_requires_recovery() {
+    let work = Workspace::new();
+    let faults = Rc::new(Faults {
+        remaining: Cell::new(None),
+        flush: Cell::new(false),
+    });
+    let namespace = Namespace::open(
+        Rc::new(FaultFs {
+            raw: work.raw(),
+            faults: faults.clone(),
+        }),
+        Some(Rc::new(|| Ok(731))),
+    )
+    .unwrap();
+    let mut file = namespace.open("file", options()).unwrap();
+    file.write(b"saved bytes").unwrap();
+    faults.flush.set(true);
+    drop(file);
+    assert!(namespace.take_errors().contains(&FileError::Io));
+    assert_eq!(namespace.flush(), Err(FileError::Io));
+    let recovered = work.open();
+    assert_eq!(read(&recovered, "file"), b"saved bytes");
 }
 
 #[test]
