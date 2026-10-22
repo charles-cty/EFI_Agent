@@ -14,6 +14,8 @@ def install(request):
     original_open = os.open
     original_chdir = os.chdir
     original_scandir = os.scandir
+    original_remove = os.remove
+    original_rmdir = os.rmdir
 
     def at_path(path, dir_fd):
         path = os.fspath(path)
@@ -266,10 +268,31 @@ def install(request):
     def scandir(path='.'):
         return Scanner('.' if path is None else path)
 
+    def remove(path, *, dir_fd=None):
+        if dir_fd is None:
+            dir_fd = 3
+        encoded = os.fsencode(os.fspath(path))
+        if b'\0' in encoded:
+            raise ValueError('embedded null byte')
+        error, _ = request(20, operator.index(dir_fd), payload=encoded)
+        if error:
+            raise OSError(error, os.strerror(error), path)
+
+    def rmdir(path, *, dir_fd=None):
+        if dir_fd is None:
+            dir_fd = 3
+        encoded = os.fsencode(os.fspath(path))
+        if b'\0' in encoded:
+            raise ValueError('embedded null byte')
+        error, _ = request(21, operator.index(dir_fd), payload=encoded)
+        if error:
+            raise OSError(error, os.strerror(error), path)
+
     methods = {'stat': stat_path, 'lstat': lstat, 'fstat': fstat,
                'chmod': chmod, 'fchmod': fchmod, 'umask': umask,
                'mkdir': mkdir, 'open': open_path, 'access': access, 'chdir': chdir,
                'scandir': scandir}
+    methods.update({'remove': remove, 'unlink': remove, 'rmdir': rmdir})
     for name, function in methods.items():
         previous = getattr(os, name, None)
         for capability in ('supports_fd', 'supports_dir_fd', 'supports_follow_symlinks', 'supports_effective_ids'):

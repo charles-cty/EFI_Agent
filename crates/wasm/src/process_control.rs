@@ -1,5 +1,5 @@
 //! Internal process operations for unmodified WASI interpreters over an open descriptor.
-use crate::{Execution, Pid, Status, World, io::Descriptor};
+use crate::{Execution, Pid, Status, World, filesystem::FileError, io::Descriptor};
 use alloc::{collections::BTreeSet, format, rc::Rc, string::String, vec::Vec};
 use core::cell::RefCell;
 
@@ -76,6 +76,7 @@ impl World {
                 2 | 3 | 5 | 10 => 12,
                 4 | 13 | 15 | 18 | 19 => 8,
                 14 => 12,
+                20 | 21 => bytes.len(),
                 8 | 9 | 11 | 12 | 17 => bytes.len(),
                 _ => return Err(-22),
             };
@@ -306,6 +307,36 @@ impl World {
                         (mode != u32::MAX).then_some(mode as u16),
                     );
                     Ok((0, previous.map_or(-1, i32::from)))
+                }
+                20 | 21 => {
+                    let fd = word(bytes, 1)?;
+                    let path = core::str::from_utf8(&bytes[8..]).map_err(|_| -22)?;
+                    if path.is_empty() || path.contains('\0') {
+                        return Err(-22);
+                    }
+                    let directory = match self.processes[&pid]
+                        .execution()
+                        .store
+                        .data()
+                        .descriptors
+                        .get(&fd)
+                    {
+                        Some(crate::io::Descriptor::Directory(directory)) => directory.clone(),
+                        Some(_) => return Err(-54),
+                        None => return Err(-9),
+                    };
+                    let right = if operation == 20 { 1 << 26 } else { 1 << 25 };
+                    if directory.rights & right != right {
+                        return Err(-76);
+                    }
+                    let path = directory.resolve(path).map_err(|error| -error)?;
+                    let result = if operation == 20 {
+                        directory.filesystem.unlink(&path)
+                    } else {
+                        directory.filesystem.remove_directory(&path)
+                    };
+                    result.map_err(|error| -FileError::errno(error))?;
+                    Ok((0, 0))
                 }
                 16 => {
                     let context = self

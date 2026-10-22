@@ -11,6 +11,10 @@ Date currently supports UTC; other TZ values fail explicitly and timezone
 support remains pending.
 Firmware monotonic waits now use a reported hardware-counter rate. The mount,
 PATH, packaging and persistent-session gates remain incomplete.
+Python's standard `os.remove`, `os.unlink` and `os.rmdir` now use the same
+namespace mutation providers as WASI and BusyBox. File and directory deletion
+therefore persists through the workspace namespace; focused WHPX application
+coverage remains pending.
 
 ## Required commands
 

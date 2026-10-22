@@ -4544,3 +4544,14 @@ binary input, exact output, malformed-option failure and coexistence with the
 realpath checks. Windows WASI SDK 34 and Binaryen compilation completes with
 only the existing upstream format warnings. A focused WHPX run has not yet
 been performed for this applet; hexdump remains unimplemented.
+
+## 2026-10-22 Python filesystem deletion
+
+The Python startup patch now replaces `os.remove`, `os.unlink` and `os.rmdir`.
+The private process-control endpoint validates the directory descriptor, checks
+WASI mutation rights, resolves the path through the shared virtual and persistent
+namespace, and calls the provider's unlink or remove-directory operation.
+Provider errors retain their standard Python errno values. Rust formatting,
+`efi-agent-wasm` compilation, Python bytecode compilation and the seven existing
+filesystem mutation tests pass. A focused Windows WHPX Python deletion run has
+not yet been performed.
