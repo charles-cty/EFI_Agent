@@ -63,7 +63,6 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $build 'hexdump.c'),
     (Join-Path $build 'xargs.c'),
     (Join-Path $build 'find.c'),
-    (Join-Path $build 'stat.c'),
     (Join-Path $Source 'libbb/xrealloc_vector.c'),
     (Join-Path $Source 'libbb/make_directory.c'), (Join-Path $build 'remove_file.c'),
     (Join-Path $Source 'libbb/ask_confirmation.c'), (Join-Path $Source 'libbb/time.c'),

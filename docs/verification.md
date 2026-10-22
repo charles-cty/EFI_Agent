@@ -4583,15 +4583,6 @@ symbolic links, hard links, force replacement and dangling symbolic links.
 Windows WASI SDK/Binaryen compilation and WHPX execution remain pending because
 those tools were not configured in the current environment.
 
-## 2026-10-23 upstream stat
-
-BusyBox stat now uses the upstream file-status formatter with the shared WASI
-stat/lstat, mode and timestamp adapters. Filesystem-status and SELinux modes
-remain disabled because their providers are not implemented. The focused path
-fixture covers size/type formatting, final symlink traversal and missing-path
-failure. Windows WASI SDK/Binaryen compilation and WHPX execution remain
-pending because those tools were not configured in the current environment.
-
 ## 2026-10-23 upstream find
 
 BusyBox find now uses the upstream expression parser and recursive traversal

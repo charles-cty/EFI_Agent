@@ -35,8 +35,6 @@ ENABLED = {
     "HEXDUMP",
     "XARGS",
     "FIND",
-    "STAT",
-    "FEATURE_STAT_FORMAT",
     "FEATURE_FIND_TYPE",
     "FEATURE_FIND_NOT",
     "FEATURE_FIND_PAREN",
@@ -360,10 +358,6 @@ def main():
     )
     (args.output / "find.c").write_text(
         (args.source / "findutils/find.c").read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
-    (args.output / "stat.c").write_text(
-        (args.source / "coreutils/stat.c").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     prepare_text_applets(args.source, args.output, replace_once)
