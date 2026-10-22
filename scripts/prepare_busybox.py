@@ -33,11 +33,6 @@ ENABLED = {
     "SHA256SUM",
     "LN",
     "HEXDUMP",
-    "XARGS",
-    "FEATURE_XARGS_SUPPORT_QUOTES",
-    "FEATURE_XARGS_SUPPORT_TERMOPT",
-    "FEATURE_XARGS_SUPPORT_ZERO_TERM",
-    "FEATURE_XARGS_SUPPORT_REPL_STR",
 }
 
 
@@ -345,10 +340,6 @@ def main():
     )
     (args.output / "hexdump.c").write_text(
         (args.source / "util-linux/hexdump.c").read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
-    (args.output / "xargs.c").write_text(
-        (args.source / "findutils/xargs.c").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     prepare_text_applets(args.source, args.output, replace_once)

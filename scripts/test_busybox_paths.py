@@ -86,17 +86,7 @@ def main() -> None:
         assert hex_stdin.returncode == 0 and "41 42" in hex_stdin.stdout, hex_stdin
         invalid_hex = run(args.runner, workspace, "hexdump", "-Z", "binary.bin")
         assert invalid_hex.returncode != 0, invalid_hex
-        xargs = subprocess.run(
-            [str(args.runner.resolve()), str(workspace.resolve()), "xargs", "-n1", "printf", "<%s>\n"],
-            input=b"a b\n'c d'\n", capture_output=True, timeout=60,
-        )
-        assert xargs.returncode == 0 and xargs.stdout == b"<a>\n<b>\n<c d>\n", xargs
-        zero = subprocess.run(
-            [str(args.runner.resolve()), str(workspace.resolve()), "xargs", "-0", "-n1", "printf", "[%s]\n"],
-            input=b"a\0b c\0", capture_output=True, timeout=60,
-        )
-        assert zero.returncode == 0 and zero.stdout == b"[a]\n[b c]\n", zero
-        print("PASS realpath, od, base64, sha256sum, ln, hexdump and xargs cases")
+        print("PASS realpath, od, base64, sha256sum and ln direct/ash/error cases")
 
 
 if __name__ == "__main__":
