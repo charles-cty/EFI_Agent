@@ -61,6 +61,33 @@ pub struct SnapshotEntry {
     pub target: Option<String>,
 }
 
+/// Read the committed logical tree without recovery writes or inode reclamation.
+/// Exporters must use backing paths only to read regular-file contents.
+pub fn read_snapshot(raw: &dyn FileSystem) -> Result<Option<Vec<SnapshotEntry>>, FileError> {
+    let Some((_, state)) = journal::load(raw)? else {
+        return Ok(None);
+    };
+    state
+        .nodes
+        .iter()
+        .filter(|(id, node)| **id == ROOT || node.parent.is_some())
+        .map(|(&id, node)| {
+            let size = match node.kind {
+                EntryType::File => raw.metadata(node.backing.as_ref().unwrap())?.size,
+                EntryType::Symlink => node.target.as_ref().unwrap().len() as u64,
+                _ => 0,
+            };
+            Ok(SnapshotEntry {
+                path: state.path(id)?,
+                metadata: node_metadata(id, node, size),
+                backing: node.backing.clone(),
+                target: node.target.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
 fn permission(node: &Node, requested: u16) -> Result<(), FileError> {
     if node.mode & requested == requested {
         Ok(())

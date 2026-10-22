@@ -2,6 +2,15 @@
 
 ## 2026-10-22: Persistent filesystem foundation and WASI mutations
 
+The follow-up common filesystem suite has 14 passing cases. Its additional
+read-only export test verifies logical renamed paths, empty directories and
+link targets while preserving both journal slots and detached open backing
+files. Export reads the latest committed generation without recovery writes.
+Host filesystem Clippy and UEFI target Clippy pass. Firmware raw unlink/rmdir
+now check entry type, protect root, reject nonempty directories and consume
+EFI Delete results; capacity reads EFI_FILE_SYSTEM_INFO. These raw operations
+are compile-checked only and still require actual firmware verification.
+
 Windows-native `cargo test -p efi-agent-filesystem -p efi-agent-wasm` passes.
 The common filesystem crate has 13 native-backed integration cases. They cover
 open-file unlink/replacement lifetime, anchored directory rename, mode checks,

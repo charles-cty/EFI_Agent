@@ -600,3 +600,47 @@ fn failed_clock_prevents_resize_and_reads_before_effects() {
     assert_eq!(&bytes, b"unchanged");
     assert_eq!(file.metadata().unwrap().accessed, 193);
 }
+
+#[test]
+fn committed_export_uses_logical_paths_without_collecting_or_changing_raw_storage() {
+    use efi_agent_filesystem::namespace::read_snapshot;
+    let work = Workspace::new();
+    fs::write(work.0.join("original"), b"original bytes").unwrap();
+    let namespace = work.open();
+    let held = namespace.open("original", options()).unwrap();
+    namespace.rename("original", "renamed").unwrap();
+    namespace.create_directory("empty").unwrap();
+    namespace.symlink("renamed", "link").unwrap();
+    write(&namespace, "deleted", b"detached bytes");
+    let detached = namespace.open("deleted", options()).unwrap();
+    namespace.unlink("deleted").unwrap();
+    let slots =
+        ["state0", "state1"].map(|name| fs::read(work.0.join(".efi-agent-fs").join(name)).unwrap());
+    let entries = read_snapshot(work.raw().as_ref()).unwrap().unwrap();
+    let names: Vec<_> = entries.iter().map(|entry| entry.path.as_str()).collect();
+    assert_eq!(names, ["", "renamed", "empty", "link"]);
+    let file = entries
+        .iter()
+        .find(|entry| entry.path == "renamed")
+        .unwrap();
+    assert_eq!(file.backing.as_deref(), Some("original"));
+    assert_eq!(
+        fs::read(work.0.join(file.backing.as_ref().unwrap())).unwrap(),
+        b"original bytes"
+    );
+    let link = entries.iter().find(|entry| entry.path == "link").unwrap();
+    assert_eq!(link.target.as_deref(), Some("renamed"));
+    assert_eq!(
+        slots,
+        ["state0", "state1"].map(|name| fs::read(work.0.join(".efi-agent-fs").join(name)).unwrap())
+    );
+    assert_eq!(
+        fs::read_dir(work.0.join(".efi-agent-fs/objects"))
+            .unwrap()
+            .count(),
+        1
+    );
+    drop(detached);
+    drop(held);
+    assert!(namespace.take_errors().is_empty());
+}

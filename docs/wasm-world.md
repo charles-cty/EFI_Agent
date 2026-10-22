@@ -10,6 +10,12 @@ can reject unimplemented operations explicitly. The native integration tests
 install this namespace directly; normal firmware and run_guest installation,
 logical launcher export and virtual mounts remain pending.
 
+`namespace::read_snapshot` reads the committed logical tree without recovery
+writes or garbage collection. It exposes validated backing paths to host
+export code only. The firmware raw provider now implements deletion and volume
+capacity; actual firmware verification remains pending before enabling the
+persistent namespace in normal boot.
+
 The UEFI application embeds wasmi 2 with `alloc` and no Rust standard library.
 `crates/wasm` contains the firmware-independent process world.
 `crates/uefi/src/wasm.rs` connects it to the firmware UI. No host process or

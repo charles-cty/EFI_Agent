@@ -4,11 +4,13 @@ use alloc::{
     string::{String, ToString},
 };
 use efi_agent_wasm::filesystem::{
-    DirectoryEntries, EntryType, File, FileError, FileSystem, Metadata, OpenOptions,
+    Capacity, DirectoryEntries, EntryType, File, FileError, FileSystem, Metadata, OpenOptions,
 };
 use uefi::{
     CString16, Status, boot,
-    proto::media::file::{File as EfiFile, FileAttribute, FileInfo, FileMode, RegularFile},
+    proto::media::file::{
+        File as EfiFile, FileAttribute, FileInfo, FileMode, FileSystemInfo, RegularFile,
+    },
 };
 
 pub struct FirmwareFileSystem(pub String);
@@ -16,7 +18,9 @@ pub struct FirmwareFileSystem(pub String);
 fn error(status: Status) -> FileError {
     match status {
         Status::NOT_FOUND => FileError::NotFound,
-        Status::ACCESS_DENIED | Status::WRITE_PROTECTED => FileError::Access,
+        Status::ACCESS_DENIED => FileError::Access,
+        Status::WRITE_PROTECTED => FileError::ReadOnly,
+        Status::VOLUME_FULL => FileError::NoSpace,
         Status::INVALID_PARAMETER => FileError::Invalid,
         Status::UNSUPPORTED => FileError::Unsupported,
         _ => FileError::Io,
@@ -24,6 +28,32 @@ fn error(status: Status) -> FileError {
 }
 
 impl FirmwareFileSystem {
+    fn delete(&self, path: &str, directory: bool) -> Result<(), FileError> {
+        if path.is_empty() {
+            return Err(FileError::Access);
+        }
+        let mut handle = self.open_handle(path, FileMode::ReadWrite)?;
+        let info = handle
+            .get_boxed_info::<FileInfo>()
+            .map_err(|failure| error(failure.status()))?;
+        if info.is_directory() != directory {
+            return Err(if directory {
+                FileError::NotDirectory
+            } else {
+                FileError::IsDirectory
+            });
+        }
+        if directory {
+            // EFI Delete reports a generic warning for nonempty directories.
+            // Identify this domain error before consuming the handle.
+            let entries = self.read_directory(path)?;
+            if entries.iter().any(|(name, _)| name != "." && name != "..") {
+                return Err(FileError::NotEmpty);
+            }
+        }
+        handle.delete().map_err(|failure| error(failure.status()))
+    }
+
     fn open_handle(
         &self,
         path: &str,
@@ -46,6 +76,23 @@ impl FirmwareFileSystem {
 }
 
 impl FileSystem for FirmwareFileSystem {
+    fn unlink(&self, path: &str) -> Result<(), FileError> {
+        self.delete(path, false)
+    }
+    fn remove_directory(&self, path: &str) -> Result<(), FileError> {
+        self.delete(path, true)
+    }
+    fn capacity(&self) -> Result<Capacity, FileError> {
+        let mut handle = self.open_handle("", FileMode::Read)?;
+        let info = handle
+            .get_boxed_info::<FileSystemInfo>()
+            .map_err(|failure| error(failure.status()))?;
+        Ok(Capacity {
+            total: info.volume_size(),
+            available: info.free_space(),
+            block_size: info.block_size(),
+        })
+    }
     fn create_directory(&self, path: &str) -> Result<(), FileError> {
         // EFI create opens an existing entry. Check first to implement mkdir.
         match self.metadata(path) {
