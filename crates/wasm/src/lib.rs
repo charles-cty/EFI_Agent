@@ -231,6 +231,7 @@ impl World {
                 | "hexdump"
                 | "xargs"
                 | "find"
+                | "stat"
                 | "sed"
                 | "sleep"
                 | "yes"

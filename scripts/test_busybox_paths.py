@@ -105,6 +105,14 @@ def main() -> None:
             capture_output=True, timeout=60,
         )
         assert nul.returncode == 0 and nul.stdout == b"./binary.bin\0", nul
+        size = run(args.runner, workspace, "stat", "-c", "%s", "binary.bin")
+        assert size.returncode == 0 and size.stdout == "16\n", size
+        kind = run(args.runner, workspace, "stat", "-c", "%F", "binary.bin")
+        assert kind.returncode == 0 and kind.stdout == "regular file\n", kind
+        link_stat = run(args.runner, workspace, "stat", "-c", "%F", "link.bin")
+        assert link_stat.returncode == 0 and link_stat.stdout == "regular file\n", link_stat
+        missing_stat = run(args.runner, workspace, "stat", "missing.bin")
+        assert missing_stat.returncode != 0, missing_stat
         print("PASS realpath, od, base64, sha256sum, ln, hexdump and xargs cases")
 
 
