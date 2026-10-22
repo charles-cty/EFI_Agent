@@ -73,19 +73,6 @@ def main() -> None:
         assert hard.returncode == 0, hard
         missing_link = run(args.runner, workspace, "ln", "-s", "missing.bin", "dangling")
         assert missing_link.returncode == 0, missing_link
-        hexed = run(args.runner, workspace, "hexdump", "-C", "binary.bin")
-        assert hexed.returncode == 0, hexed
-        assert hexed.stdout == (
-            "00000000  00 01 02 03 04 05 06 07  08 09 0a 0b 0c 0d 0e 0f  |................|\n"
-            "00000010\n"
-        ), hexed
-        hex_stdin = subprocess.run(
-            [str(args.runner.resolve()), str(workspace.resolve()), "hexdump", "-C"],
-            input=b"AB", capture_output=True, text=True, timeout=60,
-        )
-        assert hex_stdin.returncode == 0 and "41 42" in hex_stdin.stdout, hex_stdin
-        invalid_hex = run(args.runner, workspace, "hexdump", "-Z", "binary.bin")
-        assert invalid_hex.returncode != 0, invalid_hex
         print("PASS realpath, od, base64, sha256sum and ln direct/ash/error cases")
 
 
