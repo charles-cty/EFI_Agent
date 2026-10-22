@@ -4521,15 +4521,3 @@ Corrections and resolved issues:
 - Existing nonfatal upstream time.c format-string offset warnings remain.
   Regex cut is byte-oriented and rejects embedded NUL explicitly; full
   timezone and the wider delivery gates remain pending.
-
-## 2026-10-22 upstream realpath
-
-BusyBox realpath now uses the upstream canonicalization implementation in the
-shared ash image. The generated WASI source adds the missing xreadlink helper
-declaration and rejects missing input paths before canonicalization, preserving
-the nonzero diagnostic required by the command contract. The host program
-registry exposes realpath as an ash applet. Windows WASI SDK 34 and Binaryen
-builds complete with only the existing upstream format warnings. The focused
-host runner regression passes direct execution, missing-path failure and ash
-child dispatch, with `/input.txt` as the canonical result. A focused WHPX run
-has not yet been performed for this applet.

@@ -5,7 +5,7 @@ expansion. Initial native/firmware interfaces do not establish full completion.
 
 The shared image currently uses upstream awk, sed, grep, chmod, cat, head,
 tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true
-and false, plus mkdir, rmdir, rm, touch, date, sort, uniq, cut, tr and realpath. Other
+and false, plus mkdir, rmdir, rm, touch, date, sort, uniq, cut and tr. Other
 utility applets still need upstream replacement or addition.
 Date currently supports UTC; other TZ values fail explicitly and timezone
 support remains pending.

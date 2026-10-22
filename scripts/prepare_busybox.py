@@ -27,7 +27,6 @@ ENABLED = {
     "DATE", "FEATURE_DATE_ISOFMT", "FEATURE_DATE_NANO",
     "SORT", "FEATURE_SORT_BIG", "UNIQ", "CUT", "FEATURE_CUT_REGEX",
     "TR", "FEATURE_TR_CLASSES", "FEATURE_TR_EQUIV",
-    "REALPATH",
 }
 
 
@@ -284,7 +283,7 @@ def main():
                  "dirname", "pwd", "env", "printenv", "seq", "yes", "true", "false",
                  "mkdir", "rmdir", "rm", "touch")),
              args.source / "coreutils/date.c", args.source / "libbb/compare_string_array.c",
-             *(args.source / f"coreutils/{name}.c" for name in ("sort", "uniq", "cut", "tr", "realpath")),
+             *(args.source / f"coreutils/{name}.c" for name in ("sort", "uniq", "cut", "tr")),
              *(args.source / f"libbb/{name}.c" for name in (
                  "copyfd", "duration", "make_directory", "remove_file", "time"))]
     names = set(ENABLED)
@@ -307,16 +306,6 @@ def main():
     prepare_streams(args.source, args.output)
     prepare_mutations(args.source, args.output)
     prepare_date(args.source, args.output)
-    for name in ("realpath",):
-        realpath = (args.source / f"coreutils/{name}.c").read_text(encoding="utf-8")
-        realpath = realpath.replace(
-            '\t\tchar *resolved_path = xmalloc_realpath_coreutils(*argv);',
-            '\t\tstruct stat metadata;\n\t\tif (stat(*argv, &metadata) < 0) {\n\t\t\tbb_simple_perror_msg(*argv);\n\t\t\tretval = EXIT_FAILURE;\n\t\t\tcontinue;\n\t\t}\n\t\tchar *resolved_path = xmalloc_realpath_coreutils(*argv);',
-        )
-        (args.output / f"{name}.c").write_text(realpath, encoding="utf-8")
-    xreadlink = (args.source / "libbb/xreadlink.c").read_text(encoding="utf-8")
-    xreadlink = '#ifndef KERNEL_VERSION\n#define KERNEL_VERSION(a, b, c) 0\n#endif\n' + xreadlink
-    (args.output / "xreadlink.c").write_text(xreadlink, encoding="utf-8")
     prepare_text_applets(args.source, args.output, replace_once)
     sleep = (args.source / "coreutils/sleep.c").read_text(encoding="utf-8")
     sleep = replace_once(sleep, '\t\t\tsleep(INT_MAX);', '''            if (sleep(INT_MAX) != 0)
