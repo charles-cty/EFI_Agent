@@ -38,9 +38,9 @@ status for verbose output failures, reject mkdir / or . without -p, and omit
 false removal success messages. Native integration passes 63 command cases
 and independently checks saved names, bytes and timestamps. The mount,
 PATH, remaining applet inventory and retained-session gates remain incomplete.
-Actual 512 MiB WHPX/Responses and TCG/Chat Completions pass the full current
+Actual 512 MiB WHPX/Responses pass the full current
 file/code-tool sequence and independent FAT checks in
-artifacts/mutation-applets-whpx and mutation-applets-tcg. All 85 WASM tests,
+artifacts/mutation-applets-whpx. All 85 WASM tests,
 Clippy, formatting, Release packaging and shared-image guest regressions pass.
 
 Upstream BusyBox basename/dirname/pwd/env/printenv/seq/yes/true/false now
@@ -59,8 +59,8 @@ regressions pass. Remaining command/mount/PATH/session gates are tracked in
 docs/environment-work.md.
 
 Firmware monotonic time and upstream BusyBox sleep now pass actual 512 MiB
-WHPX/Responses and TCG/Chat Completions checks in
-artifacts/monotonic-whpx-final-all and monotonic-tcg-final-all. Both use PI CPU
+WHPX/Responses checks in
+artifacts/monotonic-whpx-final-all. Both use PI CPU
 timer 0 and report nominal 1 ns resolution through /caps. Standard Python
 sleep, RTC comparison, ash timed reads, tail follow/EPIPE, sleeping-tree
 cancellation and independent saved FAT bytes pass. Relative realtime waits
@@ -79,9 +79,9 @@ instead of rejecting data above 512 KiB. All iovecs are validated first;
 private control messages retain their atomic size bound. Windows-native
 stream integration passes 112 cases plus independent saved tee bytes.
 Shared-image awk/sed/grep, permission, Python and descriptor checks pass.
-Actual 512 MiB WHPX/Responses and TCG/Chat Completions verify standard Python
+Actual 512 MiB WHPX/Responses verify standard Python
 subprocess stream capture, pipelines, errors and independent saved FAT bytes
-in artifacts/streams-whpx-final and streams-tcg-final. All 82 WASM tests,
+in artifacts/streams-whpx-final. All 82 WASM tests,
 Clippy, formatting and Windows Release EFI/launcher packaging pass.
 The broader command, mount, PATH and session requirements remain incomplete.
 
@@ -115,8 +115,8 @@ lifetime, symbolic/recursive chmod, sed backup modes, umask/cwd inheritance,
 persisted metadata and process restart. The C wrapper fixture distinguishes
 AT_FDCWD from explicit root fd 3. Runtime creation-mode scopes preserve modes
 through dangling links and are restored after errors. Final 512 MiB QEMU/OVMF
-checks pass WHPX/Responses and TCG/Chat Completions with independent saved FAT
-mode/byte checks in artifacts/permissions-whpx-final and permissions-tcg-final.
+checks pass WHPX/Responses with independent saved FAT
+mode/byte checks in artifacts/permissions-whpx-final.
 All 15 CPython integration cases pass,
 including bytecode cache creation/reuse and -B. Current directory state is still
 path based; rename/unlink tracking and explicit subprocess cwd/umask remain
@@ -444,8 +444,7 @@ size, and compile on first spawn. Program lookup includes discovered modules.
 QuickJS has a qjs alias that shares its compiled module. Existing installations
 remain stable when their source files change. A persistent installation manifest,
 filesystem PATH and /bin entries still need implementation.
-The initial filesystem/tool sequence passes actual 512 MiB TCG/Responses and
-WHPX/Chat Completions, including saved FAT byte checks. The 256 MiB sequence
+The initial filesystem/tool sequence passes actual 512 MiB WHPX/Responses, including saved FAT byte checks. The 256 MiB sequence
 writes 8 MiB but fails later at Python-to-Python spawn; that memory boundary
 is unresolved. Allocation failures now map to ENOMEM rather than ENOEXEC,
 with a deterministic guest memory-quota check.

@@ -4459,14 +4459,13 @@ short-circuit oracles pass in `artifacts/date-applet-math.log`.
 The preceding Rust checks remain applicable because this batch changes guest
 C and Python verification code only.
 
-Actual 512 MiB WHPX/Responses and TCG/Chat Completions pass the complete
+Actual 512 MiB WHPX/Responses pass the complete
 current file/code-tool sequence with the date fixture combined into the
-mutation tool call, keeping the request below its twelve-round limit. Both
-independently verify saved date-reference bytes and nanosecond times from FAT,
+mutation tool call, keeping the request below its twelve-round limit. The run
+independently verifies saved date-reference bytes and nanosecond times from FAT,
 alongside existing mutation/permission, 8 MiB write, stream, monotonic wait,
 HTTPS/DNS, cancellation and background-root checks. Evidence:
-`artifacts/date-applet-whpx.log`, `artifacts/date-applet-whpx`,
-`artifacts/date-applet-tcg.log`, `artifacts/date-applet-tcg`.
+`artifacts/date-applet-whpx.log`, `artifacts/date-applet-whpx`.
 Full timezone, remaining commands, mounts, PATH, persistent sessions, the
 full network/application regression and the 256 MiB gate remain incomplete.
 
