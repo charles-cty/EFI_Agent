@@ -3949,9 +3949,9 @@ The WASM world resolves the BusyBox applet names `cat`, `cp`, `date`, `env`,
 `grep`, `head`, `ls`, `mkdir`, `mv`, `rm`, `sed`, `sleep`, `yes`, and `awk` to
 the registered `ash.wasm` image. The guest keeps the requested name in
 `argv[0]`, so the multicall entry point selects the applet. Native Release
-`run_guest` checks for `ls`, `cat`, and `ash -c 'ls'`; the Windows WASI SDK 34
-BusyBox build completes successfully. The remaining applets have only build
-coverage until a dedicated firmware regression is run.
+`run_guest` checks the applets through real ash, including `ls`, `cat`, `cp`,
+`mv`, `rm`, `mkdir -p`, `head`, `grep`, `sed`, `awk`, `date`, `sleep`, and
+`env`; the Windows WASI SDK 34 BusyBox build completes successfully.
 
 The WASI preopen also exposes virtual `bin`, `dev`, `proc`, and `tmp`
 directories. `/dev/null` discards writes, `/dev/zero` supplies zero bytes, and
