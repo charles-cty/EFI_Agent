@@ -33,6 +33,7 @@ int baseNUM_main(int argc, char **argv);
 int md5_sha1_sum_main(int argc, char **argv);
 int realpath_main(int argc, char **argv);
 int stat_main(int argc, char **argv);
+int ls_main(int argc, char **argv);
 int mkdir_main(int argc, char **argv);
 int rmdir_main(int argc, char **argv);
 int rm_main(int argc, char **argv);
@@ -66,24 +67,6 @@ static int copy_stream(int input, int output, long limit)
                 return 0;
         }
     }
-}
-
-static int applet_ls(int argc, char **argv)
-{
-    const char *path = argc > 1 ? argv[argc - 1] : ".";
-    DIR *directory = opendir(path);
-    if (!directory) {
-        bb_simple_perror_msg(path);
-        return 1;
-    }
-    struct dirent *entry;
-    while ((entry = readdir(directory)) != NULL) {
-        if (entry->d_name[0] == '.' && entry->d_name[1] != '\0')
-            continue;
-        puts(entry->d_name);
-    }
-    closedir(directory);
-    return 0;
 }
 
 int grep_main(int argc, char **argv);
@@ -120,7 +103,7 @@ int efi_busybox_applet(int argc, char **argv)
     if (strcmp(name, "tail") == 0) return tail_main(argc, argv);
     if (strcmp(name, "wc") == 0) return wc_main(argc, argv);
     if (strcmp(name, "tee") == 0) return tee_main(argc, argv);
-    if (strcmp(name, "ls") == 0) return applet_ls(argc, argv);
+    if (strcmp(name, "ls") == 0) return ls_main(argc, argv);
     if (strcmp(name, "env") == 0) return env_main(argc, argv);
     if (strcmp(name, "yes") == 0) return yes_main(argc, argv);
     if (strcmp(name, "basename") == 0) return basename_main(argc, argv);

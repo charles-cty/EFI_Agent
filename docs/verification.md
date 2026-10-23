@@ -4722,6 +4722,24 @@ build also exposed missing port declarations for passwd/group lookup and
 symlink reading; those interfaces now match the namespace's fixed identity
 and upstream stat behavior.
 
+## 2026-10-23 upstream BusyBox ls applet
+
+BusyBox 1.37.0 `ls` now uses the upstream parser, sorting and directory
+formatting implementation in the shared image. Native ash integration passes
+ordinary and hidden entries, `-A`, `-F`, recursive traversal, long format,
+directory operands and missing-path errors, with independent saved workspace
+checks. The namespace does not currently support Python `os.symlink`, so link
+display and following remain unverified through this guest path.
+
+The Windows WASI build completed. WASM crate tests, Clippy with warnings
+denied, Rust formatting, Python syntax, whitespace checks and the focused ash
+integration pass. WHPX packaging and Responses/Chat Completions flows remain
+pending: the available `pwsh.exe` runs under WSL (`$IsWindows` is false), so it
+cannot initialize the Windows MSVC toolchain or use a Windows-local working
+directory. Initial attempts also exposed a nonexistent source-file reference
+and broad BusyBox helper dependencies; the guest now supplies only the needed
+`warn_opendir` wrapper.
+
 WSL Git status recursively inspected the dirty submodule and stalled on Windows
 filesystem I/O. The queries were stopped; bounded top-level checks with
 submodule inspection disabled completed. Initial PowerShell quoting errors

@@ -22,6 +22,7 @@ from textwrap import dedent
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from wasm_time_fixture import TIME_CHECK
 from wasm_basic_applets_fixture import BASIC_APPLETS_CHECK
+from wasm_ls_fixture import LS_CHECK
 from wasm_mutation_applets_fixture import MUTATION_APPLETS_CHECK
 from test_busybox_mutations import verify_mutation_applets
 from wasm_date_fixture import DATE_CHECK
@@ -283,6 +284,7 @@ def main():
     parser.add_argument("--sha256-applet", action="store_true", help="Run upstream basic and SHA-256 applet WHPX checks")
     parser.add_argument("--realpath-applet", action="store_true", help="Run upstream basic and realpath applet WHPX checks")
     parser.add_argument("--stat-applet", action="store_true", help="Run upstream basic and stat applet WHPX checks")
+    parser.add_argument("--ls-applet", action="store_true", help="Run upstream basic and ls applet WHPX checks")
     args = parser.parse_args()
     if args.code_cancel_only and not args.code_workspace:
         parser.error("--code-cancel-only requires --code-workspace")
@@ -439,17 +441,19 @@ def main():
         Provider.code_expected.append('UPSTREAM_BASIC_APPLETS_OK')
         Provider.code_steps.append(('python', {'code': MUTATION_APPLETS_CHECK + DATE_CHECK}))
         Provider.code_expected.append('UPSTREAM_DATE_OK')
-    applet_modes = sum((args.text_applets, args.base64_applet, args.sha256_applet, args.realpath_applet, args.stat_applet))
+    applet_modes = sum((args.text_applets, args.base64_applet, args.sha256_applet, args.realpath_applet, args.stat_applet, args.ls_applet))
     if applet_modes:
         if not args.code_workspace or args.filesystem_tools or args.code_cancel_only:
             parser.error("Applet checks require --code-workspace and exclude other code modes")
         if applet_modes != 1:
             parser.error("Select one applet check mode")
-        fixture = (STAT_CHECK if args.stat_applet else
+        fixture = (LS_CHECK if args.ls_applet else
+                   STAT_CHECK if args.stat_applet else
                    REALPATH_CHECK if args.realpath_applet else
                    SHA256_CHECK if args.sha256_applet else
                    BASE64_CHECK if args.base64_applet else TEXT_APPLETS_CHECK)
-        marker = ('UPSTREAM_STAT_OK' if args.stat_applet else
+        marker = ('UPSTREAM_LS_OK' if args.ls_applet else
+                  'UPSTREAM_STAT_OK' if args.stat_applet else
                   'UPSTREAM_REALPATH_OK' if args.realpath_applet else
                   'UPSTREAM_SHA256_OK' if args.sha256_applet else
                   'UPSTREAM_BASE64_OK' if args.base64_applet else 'UPSTREAM_TEXT_APPLETS_OK')
@@ -579,6 +583,9 @@ def main():
                     )
                     hexdump_octal = workspace.read('hexdump-octal-result')
                     assert hexdump_octal == b'0000000 101 000 377 102' + b' ' * 48 + b'\n0000004\n'
+                    if args.ls_applet:
+                        assert workspace.read('ls-result') == b'alpha\nsub\n'
+                        assert workspace.read('ls-tree/.hidden') == b'h'
                     if args.stat_applet:
                         verify_stat(workspace)
                     elif args.realpath_applet:

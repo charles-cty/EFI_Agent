@@ -16,6 +16,15 @@
 #define exit_SUCCESS() exit(EXIT_SUCCESS)
 #define MAXINT(T) (T)(((T)-1) > 0 ? (T)-1 : (T)~((T)1 << (sizeof(T)*8-1)))
 #define MIN(left, right) ((left) < (right) ? (left) : (right))
+typedef uint64_t uoff_t;
+#define OFF_FMT "ll"
+#define HUMAN_READABLE_MAX_WIDTH_STR "7"
+const char *make_human_readable_str(unsigned long long size,
+    unsigned long block_size, unsigned long display_unit);
+char *auto_string(char *text);
+const char *printable_string2(uni_stat_t *stats, const char *text);
+const char *get_cached_username(uid_t uid);
+const char *get_cached_groupname(gid_t gid);
 enum {	/* cp.c, mv.c, install.c depend on these values. CAREFUL when changing them! */
 	FILEUTILS_PRESERVE_STATUS = 1 << 0, /* -p */
 	FILEUTILS_DEREFERENCE     = 1 << 1, /* !-d */

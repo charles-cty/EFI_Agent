@@ -5,6 +5,15 @@
 char bb_common_bufsiz1[COMMON_BUFSIZE] __attribute__((aligned(16)));
 const char bb_msg_standard_input[] = "standard input";
 
+DIR *warn_opendir(const char *path)
+{
+    DIR *directory = opendir(path);
+    if (!directory)
+        bb_perror_msg("can't open '%s'", path);
+    return directory;
+}
+
+
 void setup_common_bufsiz(void)
 {
     memset(bb_common_bufsiz1, 0, sizeof(bb_common_bufsiz1));

@@ -29,6 +29,10 @@ ENABLED = {
     "TR", "FEATURE_TR_CLASSES", "FEATURE_TR_EQUIV",
     "OD", "HEXDUMP", "BASE64", "SHA256SUM", "FEATURE_MD5_SHA1_SUM_CHECK", "REALPATH",
     "STAT", "FEATURE_STAT_FORMAT",
+    "LS", "FEATURE_LS_FILETYPES", "FEATURE_LS_FOLLOWLINKS",
+    "FEATURE_LS_RECURSIVE", "FEATURE_LS_SORTFILES", "FEATURE_LS_TIMESTAMPS",
+    "FEATURE_LS_USERNAME", "FEATURE_HUMAN_READABLE",
+    "UNICODE_SUPPORT", "UNICODE_COMBINING_WCHARS", "UNICODE_WIDE_WCHARS",
 }
 
 
@@ -352,6 +356,8 @@ def main():
              args.source / "coreutils/md5_sha1_sum.c", args.source / "libbb/hash_md5_sha.c",
              args.source / "coreutils/realpath.c",
              args.source / "coreutils/stat.c",
+             args.source / "coreutils/ls.c", args.source / "libbb/unicode.c",
+             args.source / "libbb/printable_string.c",
              args.source / "coreutils/date.c", args.source / "libbb/compare_string_array.c",
              *(args.source / f"coreutils/{name}.c" for name in ("sort", "uniq", "cut", "tr")),
              *(args.source / f"libbb/{name}.c" for name in (
@@ -372,6 +378,8 @@ def main():
     lines.extend(["#define HAVE_DEV_FD 0", "#define CONFIG_FEATURE_EDITING_MAX_LEN 1024",
                   "#define CONFIG_SHA3_SMALL 0", "#define CONFIG_MD5_SMALL 0",
                   "#define CONFIG_SHA1_SMALL 0",
+                  "#define CONFIG_LAST_SUPPORTED_WCHAR 0x2ffff",
+                  "#define CONFIG_SUBST_WCHAR 63",
                   "#define CONFIG_FEATURE_COPYBUF_KB 4", "#endif", ""])
     (args.output / "ash_config.h").write_text("\n".join(lines), encoding="utf-8")
     (args.output / "NUM_APPLETS.h").write_text("#define NUM_APPLETS 1\n", encoding="utf-8")
@@ -395,6 +403,10 @@ def main():
     }
     return (ok ? EXIT_SUCCESS : EXIT_FAILURE);''')
     (args.output / "stat.c").write_text(stat, encoding="utf-8")
+    ls = (args.source / "coreutils/ls.c").read_text(encoding="utf-8")
+    ls = replace_once(ls, '#include "common_bufsiz.h"',
+                      '#include "common_bufsiz.h"\n#define HAVE_STRVERSCMP 1')
+    (args.output / "ls.c").write_text(ls, encoding="utf-8")
     hexdump = (args.source / "util-linux/hexdump.c").read_text(encoding="utf-8")
     hexdump = replace_once(hexdump, '#include "libbb.h"', '''#include "libbb.h"
 #define OFF_T_MAX ((off_t)~((off_t)1 << (sizeof(off_t) * 8 - 1)))

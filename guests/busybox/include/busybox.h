@@ -28,6 +28,13 @@
 #include <time.h>
 #include <unistd.h>
 
+typedef struct uni_stat_t {
+    unsigned byte_count;
+    unsigned unicode_count;
+    unsigned unicode_width;
+} uni_stat_t;
+DIR *warn_opendir(const char *path);
+
 #define FAST_FUNC
 #define MAIN_EXTERNALLY_VISIBLE
 #define UNUSED_PARAM __attribute__((unused))

@@ -1,4 +1,5 @@
 #include "busybox.h"
+#include "utility_support.h"
 #include "shell_common.h"
 #include <sys/times.h>
 
@@ -324,6 +325,18 @@ struct group *getgrgid(gid_t gid)
         return &guest_group;
     errno = ENOENT;
     return NULL;
+}
+
+const char *get_cached_username(uid_t uid)
+{
+    struct passwd *user = getpwuid(uid);
+    return user ? user->pw_name : auto_string(xasprintf("%u", (unsigned)uid));
+}
+
+const char *get_cached_groupname(gid_t gid)
+{
+    struct group *group = getgrgid(gid);
+    return group ? group->gr_name : auto_string(xasprintf("%u", (unsigned)gid));
 }
 
 /* Interfaces which need later platform work report failure explicitly. */

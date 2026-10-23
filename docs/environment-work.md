@@ -3,7 +3,7 @@
 Status: in progress. The checks below define completion of the environment
 expansion. Initial native/firmware interfaces do not establish full completion.
 
-The shared image currently uses upstream awk, sed, grep, chmod, cat, head,
+The shared image currently uses upstream ls, awk, sed, grep, chmod, cat, head,
 tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true,
 false, od, hexdump, base64, sha256sum and realpath, plus mkdir, rmdir, rm,
 touch, date, sort, uniq, cut and tr. Other
