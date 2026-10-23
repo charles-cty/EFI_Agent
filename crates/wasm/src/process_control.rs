@@ -1,6 +1,12 @@
 //! Internal process operations for unmodified WASI interpreters over an open descriptor.
-use crate::{Execution, Pid, Status, World, filesystem::FileError, io::Descriptor};
-use alloc::{collections::BTreeSet, format, rc::Rc, string::String, vec::Vec};
+use crate::{Execution, Pid, SpawnSettings, Status, World, filesystem::FileError, io::Descriptor};
+use alloc::{
+    collections::BTreeSet,
+    format,
+    rc::Rc,
+    string::{String, ToString},
+    vec::Vec,
+};
 use core::cell::RefCell;
 
 fn word(bytes: &[u8], index: usize) -> Result<u32, i32> {
@@ -67,7 +73,7 @@ impl World {
         }
         let mut waiting = None;
         let result = (|| {
-            if bytes.len() > 66_580 {
+            if bytes.len() > 70_672 {
                 return Err(-22);
             }
             let operation = word(bytes, 0)?;
@@ -77,7 +83,7 @@ impl World {
                 4 | 13 | 15 | 18 | 19 => 8,
                 14 => 12,
                 20 | 21 => bytes.len(),
-                8 | 9 | 11 | 12 | 17 => bytes.len(),
+                8 | 9 | 11 | 12 | 17 | 22 | 23 => bytes.len(),
                 _ => return Err(-22),
             };
             if bytes.len() != expected {
@@ -214,7 +220,114 @@ impl World {
                     let args = strings(&bytes[start..start + args_size])?;
                     let env = strings(&bytes[start + args_size..])?;
                     let child = self
-                        .spawn_child(pid, args, Some(env), Vec::new(), Some(mapping))
+                        .spawn_child(
+                            pid,
+                            args,
+                            Some(env),
+                            Vec::new(),
+                            Some(mapping),
+                            SpawnSettings::default(),
+                        )
+                        .map_err(|error| error.spawn_errno())?;
+                    Ok((child as i32, 0))
+                }
+                22 | 23 => {
+                    let has_umask = operation == 23;
+                    let args_size = word(bytes, 1)? as usize;
+                    let env_size = word(bytes, 2)? as usize;
+                    let maps = word(bytes, 3)? as usize;
+                    let cwd_size = word(bytes, 4)? as usize;
+                    let umask = if has_umask {
+                        let value = word(bytes, 5)?;
+                        if value == u32::MAX {
+                            None
+                        } else if value & !0o777 == 0 {
+                            Some(value as u16)
+                        } else {
+                            return Err(-22);
+                        }
+                    } else {
+                        None
+                    };
+                    if args_size > 65536 || env_size > 65536 - args_size || cwd_size == 0 {
+                        return Err(-7);
+                    }
+                    if cwd_size > 4096 {
+                        return Err(-36);
+                    }
+                    let header_size = if has_umask { 24 } else { 20 };
+                    if maps > 127
+                        || header_size + maps * 8 + args_size + env_size + cwd_size != bytes.len()
+                    {
+                        return Err(-22);
+                    }
+                    let mut mapping = Vec::new();
+                    let mut targets = BTreeSet::new();
+                    for index in 0..maps {
+                        let map_start = if has_umask { 6 } else { 5 };
+                        let target = word(bytes, map_start + index * 2)?;
+                        let source = word(bytes, map_start + index * 2 + 1)?;
+                        if target == 3
+                            || target >= crate::MAX_DESCRIPTORS
+                            || !targets.insert(target)
+                        {
+                            return Err(-9);
+                        }
+                        if matches!(
+                            self.processes[&pid]
+                                .execution()
+                                .store
+                                .data()
+                                .descriptors
+                                .get(&source),
+                            Some(Descriptor::Control(_))
+                        ) {
+                            return Err(-9);
+                        }
+                        mapping.push((target, source));
+                    }
+                    let start = header_size + maps * 8;
+                    let args = strings(&bytes[start..start + args_size])?;
+                    let env = strings(&bytes[start + args_size..start + args_size + env_size])?;
+                    let cwd_bytes = &bytes[start + args_size + env_size..];
+                    let cwd = core::str::from_utf8(cwd_bytes)
+                        .map_err(|_| -22)?
+                        .to_string();
+                    if !cwd.starts_with('/') || cwd.contains('\0') {
+                        return Err(-22);
+                    }
+                    let filesystem = self.filesystem.as_ref().ok_or(-2)?;
+                    let resolved = filesystem
+                        .resolve_path(
+                            "",
+                            if cwd == "/" {
+                                "."
+                            } else {
+                                cwd.trim_start_matches('/')
+                            },
+                        )
+                        .map_err(|error| -FileError::errno(error))?;
+                    let metadata = filesystem
+                        .metadata(&resolved)
+                        .map_err(|error| -FileError::errno(error))?;
+                    if !metadata.is_directory() {
+                        return Err(-54);
+                    }
+                    if metadata.mode & 0o100 == 0 {
+                        return Err(-2);
+                    }
+                    let child = self
+                        .spawn_child(
+                            pid,
+                            args,
+                            Some(env),
+                            Vec::new(),
+                            Some(mapping),
+                            SpawnSettings {
+                                cwd: Some(cwd),
+                                umask,
+                            },
+                        )
                         .map_err(|error| error.spawn_errno())?;
                     Ok((child as i32, 0))
                 }

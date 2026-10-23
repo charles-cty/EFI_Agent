@@ -15,6 +15,11 @@ Python's standard `os.remove`, `os.unlink` and `os.rmdir` now use the same
 namespace mutation providers as WASI and BusyBox. File and directory deletion
 therefore persists through the workspace namespace; focused WHPX application
 coverage remains pending.
+The private subprocess adapter also passes cwd and per-child umask through the
+process ABI. Native Release integration verifies parent cwd/umask inheritance,
+relative and absolute child cwd, missing-cwd errors and explicit child umask.
+The full CPython suite passes 17 cases; Windows WHPX verification remains
+pending.
 
 ## Required commands
 

@@ -19,7 +19,9 @@ def _request(operation, *words, payload=b''):
     if result < 0:
         errors = {2: errno.ENOENT, 7: errno.E2BIG, 8: errno.ENOEXEC,
                   9: errno.EBADF, 10: errno.ECHILD, 11: errno.EAGAIN,
-                  12: errno.ENOMEM, 14: errno.EFAULT, 22: errno.EINVAL, 24: errno.EMFILE}
+                  12: errno.ENOMEM, 14: errno.EFAULT, 22: errno.EINVAL, 24: errno.EMFILE,
+                  36: errno.ENAMETOOLONG, 44: errno.ENOENT,
+                  54: errno.ENOTDIR, 58: errno.ELOOP}
         error = errors[-result]
         raise OSError(error, os.strerror(error))
     return result, value
@@ -92,10 +94,19 @@ def _fork_exec(args, executables, close_fds, keep, cwd, env,
                p2cread, p2cwrite, c2pread, c2pwrite, errread, errwrite,
                errpipe_read, errpipe_write, restore_signals, start_new_session,
                process_group, gid, gids, uid, umask, preexec_fn):
-    if (cwd is not None or start_new_session or process_group != -1 or
-            gid is not None or gids is not None or uid is not None or
-            umask != -1 or preexec_fn is not None):
-        _unsupported()
+    unsupported = {
+        'start_new_session': start_new_session,
+        'process_group': process_group != -1,
+        'gid': gid is not None,
+        'gids': gids is not None,
+        'uid': uid is not None,
+        'preexec_fn': preexec_fn is not None,
+    }
+    rejected = [name for name, active in unsupported.items() if active]
+    if rejected:
+        raise OSError(errno.ENOTSUP, 'Unsupported process options: ' + ', '.join(rejected))
+    if umask < -1:
+        raise ValueError('umask must be -1 or a non-negative mode')
     argv = list(args)
     if not argv:
         raise ValueError('args must name an executable')
@@ -136,8 +147,21 @@ def _fork_exec(args, executables, close_fds, keep, cwd, env,
             raise
         if explicit or inheritable and (target < 3 or not close_fds):
             mappings.extend((target, source))
-    return _request(9, len(arguments), len(environment), len(mappings) // 2,
-                    payload=struct.pack('<' + 'I' * len(mappings), *mappings) + arguments + environment)[0]
+    if cwd is None and umask < 0:
+        return _request(9, len(arguments), len(environment), len(mappings) // 2,
+                        payload=struct.pack('<' + 'I' * len(mappings), *mappings) +
+                        arguments + environment)[0]
+    if cwd is None:
+        cwd = os.getcwd()
+    cwd = os.fsencode(os.path.normpath(os.path.join(os.getcwd(), os.fsdecode(cwd))))
+    if b'\0' in cwd:
+        raise ValueError('embedded null byte')
+    payload = struct.pack('<' + 'I' * len(mappings), *mappings) + arguments + environment + cwd
+    if umask >= 0:
+        return _request(23, len(arguments), len(environment), len(mappings) // 2,
+                        len(cwd), umask, payload=payload)[0]
+    return _request(22, len(arguments), len(environment), len(mappings) // 2,
+                    len(cwd), payload=payload)[0]
 
 
 def _system(command):

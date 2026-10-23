@@ -201,6 +201,45 @@ print('POPEN_DESCRIPTORS_OK')
         self.assertEqual(result.stdout, b"POPEN_DESCRIPTORS_OK\n")
         self.assertEqual(DirectoryWorkspace(self.tree).read("passed.txt"), b"mapped")
 
+    def test_subprocess_cwd_uses_shared_namespace(self):
+        result = self.execute(r"""
+import os, subprocess
+os.makedirs('cwd-parent/child')
+os.chdir('cwd-parent')
+assert os.getcwd() == '/cwd-parent'
+inherited = subprocess.check_output(
+    ['python', '-c', 'import os; print(os.getcwd())'], text=True)
+assert inherited == '/cwd-parent\n', inherited
+result = subprocess.run(
+    ['python', '-c', "import os; open('marker','w').write(os.getcwd())"],
+    cwd='child', capture_output=True, text=True, check=True)
+assert result.stdout == '', result.stdout
+assert open('child/marker').read() == '/cwd-parent/child'
+assert os.path.isfile('child/marker')
+pathlike = subprocess.check_output(
+    [b'python', b'-c', b'import os; print(os.getcwd())'], cwd=b'child')
+assert pathlike == b'/cwd-parent/child\n', pathlike
+print('SUBPROCESS_CWD_OK')
+""")
+        self.assertEqual(result.stdout, b"SUBPROCESS_CWD_OK\n")
+        workspace = DirectoryWorkspace(self.tree)
+        self.assertEqual(workspace.read("cwd-parent/child/marker"), b"/cwd-parent/child")
+
+    def test_subprocess_umask_is_inherited_or_overridden(self):
+        result = self.execute(r"""
+import os, subprocess
+os.umask(0o027)
+inherited = subprocess.check_output(['python', '-c',
+    'import os; print(oct(os.umask(0)))'], text=True)
+assert inherited == '0o27\n', inherited
+explicit = subprocess.check_output(['python', '-c',
+    'import os; print(oct(os.umask(0)))'], umask=0o077, text=True)
+assert explicit == '0o77\n', explicit
+assert os.umask(0) == 0o027
+print('SUBPROCESS_UMASK_OK')
+""")
+        self.assertEqual(result.stdout, b"SUBPROCESS_UMASK_OK\n")
+
     def test_errors_are_reported_before_effects(self):
         result = self.execute(r"""
 import subprocess, errno, os
@@ -219,9 +258,10 @@ for options in [{'cwd': 'missing'}, {'preexec_fn': lambda: None}, {'start_new_se
         else:
             subprocess.run('printf wrong>unexpected.txt', shell=True, **options)
     except OSError as error:
-        assert error.errno == errno.ENOTSUP
+        expected = errno.ENOENT if options.get('cwd') == 'missing' else errno.ENOTSUP
+        assert error.errno == expected, error
     else:
-        raise AssertionError('Unsupported process option was accepted')
+        raise AssertionError('Unsupported process option was accepted: ' + repr(options))
 assert not os.path.exists('unexpected.txt')
 for function in (subprocess.call, subprocess.check_call, subprocess.check_output):
     try:

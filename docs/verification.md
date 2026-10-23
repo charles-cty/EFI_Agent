@@ -4159,6 +4159,26 @@ the built-in DirEntry. Virtual mount completeness, other upstream applets,
 filesystem PATH and persistent sessions remain pending. These permission
 checks do not establish complete environment delivery.
 
+## 2026-10-23 Python subprocess cwd and umask
+
+The private CPython process adapter now sends relative/absolute `cwd` and an
+optional child `umask` through process-control operations. Relative cwd is
+resolved against the parent Python cwd. A child inherits the parent umask when
+the option is omitted; an explicit umask applies to the child only. The parent
+retains its original cwd and umask. Missing cwd reports `ENOENT` before a
+child starts. Process-control spawn failures and filesystem failures use the
+negative errno response convention expected by Python; the WASI `NOENT`,
+`NOTDIR` and `LOOP` values map to their Python errno constants.
+
+All 17 CPython integration tests pass on the native Release `run_guest`,
+including relative and absolute cwd, cwd inheritance, absent cwd, umask
+inheritance/override, normal imports, finite stdin, descriptor mapping and
+large duplex pipes. `cargo test -p efi-agent-wasm --test process_control`
+passes all seven cases, and `cargo fmt --all` passes. This change has not been
+verified through Windows WHPX. The existing workspace ash WASM predates the
+current BusyBox source, so these tests verify cwd with the prebuilt Python
+module and do not establish firmware ash cwd behavior.
+
 ## 2026-10-22 upstream stream applets and output backpressure
 
 The shared BusyBox image now builds upstream 1.37.0 cat, head, tail, wc and

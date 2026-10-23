@@ -119,10 +119,13 @@ checks pass WHPX/Responses with independent saved FAT
 mode/byte checks in artifacts/permissions-whpx-final.
 All 15 CPython integration cases pass,
 including bytecode cache creation/reuse and -B. Current directory state is still
-path based; rename/unlink tracking and explicit subprocess cwd/umask remain
-pending. Scandir entries are private proxies with the standard methods, rather
-than instances of the built-in DirEntry type. The full mount/session/command
-delivery remains incomplete.
+path based; rename/unlink tracking remains pending. Python subprocess now passes
+cwd and umask through its private process adapter; the native Release runner
+passes all 17 CPython integration tests, including relative/absolute cwd,
+missing cwd errors, umask inheritance and per-child overrides. This change has
+not been verified through Windows WHPX. Scandir entries are private proxies
+with the standard methods, rather than instances of the built-in DirEntry type.
+The full mount/session/command delivery remains incomplete.
 
 The common no_std efi-agent-filesystem crate now owns provider interfaces and
 a persistent inode namespace. Two checksummed metadata generations preserve

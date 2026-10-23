@@ -16,6 +16,7 @@ pub use io::{MAX_DESCRIPTORS, PIPE_CAPACITY};
 
 use alloc::{
     collections::{BTreeMap, BTreeSet, VecDeque},
+    format,
     rc::Rc,
     string::{String, ToString},
     vec,
@@ -149,6 +150,12 @@ struct Context {
     network: Option<Rc<dyn network::Network>>,
     dns_server: Option<([u8; 4], u16)>,
     dns_query: Option<dns::Query>,
+}
+
+#[derive(Default)]
+pub(crate) struct SpawnSettings {
+    pub(crate) cwd: Option<String>,
+    pub(crate) umask: Option<u16>,
 }
 
 struct Process {
@@ -466,7 +473,14 @@ impl World {
         environment: Vec<String>,
         stdin: Vec<u8>,
     ) -> Result<Pid, Error> {
-        self.spawn_child(0, args, Some(environment), stdin, None)
+        self.spawn_child(
+            0,
+            args,
+            Some(environment),
+            stdin,
+            None,
+            SpawnSettings::default(),
+        )
     }
 
     fn spawn_child(
@@ -476,6 +490,7 @@ impl World {
         environment: Option<Vec<String>>,
         stdin: Vec<u8>,
         descriptor_map: Option<Vec<(u32, u32)>>,
+        settings: SpawnSettings,
     ) -> Result<Pid, Error> {
         let name = args.first().ok_or(Error::InvalidArguments)?;
         let environment = environment.unwrap_or_else(|| {
@@ -530,6 +545,17 @@ impl World {
                 context.stderr.clone(),
             )
         };
+        let cwd = settings.cwd.unwrap_or_else(|| {
+            if parent == 0 {
+                String::from("/")
+            } else {
+                self.processes[&parent].execution().store.data().cwd.clone()
+            }
+        });
+        if !cwd.starts_with('/') || cwd.contains('\0') {
+            return Err(Error::InvalidArguments);
+        }
+        let cwd = cwd.trim_matches('/').to_string();
         let mut descriptors = if parent == 0 {
             BTreeMap::from([
                 (0, io::Descriptor::Input(stdin.clone())),
@@ -592,16 +618,12 @@ impl World {
             descriptors,
             close_on_exec: BTreeSet::new(),
             creation_mode: None,
-            umask: if parent == 0 {
+            umask: settings.umask.unwrap_or(if parent == 0 {
                 0o022
             } else {
                 self.processes[&parent].execution().store.data().umask
-            },
-            cwd: if parent == 0 {
-                String::from("/")
-            } else {
-                self.processes[&parent].execution().store.data().cwd.clone()
-            },
+            }),
+            cwd: format!("/{cwd}"),
             clock: self.clock.clone(),
             random: self.random.clone(),
             network: self.network.clone(),
@@ -795,10 +817,19 @@ impl World {
                 args,
                 environment,
                 descriptors,
-            } => match self.spawn_child(pid, args, environment, Vec::new(), descriptors) {
-                Ok(child) => child as i32,
-                Err(error) => error.spawn_errno(),
-            },
+            } => {
+                match self.spawn_child(
+                    pid,
+                    args,
+                    environment,
+                    Vec::new(),
+                    descriptors,
+                    SpawnSettings::default(),
+                ) {
+                    Ok(child) => child as i32,
+                    Err(error) => error.spawn_errno(),
+                }
+            }
             abi::Action::Io(request) => {
                 let process = self.processes.get_mut(&pid).expect("Caller exists");
                 process.status = match &request {
