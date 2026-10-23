@@ -31,6 +31,10 @@ the combined current file/code-tool sequence and independent FAT checks in
 artifacts/date-applet-whpx and date-applet-tcg. Release packaging, mutation,
 basic/stream/awk/sed/grep and ash math/random regressions pass.
 
+Upstream BusyBox od and libbb dump support now build into the shared ash image.
+Native Release run_guest and actual 512 MiB WHPX/Responses checks pass binary
+octal/character output, missing-file status, and independent saved FAT bytes.
+
 BusyBox mkdir/rmdir/rm/touch now use upstream applets and shared make-directory,
 recursive-remove, confirmation and time helpers. Staged corrections report
 directory traversal errors and new-file timestamp errors, preserve nonzero

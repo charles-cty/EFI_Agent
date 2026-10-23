@@ -245,6 +245,7 @@ impl World {
                 | "seq"
                 | "true"
                 | "false"
+                | "od"
         )
     }
 

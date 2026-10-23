@@ -26,7 +26,10 @@ def main():
                                 capture_output=True, timeout=180)
         print(result.stdout.decode('utf-8', 'replace'), end='', flush=True)
         assert result.returncode == 0 and not result.stderr, result.stderr
-        assert DirectoryWorkspace(root).read('basic-applets-result') == b'UPSTREAM_BASIC_APPLETS_OK\n'
+        workspace = DirectoryWorkspace(root)
+        assert workspace.read('basic-applets-result') == b'UPSTREAM_BASIC_APPLETS_OK\n'
+        assert workspace.read('od-octal-result') == b'0000000 101 000 377 102\n0000004\n'
+        assert workspace.read('od-character-result') == b'0000000   A  \\0 377   B\n0000004\n'
         print('PASS independent saved basic applet result')
 
 

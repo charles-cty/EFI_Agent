@@ -270,7 +270,7 @@ def main():
     parser.add_argument("--code-timeout", type=float, default=480, help="Maximum seconds for the complete code-tool sequence under TCG")
     parser.add_argument("--code-cancel-only", action="store_true", help="Run only code cancellation/isolation checks; requires --code-workspace")
     parser.add_argument("--filesystem-tools", action="store_true", help="Verify nested file-tool writes, mkdir, large writes and finite Python stdin")
-    parser.add_argument("--text-applets", action="store_true", help="Run only the upstream sort/uniq/cut/tr WHPX check")
+    parser.add_argument("--text-applets", action="store_true", help="Run upstream basic and text applet WHPX checks")
     args = parser.parse_args()
     if args.code_cancel_only and not args.code_workspace:
         parser.error("--code-cancel-only requires --code-workspace")
@@ -430,8 +430,11 @@ def main():
     if args.text_applets:
         if not args.code_workspace or args.filesystem_tools or args.code_cancel_only:
             parser.error("--text-applets requires --code-workspace and excludes other code modes")
-        Provider.code_steps = [('python', {'code': TEXT_APPLETS_CHECK})]
-        Provider.code_expected = ['UPSTREAM_TEXT_APPLETS_OK']
+        Provider.code_steps = [
+            ('python', {'code': BASIC_APPLETS_CHECK}),
+            ('python', {'code': TEXT_APPLETS_CHECK}),
+        ]
+        Provider.code_expected = ['UPSTREAM_BASIC_APPLETS_OK', 'UPSTREAM_TEXT_APPLETS_OK']
         Provider.filesystem_tools = False
     for index, (name, arguments) in enumerate(Provider.code_steps, 1):
         if name == 'python':
@@ -543,8 +546,12 @@ def main():
                 assert qemu.returncode == 0
                 with image.open("rb") as disk:
                     fs = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
-                    verify_text_applets(FatWorkspace(fs))
-                print("PASS WHPX upstream text applets and saved FAT bytes", flush=True)
+                    workspace = FatWorkspace(fs)
+                    assert workspace.read('basic-applets-result') == b'UPSTREAM_BASIC_APPLETS_OK\n'
+                    assert workspace.read('od-octal-result') == b'0000000 101 000 377 102\n0000004\n'
+                    assert workspace.read('od-character-result') == b'0000000   A  \\0 377   B\n0000004\n'
+                    verify_text_applets(workspace)
+                print("PASS WHPX upstream basic/text applets and saved FAT bytes", flush=True)
                 return
             send("Stream text")
             if args.tls_failure:

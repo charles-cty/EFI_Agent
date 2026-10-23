@@ -27,6 +27,7 @@ ENABLED = {
     "DATE", "FEATURE_DATE_ISOFMT", "FEATURE_DATE_NANO",
     "SORT", "FEATURE_SORT_BIG", "UNIQ", "CUT", "FEATURE_CUT_REGEX",
     "TR", "FEATURE_TR_CLASSES", "FEATURE_TR_EQUIV",
+    "OD",
 }
 
 
@@ -265,6 +266,31 @@ def prepare_date(source: Path, output: Path):
     (output / "date.c").write_text(text, encoding="utf-8")
 
 
+def prepare_dump(source: Path, output: Path):
+    dump = (source / "libbb/dump.c").read_text(encoding="utf-8")
+    dump = replace_once(dump, '#include "libbb.h"', '''#include "libbb.h"
+#define move_from_unaligned16(value, pointer) memcpy(&(value), (pointer), 2)
+#define move_from_unaligned32(value, pointer) memcpy(&(value), (pointer), 4)
+#define move_from_unaligned64(value, pointer) memcpy(&(value), (pointer), 8)
+void FAST_FUNC xfstat(int fd, struct stat *stat_buf, const char *errmsg);
+char *FAST_FUNC strcpy_and_process_escape_sequences(char *dst, const char *src);''')
+    dump = replace_once(dump, '\t\t\t\tbb_simple_perror_msg(dumper->argv[-1]);', '''                bb_simple_perror_msg("read");
+                dumper->exitval = 1;''')
+    dump = replace_once(dump, '\treturn dumper->exitval;', '''    int output_error = fflush(stdout) != 0;
+    if (ferror(stdout) || output_error) {
+        bb_simple_perror_msg("standard output");
+        dumper->exitval = 1;
+    }
+    return dumper->exitval;''')
+    dump += '''\nvoid FAST_FUNC xfstat(int fd, struct stat *stat_buf, const char *errmsg)
+{
+    if (fstat(fd, stat_buf))
+        bb_simple_perror_msg_and_die(errmsg);
+}
+'''
+    (output / "dump.c").write_text(dump, encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
@@ -282,6 +308,7 @@ def main():
                  "cat", "head", "tail", "wc", "tee", "sleep", "basename",
                  "dirname", "pwd", "env", "printenv", "seq", "yes", "true", "false",
                  "mkdir", "rmdir", "rm", "touch")),
+             args.source / "coreutils/od.c", args.source / "libbb/dump.c",
              args.source / "coreutils/date.c", args.source / "libbb/compare_string_array.c",
              *(args.source / f"coreutils/{name}.c" for name in ("sort", "uniq", "cut", "tr")),
              *(args.source / f"libbb/{name}.c" for name in (
@@ -307,6 +334,7 @@ def main():
     prepare_mutations(args.source, args.output)
     prepare_date(args.source, args.output)
     prepare_text_applets(args.source, args.output, replace_once)
+    prepare_dump(args.source, args.output)
     sleep = (args.source / "coreutils/sleep.c").read_text(encoding="utf-8")
     sleep = replace_once(sleep, '\t\t\tsleep(INT_MAX);', '''            if (sleep(INT_MAX) != 0)
                 bb_simple_perror_msg_and_die("sleep");''')

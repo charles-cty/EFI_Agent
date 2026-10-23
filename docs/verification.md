@@ -4504,6 +4504,22 @@ HTTPS/DNS, cancellation and background-root checks. Evidence:
 Full timezone, remaining commands, mounts, PATH, persistent sessions, the
 full network/application regression and the 256 MiB gate remain incomplete.
 
+## 2026-10-23 upstream od applet
+
+The shared BusyBox ash image now includes upstream 1.37.0 `od` and its dump
+engine with `DESKTOP` disabled. It supports the upstream short-format options
+such as `-b`, `-c`, `-x` and `-v`; `-A` and `-t` are unavailable. Offset operands
+precede filenames. Native Release `run_guest` checks binary octal and character
+output for NUL and high bytes, default 16-bit output, offset input, concatenated
+files, duplicate suppression and `-v`. Independent byte oracles cover lengths
+0/1/15/16/17/31/32/33/257. Missing files, invalid options, directory reads and
+closed stdout return failure. The staged dump engine preserves read failure
+status and detects buffered stdout failures. The focused
+512 MiB Windows WHPX/Responses run passes both basic and text applet fixtures;
+it independently compares both saved od outputs from the FAT image.
+Evidence: `artifacts/od-native.log`, `artifacts/od-build.log`,
+`artifacts/od-whpx`.
+
 ## 2026-10-22 upstream sort, uniq, cut and tr
 
 The shared image now builds upstream BusyBox 1.37.0 sort, uniq, cut and tr,

@@ -16,6 +16,7 @@
 #define SKIP 2
 #define exit_SUCCESS() exit(EXIT_SUCCESS)
 #define MAXINT(T) (T)(((T)-1) > 0 ? (T)-1 : (T)~((T)1 << (sizeof(T)*8-1)))
+#define MIN(left, right) ((left) < (right) ? (left) : (right))
 enum {	/* cp.c, mv.c, install.c depend on these values. CAREFUL when changing them! */
 	FILEUTILS_PRESERVE_STATUS = 1 << 0, /* -p */
 	FILEUTILS_DEREFERENCE     = 1 << 1, /* !-d */
