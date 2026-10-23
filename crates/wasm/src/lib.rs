@@ -247,6 +247,7 @@ impl World {
                 | "false"
                 | "od"
                 | "hexdump"
+                | "base64"
         )
     }
 

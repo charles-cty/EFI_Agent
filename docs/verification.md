@@ -4533,6 +4533,36 @@ existing built Shell EFI. The firmware test received the OVMF CODE image after
 an incorrect EFI argument caused its first boot to reset the connection.
 Existing upstream string-pointer arithmetic warnings remain nonfatal.
 
+## 2026-10-23 upstream base64 applet
+
+The shared ash image now includes upstream BusyBox 1.37.0 base64 encoding and
+decoding. It uses BusyBox's shared `uuencode.c` implementation. Decoding follows
+upstream behavior and skips non-alphabet characters. The staged adapter checks
+source read errors in both modes and detects failed decode writes; encoding
+checks buffered output errors. Pipeline status remains the final ash stage's
+status when base64 reports EPIPE.
+
+Native Release integration passes 198 checks through real Python subprocesses
+and ash. It includes RFC 4648 vectors, Python `base64` byte oracles, wrap widths
+1/3/4/5/76/77/2147483647, binary records, malformed/truncated input, invalid
+arguments, missing files, directories, closed descriptors, and 65535/65536/
+65537 plus 524287/524288/524289 byte boundaries. File encoding/decoding,
+base64-to-head broken pipe, and a base64/decoder/tee pipeline have independent
+saved-byte checks. The final 512 MiB WHPX/Responses run passes basic and base64
+fixtures and verifies saved encoded/decoded bytes directly from FAT.
+The WASI guest build, Rust WASM tests, native integration, Python syntax,
+Windows Release EFI/launcher packaging and format/Clippy checks pass.
+Evidence: `artifacts/base64-build.log`, `artifacts/base64-native.log`,
+`artifacts/base64-package.log`, `artifacts/base64-whpx.log` and
+`artifacts/base64-whpx`.
+
+Resolved verification issues: the initial pipeline assertion expected the
+producer's status, but ash correctly returns the final `head` status while
+base64 reports its broken output. The assertion now verifies both status and
+diagnostic. PowerShell 7 with `-CommandWithArgs` and a Windows-local working
+directory was used for native tools. Earlier nonfatal BusyBox pointer-arithmetic
+warnings remain.
+
 ## 2026-10-23 upstream od applet
 
 The shared BusyBox ash image now includes upstream 1.37.0 `od` and its dump

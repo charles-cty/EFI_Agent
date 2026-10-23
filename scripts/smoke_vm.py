@@ -28,6 +28,8 @@ from wasm_date_fixture import DATE_CHECK
 from test_busybox_date import verify_date
 from wasm_text_applets_fixture import TEXT_APPLETS_CHECK
 from test_busybox_text import verify_text_applets
+from wasm_base64_fixture import BASE64_CHECK
+from test_busybox_base64 import verify_base64
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -271,6 +273,7 @@ def main():
     parser.add_argument("--code-cancel-only", action="store_true", help="Run only code cancellation/isolation checks; requires --code-workspace")
     parser.add_argument("--filesystem-tools", action="store_true", help="Verify nested file-tool writes, mkdir, large writes and finite Python stdin")
     parser.add_argument("--text-applets", action="store_true", help="Run upstream basic and text applet WHPX checks")
+    parser.add_argument("--base64-applet", action="store_true", help="Run upstream basic and base64 applet WHPX checks")
     args = parser.parse_args()
     if args.code_cancel_only and not args.code_workspace:
         parser.error("--code-cancel-only requires --code-workspace")
@@ -427,14 +430,18 @@ def main():
         Provider.code_expected.append('UPSTREAM_BASIC_APPLETS_OK')
         Provider.code_steps.append(('python', {'code': MUTATION_APPLETS_CHECK + DATE_CHECK}))
         Provider.code_expected.append('UPSTREAM_DATE_OK')
-    if args.text_applets:
+    if args.text_applets or args.base64_applet:
         if not args.code_workspace or args.filesystem_tools or args.code_cancel_only:
-            parser.error("--text-applets requires --code-workspace and excludes other code modes")
+            parser.error("Applet checks require --code-workspace and exclude other code modes")
+        if args.text_applets and args.base64_applet:
+            parser.error("Select one applet check mode")
+        fixture = BASE64_CHECK if args.base64_applet else TEXT_APPLETS_CHECK
+        marker = 'UPSTREAM_BASE64_OK' if args.base64_applet else 'UPSTREAM_TEXT_APPLETS_OK'
         Provider.code_steps = [
             ('python', {'code': BASIC_APPLETS_CHECK}),
-            ('python', {'code': TEXT_APPLETS_CHECK}),
+            ('python', {'code': fixture}),
         ]
-        Provider.code_expected = ['UPSTREAM_BASIC_APPLETS_OK', 'UPSTREAM_TEXT_APPLETS_OK']
+        Provider.code_expected = ['UPSTREAM_BASIC_APPLETS_OK', marker]
         Provider.filesystem_tools = False
     for index, (name, arguments) in enumerate(Provider.code_steps, 1):
         if name == 'python':
@@ -538,7 +545,7 @@ def main():
                 wait("Extra drivers started: 1")
                 send("/clear")
                 wait("Conversation cleared")
-            if args.text_applets:
+            if args.text_applets or args.base64_applet:
                 send("Exercise code tools")
                 wait("CODE_TOOLS_VERIFIED", args.code_timeout)
                 send("/exit")
@@ -556,8 +563,11 @@ def main():
                     )
                     hexdump_octal = workspace.read('hexdump-octal-result')
                     assert hexdump_octal == b'0000000 101 000 377 102' + b' ' * 48 + b'\n0000004\n'
-                    verify_text_applets(workspace)
-                print("PASS WHPX upstream basic/text applets and saved FAT bytes", flush=True)
+                    if args.base64_applet:
+                        verify_base64(workspace)
+                    else:
+                        verify_text_applets(workspace)
+                print("PASS WHPX upstream applets and saved FAT bytes", flush=True)
                 return
             send("Stream text")
             if args.tls_failure:

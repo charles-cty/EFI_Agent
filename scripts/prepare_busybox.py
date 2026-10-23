@@ -27,7 +27,7 @@ ENABLED = {
     "DATE", "FEATURE_DATE_ISOFMT", "FEATURE_DATE_NANO",
     "SORT", "FEATURE_SORT_BIG", "UNIQ", "CUT", "FEATURE_CUT_REGEX",
     "TR", "FEATURE_TR_CLASSES", "FEATURE_TR_EQUIV",
-    "OD", "HEXDUMP",
+    "OD", "HEXDUMP", "BASE64",
 }
 
 
@@ -291,6 +291,25 @@ char *FAST_FUNC strcpy_and_process_escape_sequences(char *dst, const char *src);
     (output / "dump.c").write_text(dump, encoding="utf-8")
 
 
+def prepare_base64(source: Path, output: Path):
+    text = (source / "coreutils/uudecode.c").read_text(encoding="utf-8")
+    text = replace_once(text, '\tfflush_stdout_and_exit_SUCCESS();', '''    die_if_ferror(src_stream, bb_msg_read_error);
+    if (fclose_if_not_stdin(src_stream) != 0)
+        bb_simple_perror_msg_and_die(bb_msg_read_error);
+    fflush_stdout_and_exit_SUCCESS();''')
+    text = replace_once(text, '\t\t\t/* Encode the buffer we just read in */', '''            die_if_ferror_stdout();
+			/* Encode the buffer we just read in */''')
+    (output / "base64.c").write_text(text, encoding="utf-8")
+    text = (source / "libbb/uuencode.c").read_text(encoding="utf-8")
+    text = replace_once(text, '\t\t\tint ch = fgetc(src_stream);', '''            int ch = fgetc(src_stream);
+            if (ch == EOF)
+                die_if_ferror(src_stream, bb_msg_read_error);''')
+    text = replace_once(text, '\t\tfwrite(buf, (out_tail - buf), 1, dst_stream);', '''        size_t count = out_tail - buf;
+        if (fwrite(buf, 1, count, dst_stream) != count)
+            bb_simple_perror_msg_and_die(bb_msg_standard_output);''')
+    (output / "uuencode.c").write_text(text, encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
@@ -310,6 +329,7 @@ def main():
                  "mkdir", "rmdir", "rm", "touch")),
              args.source / "coreutils/od.c", args.source / "util-linux/hexdump.c",
              args.source / "libbb/dump.c", args.source / "libbb/xatonum.c",
+             args.source / "coreutils/uudecode.c", args.source / "libbb/uuencode.c",
              args.source / "coreutils/date.c", args.source / "libbb/compare_string_array.c",
              *(args.source / f"coreutils/{name}.c" for name in ("sort", "uniq", "cut", "tr")),
              *(args.source / f"libbb/{name}.c" for name in (
@@ -336,6 +356,7 @@ def main():
     prepare_date(args.source, args.output)
     prepare_text_applets(args.source, args.output, replace_once)
     prepare_dump(args.source, args.output)
+    prepare_base64(args.source, args.output)
     hexdump = (args.source / "util-linux/hexdump.c").read_text(encoding="utf-8")
     hexdump = replace_once(hexdump, '#include "libbb.h"', '''#include "libbb.h"
 #define OFF_T_MAX ((off_t)~((off_t)1 << (sizeof(off_t) * 8 - 1)))

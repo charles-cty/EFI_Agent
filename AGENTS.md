@@ -38,6 +38,13 @@ duplicate suppression, read/output errors and independent saved FAT bytes.
 Hexdump format-file read and close errors return failure. The runtime registry
 and ash dispatch expose hexdump from the shared image.
 
+Upstream BusyBox base64 encoding/decoding now builds into the shared ash image.
+Native integration covers RFC vectors, independent Python byte oracles, wrapping
+widths, binary data and 524289-byte streams through ash. Input and output errors
+are reported; broken-pipe status follows the final pipeline command. The actual
+512 MiB WHPX/Responses run passes with independent FAT checks for encoded and
+decoded files in artifacts/base64-whpx.
+
 BusyBox mkdir/rmdir/rm/touch now use upstream applets and shared make-directory,
 recursive-remove, confirmation and time helpers. Staged corrections report
 directory traversal errors and new-file timestamp errors, preserve nonzero

@@ -151,6 +151,16 @@ void bb_perror_nomsg_and_die(void) NORETURN;
 void die_if_ferror(FILE *stream, const char *name);
 void die_if_ferror_stdout(void);
 int fputs_stdout(const char *text);
+extern const char bb_uuenc_tbl_base64[];
+extern const char bb_uuenc_tbl_std[];
+void bb_uuencode(char *store, const void *source, int length, const char *table);
+enum {
+    BASE64_FLAG_UU_STOP = 0x100,
+    BASE64_32 = 0x200,
+    BASE64_FLAG_NO_STOP_CHAR = 0x80,
+};
+char *decode_base64(char *destination, const char **source);
+void read_base64(FILE *source, FILE *destination, int flags);
 void bb_perror_msg(const char *format, ...) __attribute__((format(printf, 1, 2)));
 void fflush_stdout_and_exit(int status) NORETURN;
 void fflush_stdout_and_exit_SUCCESS(void) NORETURN;
