@@ -3,7 +3,7 @@
 Status: in progress. The checks below define completion of the environment
 expansion. Initial native/firmware interfaces do not establish full completion.
 
-The shared image currently uses upstream ls, awk, sed, grep, chmod, cat, head,
+The shared image currently uses upstream ls, find, awk, sed, grep, chmod, cat, head,
 tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true,
 false, od, hexdump, base64, sha256sum and realpath, plus mkdir, rmdir, rm,
 touch, date, sort, uniq, cut and tr. Other
@@ -30,8 +30,8 @@ py_compile, compileall and `-B` suppression with independent saved FAT checks.
 
 ## Required commands
 
-Build the upstream BusyBox implementations of ls, cat, cp, mv, rm, mkdir,
-rmdir, touch, pwd, head, tail, wc, grep, sed, awk, find, sort, uniq, cut, tr,
+Build the upstream BusyBox implementations of cat, cp, mv, mkdir,
+rmdir, touch, pwd, head, tail, wc, grep, sed, awk, sort, uniq, cut, tr,
 tee, xargs, basename, dirname, realpath, stat, du, df, date, sleep, env,
 printenv, seq, yes, true, false, which, od, hexdump, base64, sha256sum, tar,
 gzip, gunzip, unzip, zcat, ln and chmod. Keep the existing ash builtins.

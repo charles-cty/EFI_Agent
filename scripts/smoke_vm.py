@@ -285,6 +285,7 @@ def main():
     parser.add_argument("--realpath-applet", action="store_true", help="Run upstream basic and realpath applet WHPX checks")
     parser.add_argument("--stat-applet", action="store_true", help="Run upstream basic and stat applet WHPX checks")
     parser.add_argument("--ls-applet", action="store_true", help="Run upstream basic and ls applet WHPX checks")
+    parser.add_argument("--find-applet", action="store_true", help="Run upstream basic and find applet WHPX checks")
     args = parser.parse_args()
     if args.code_cancel_only and not args.code_workspace:
         parser.error("--code-cancel-only requires --code-workspace")
@@ -441,27 +442,31 @@ def main():
         Provider.code_expected.append('UPSTREAM_BASIC_APPLETS_OK')
         Provider.code_steps.append(('python', {'code': MUTATION_APPLETS_CHECK + DATE_CHECK}))
         Provider.code_expected.append('UPSTREAM_DATE_OK')
-    applet_modes = sum((args.text_applets, args.base64_applet, args.sha256_applet, args.realpath_applet, args.stat_applet, args.ls_applet))
+    applet_modes = sum((args.text_applets, args.base64_applet, args.sha256_applet,
+                        args.realpath_applet, args.stat_applet, args.ls_applet,
+                        args.find_applet))
     if applet_modes:
         if not args.code_workspace or args.filesystem_tools or args.code_cancel_only:
             parser.error("Applet checks require --code-workspace and exclude other code modes")
         if applet_modes != 1:
             parser.error("Select one applet check mode")
-        fixture = (LS_CHECK if args.ls_applet else
+        fixture = (None if args.find_applet else
+                   LS_CHECK if args.ls_applet else
                    STAT_CHECK if args.stat_applet else
                    REALPATH_CHECK if args.realpath_applet else
                    SHA256_CHECK if args.sha256_applet else
                    BASE64_CHECK if args.base64_applet else TEXT_APPLETS_CHECK)
-        marker = ('UPSTREAM_LS_OK' if args.ls_applet else
+        marker = ('UPSTREAM_BASIC_APPLETS_OK' if args.find_applet else
+                  'UPSTREAM_LS_OK' if args.ls_applet else
                   'UPSTREAM_STAT_OK' if args.stat_applet else
                   'UPSTREAM_REALPATH_OK' if args.realpath_applet else
                   'UPSTREAM_SHA256_OK' if args.sha256_applet else
                   'UPSTREAM_BASE64_OK' if args.base64_applet else 'UPSTREAM_TEXT_APPLETS_OK')
-        Provider.code_steps = [
-            ('python', {'code': BASIC_APPLETS_CHECK}),
-            ('python', {'code': fixture}),
-        ]
-        Provider.code_expected = ['UPSTREAM_BASIC_APPLETS_OK', marker]
+        Provider.code_steps = [('python', {'code': BASIC_APPLETS_CHECK})]
+        Provider.code_expected = ['UPSTREAM_BASIC_APPLETS_OK']
+        if fixture is not None:
+            Provider.code_steps.append(('python', {'code': fixture}))
+            Provider.code_expected.append(marker)
         Provider.filesystem_tools = False
     for index, (name, arguments) in enumerate(Provider.code_steps, 1):
         if name == 'python':
@@ -565,7 +570,9 @@ def main():
                 wait("Extra drivers started: 1")
                 send("/clear")
                 wait("Conversation cleared")
-            if args.text_applets or args.base64_applet or args.sha256_applet or args.realpath_applet or args.stat_applet:
+            if (args.text_applets or args.base64_applet or args.sha256_applet
+                    or args.realpath_applet or args.stat_applet or args.ls_applet
+                    or args.find_applet):
                 send("Exercise code tools")
                 wait("CODE_TOOLS_VERIFIED", args.code_timeout)
                 send("/exit")
@@ -583,9 +590,19 @@ def main():
                     )
                     hexdump_octal = workspace.read('hexdump-octal-result')
                     assert hexdump_octal == b'0000000 101 000 377 102' + b' ' * 48 + b'\n0000004\n'
+                    assert 'find-tree/a.txt' not in workspace.entries
+                    assert 'find-tree/skip/b.txt' not in workspace.entries
+                    assert workspace.read('find-tree/empty') == b''
+                    assert workspace.read('find-tree/skip/deep/c.bin') == b'gamma'
+                    assert workspace.entries['find-tree/link']['target'] == 'a.txt'
                     if args.ls_applet:
-                        assert workspace.read('ls-result') == b'alpha\nsub\n'
+                        assert workspace.read('ls-result') == (
+                            b'alpha\ndangling\ndir-link\nlarge\nlink\nspace name\nsub\n\xe5\x90\x8d\n'
+                        )
                         assert workspace.read('ls-tree/.hidden') == b'h'
+                        assert workspace.entries['ls-tree/link']['target'] == 'alpha'
+                        assert workspace.entries['ls-tree/dir-link']['target'] == 'sub'
+                        assert workspace.entries['ls-tree/dangling']['target'] == 'absent'
                     if args.stat_applet:
                         verify_stat(workspace)
                     elif args.realpath_applet:
@@ -594,7 +611,7 @@ def main():
                         verify_sha256(workspace)
                     elif args.base64_applet:
                         verify_base64(workspace)
-                    else:
+                    elif args.text_applets:
                         verify_text_applets(workspace)
                 print("PASS WHPX upstream applets and saved FAT bytes", flush=True)
                 return

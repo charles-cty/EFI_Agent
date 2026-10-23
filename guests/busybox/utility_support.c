@@ -4,6 +4,7 @@
 
 char bb_common_bufsiz1[COMMON_BUFSIZE] __attribute__((aligned(16)));
 const char bb_msg_standard_input[] = "standard input";
+const char bb_msg_invalid_arg_to[] = "invalid argument '%s' to '%s'";
 
 DIR *warn_opendir(const char *path)
 {
@@ -11,6 +12,15 @@ DIR *warn_opendir(const char *path)
     if (!directory)
         bb_perror_msg("can't open '%s'", path);
     return directory;
+}
+
+int FAST_FUNC get_terminal_width(int fd)
+{
+    const char *columns = getenv("COLUMNS");
+    int width = columns ? atoi(columns) : 80;
+
+    (void)fd;
+    return width > 1 && width < 30000 ? width : 80;
 }
 
 

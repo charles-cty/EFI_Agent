@@ -4725,24 +4725,42 @@ and upstream stat behavior.
 ## 2026-10-23 upstream BusyBox ls applet
 
 BusyBox 1.37.0 `ls` now uses the upstream parser, sorting and directory
-formatting implementation in the shared image. Native ash integration passes
-ordinary and hidden entries, `-A`, `-F`, recursive traversal, long format,
-directory operands and missing-path errors, with independent saved workspace
-checks. The namespace does not currently support Python `os.symlink`, so link
-display and following remain unverified through this guest path.
+formatting implementation in the shared image. Real ash and CPython integration
+covers ordinary and hidden entries, `-A`, `-a`, `-d`, `-F`, `-p`, recursive
+traversal, long format, missing paths and invalid options. It also checks
+symbolic-link display and following, dangling links, reverse/size/time sorting,
+quoting, inode/block columns, Unicode names, `-w`, and narrow/wide `COLUMNS`
+layouts. The WASI terminal-width adapter uses valid `COLUMNS` values and
+otherwise the 80-column default. Independent native namespace checks verify
+the saved listing, file bytes and symbolic-link targets.
 
-The Windows WASI build completed. WASM crate tests, Clippy with warnings
-denied, Rust formatting, Python syntax, whitespace checks and the focused ash
-integration pass. WHPX packaging and Responses/Chat Completions flows remain
-pending: the available `pwsh.exe` runs under WSL (`$IsWindows` is false), so it
-cannot initialize the Windows MSVC toolchain or use a Windows-local working
-directory. Initial attempts also exposed a nonexistent source-file reference
-and broad BusyBox helper dependencies; the guest now supplies only the needed
-`warn_opendir` wrapper.
+Windows Release packaging and the 512 MiB WHPX/Responses fixture pass with
+independent saved FAT checks in `artifacts/ls-applet-whpx-final-columns`. Python
+syntax checks pass. The first packaging attempt had no `EFI_AGENT_API_BASE`;
+the local test provider settings resolved that configuration requirement.
+Enabling `FEATURE_LS_WIDTH` exposed the missing terminal-width port declaration,
+which is now implemented. Two smoke harness branches initially routed
+`--ls-applet` into unrelated tool and text-applet checks; both now select the
+ls-only path. The first WSL Git status query stalled while inspecting a dirty
+submodule, so the final status check disabled submodule inspection. The
+upstream string-offset warnings in head, tail, wc and time.c remain nonfatal.
 
-WSL Git status recursively inspected the dirty submodule and stalled on Windows
-filesystem I/O. The queries were stopped; bounded top-level checks with
-submodule inspection disabled completed. Initial PowerShell quoting errors
-were corrected with a literal Bash heredoc; Visual Studio initialization and
-the Windows Release runner then completed. Existing upstream string-offset
-compiler warnings in head, tail, wc and time.c remain nonfatal.
+## 2026-10-24 upstream BusyBox find applet
+
+BusyBox 1.37.0 `find` now builds into the shared image and resolves as a
+multicall command. Native Release integration exercises recursive name/type/
+size/empty tests, `-maxdepth`, `-prune`, NUL output, `-delete` and missing-root
+errors. Independent namespace readback confirms deleted files are absent,
+remaining bytes are unchanged, and the symlink entry retains its target.
+Optional `-exec`, SELinux context and user/group name matching are disabled
+because the runtime has no matching execution, SELinux or account provider.
+
+The Windows WASI SDK 34/Binaryen 133 guest build and native Release runner pass.
+The dedicated `scripts/smoke_vm.py --find-applet` flow passes with a 512 MiB
+WHPX/Responses guest in `artifacts/find-applet-whpx-20261024-final`. Independent
+saved FAT checks confirm both `.txt` files were deleted, the empty file and
+`c.bin` contents remain unchanged, and the symlink still targets `a.txt`.
+The fixture checks actual NUL bytes from `-print0`. `-exec`, SELinux context
+tests and user/group name matching remain unavailable because the runtime has
+no execution, SELinux or account provider. The existing upstream string-offset
+warnings in head, tail, wc and time.c remain nonfatal.

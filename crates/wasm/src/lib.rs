@@ -245,6 +245,7 @@ impl World {
                 | "seq"
                 | "true"
                 | "false"
+                | "find"
                 | "od"
                 | "hexdump"
                 | "base64"

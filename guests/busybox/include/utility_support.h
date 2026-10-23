@@ -73,6 +73,7 @@ int parse_datestr(const char *text, struct tm *value);
 int index_in_substrings(const char *strings, const char *key);
 time_t validate_tm_time(const char *text, struct tm *value);
 extern const char bb_msg_invalid_date[];
+extern const char bb_msg_invalid_arg_to[];
 typedef smalluint exitcode_t;
 char *bb_read_record(FILE *stream, int delimiter, size_t *length);
 int bb_compare_decimal(const char *left, const char *right);

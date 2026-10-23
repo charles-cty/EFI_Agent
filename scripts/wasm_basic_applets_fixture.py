@@ -141,6 +141,48 @@ BASIC_APPLETS_CHECK = dedent(r'''
     result = subprocess.run('hexdump -bv', shell=True, input=b'A' * 64, capture_output=True)
     expected = b''.join(format(offset, '07x').encode() + b' 101' * 16 + b'\n' for offset in (0, 16, 32, 48)) + b'0000040\n'
     assert (result.returncode, result.stdout, result.stderr) == (0, expected, b''), result
+    os.makedirs('find-tree/skip/deep')
+    for path, data in (('find-tree/a.txt', b'alpha'), ('find-tree/empty', b''),
+                       ('find-tree/skip/b.txt', b'beta'),
+                       ('find-tree/skip/deep/c.bin', b'gamma')):
+        with open(path, 'wb') as output:
+            output.write(data)
+    os.symlink('a.txt', 'find-tree/link')
+
+    def find_names(command):
+        result = subprocess.run(command, shell=True, capture_output=True)
+        assert result.returncode == 0 and not result.stderr, (command, result)
+        return result.stdout.splitlines()
+
+    assert find_names("find find-tree -name '*.txt'") == [
+        b'find-tree/a.txt', b'find-tree/skip/b.txt'
+    ]
+    assert find_names('find find-tree -maxdepth 1 -type f') == [
+        b'find-tree/a.txt', b'find-tree/empty'
+    ]
+    assert find_names("find find-tree -path 'find-tree/skip' -prune -o -type f -print") == [
+        b'find-tree/a.txt', b'find-tree/empty'
+    ]
+    size_matches = find_names('find find-tree -size +4c')
+    assert size_matches == [
+        b'find-tree/a.txt', b'find-tree/link', b'find-tree/skip/deep/c.bin'
+    ], size_matches
+    assert find_names('find find-tree -empty') == [b'find-tree/empty']
+    nul = subprocess.run("find find-tree -name '*.txt' -print0", shell=True,
+                         capture_output=True)
+    assert (nul.returncode, nul.stdout, nul.stderr) == (
+        0, b'find-tree/a.txt\0find-tree/skip/b.txt\0', b''
+    ), nul
+    deleted = subprocess.run("find find-tree -name '*.txt' -delete", shell=True,
+                             capture_output=True)
+    assert (deleted.returncode, deleted.stdout, deleted.stderr) == (0, b'', b''), deleted
+    assert find_names('find find-tree -type f') == [
+        b'find-tree/empty', b'find-tree/skip/deep/c.bin'
+    ]
+    missing = subprocess.run('find missing-find-root', shell=True, capture_output=True)
+    assert missing.returncode != 0 and missing.stderr, missing
+    print('PASS upstream find traversal, expressions, NUL output, deletion and errors', flush=True)
+
     with open('basic-applets-result', 'w') as output:
         output.write('UPSTREAM_BASIC_APPLETS_OK\n')
     with open('od-octal-result', 'rb') as output:

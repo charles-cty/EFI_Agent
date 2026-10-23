@@ -1,50 +1,44 @@
 # /// script
 # requires-python = ">=3.11"
 # ///
-"""Verify upstream ls output and saved workspace bytes through real ash."""
+"""Run upstream ls through real ash and verify namespace output and links."""
 import argparse
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 
+from wasm_ls_fixture import LS_CHECK
+from wasm_namespace_fixture import DirectoryWorkspace
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runner', type=Path, required=True)
     parser.add_argument('--ash', type=Path, required=True)
+    parser.add_argument('--python', type=Path, required=True)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='efi-ls-') as temporary:
         root = Path(temporary)
-        shutil.copyfile(args.ash, root / 'ash.wasm')
-        command = r'''mkdir -p ls-tree/sub
-printf a > ls-tree/alpha
-printf h > ls-tree/.hidden
-printf b > ls-tree/sub/beta
-ls ls-tree
-ls -A ls-tree
-ls -a ls-tree
-ls -d ls-tree ls-tree/alpha
-ls -F ls-tree
-ls -l ls-tree/alpha
-ls -R ls-tree
-ls missing-entry
-'''
-        result = subprocess.run([str(args.runner.resolve()), str(root), 'ash', '-c', command],
-                                capture_output=True, timeout=60)
-        expected = (
-            b'alpha\nsub\n'
-            b'.hidden\nalpha\nsub\n'
-            b'.\n..\n.hidden\nalpha\nsub\n'
-            b'ls-tree\nls-tree/alpha\n'
-            b'alpha\nsub/\n'
+        for name in ('ash', 'python'):
+            shutil.copyfile(getattr(args, name), root / f'{name}.wasm')
+        shutil.copytree(args.python.parent / 'lib', root / 'lib')
+        result = subprocess.run(
+            [str(args.runner.resolve()), str(root), 'python', '-c', LS_CHECK],
+            capture_output=True,
+            timeout=90,
         )
-        assert result.returncode == 1, (result.returncode, result.stdout, result.stderr)
-        assert result.stdout.startswith(expected), result.stdout
-        assert b'ls-tree/sub:\nbeta\n' in result.stdout, result.stdout
-        assert result.stdout.endswith(b'ls-tree/sub:\nbeta\n'), result.stdout
-        assert b'missing-entry' in result.stderr, result.stderr
-        print('PASS upstream ls options, recursive traversal, errors and saved bytes')
+        print(result.stdout.decode('utf-8', 'replace'), end='', flush=True)
+        assert result.returncode == 0 and not result.stderr, result.stderr
+        workspace = DirectoryWorkspace(root)
+        assert workspace.read('ls-result') == (
+            b'alpha\ndangling\ndir-link\nlarge\nlink\nspace name\nsub\n\xe5\x90\x8d\n'
+        )
+        assert workspace.read('ls-tree/large') == b'L' * 32
+        assert workspace.entries['ls-tree/link']['target'] == 'alpha'
+        assert workspace.entries['ls-tree/dir-link']['target'] == 'sub'
+        assert workspace.entries['ls-tree/dangling']['target'] == 'absent'
+        print('PASS saved ls names, regular-file bytes and symbolic links')
 
 
 if __name__ == '__main__':
