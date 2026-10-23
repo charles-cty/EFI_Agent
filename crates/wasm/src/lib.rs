@@ -248,6 +248,7 @@ impl World {
                 | "od"
                 | "hexdump"
                 | "base64"
+                | "sha256sum"
         )
     }
 

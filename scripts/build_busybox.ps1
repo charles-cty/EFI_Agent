@@ -51,6 +51,7 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $Source 'coreutils/false.c'),
     (Join-Path $Source 'coreutils/od.c'), (Join-Path $build 'hexdump.c'), (Join-Path $build 'dump.c'),
     (Join-Path $build 'base64.c'), (Join-Path $build 'uuencode.c'),
+    (Join-Path $build 'md5_sha1_sum.c'), (Join-Path $Source 'libbb/hash_md5_sha.c'),
     (Join-Path $Source 'libbb/get_last_path_component.c'),
     (Join-Path $Source 'libbb/single_argv.c'), (Join-Path $Source 'libbb/xgetcwd.c'),
     (Join-Path $build 'mkdir.c'), (Join-Path $build 'rmdir.c'),

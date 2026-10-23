@@ -45,6 +45,15 @@ are reported; broken-pipe status follows the final pipeline command. The actual
 512 MiB WHPX/Responses run passes with independent FAT checks for encoded and
 decoded files in artifacts/base64-whpx.
 
+Upstream BusyBox sha256sum and its checksum-file parser now build into the
+shared ash image. The SHA algorithm and check semantics remain upstream; the
+WASI support header supplies explicit little-endian hash context types and
+unaligned access operations. Native Release integration checks independent
+hashlib vectors and binary files, padding/block boundaries, 524289-byte and
+1 MiB inputs, valid/invalid checksum files, missing/directory inputs and closed
+stdout. Actual 512 MiB WHPX/Responses passes with independent saved FAT checks
+in artifacts/sha256-whpx.
+
 BusyBox mkdir/rmdir/rm/touch now use upstream applets and shared make-directory,
 recursive-remove, confirmation and time helpers. Staged corrections report
 directory traversal errors and new-file timestamp errors, preserve nonzero

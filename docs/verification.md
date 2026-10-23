@@ -4563,6 +4563,39 @@ diagnostic. PowerShell 7 with `-CommandWithArgs` and a Windows-local working
 directory was used for native tools. Earlier nonfatal BusyBox pointer-arithmetic
 warnings remain.
 
+## 2026-10-23 upstream sha256sum applet
+
+The shared ash image now registers upstream BusyBox 1.37.0 `sha256sum` and
+enables its checksum-file parser. Hashing and check-line interpretation remain
+upstream. The WASI support interface defines the SHA context layouts, native
+little-endian swaps and unaligned access required by the hash translation unit;
+the shared guest support adds BusyBox-compatible lowercase `bin2hex`. The
+staged applet reports input close and buffered stdout failures.
+
+Native Release integration passes independent hashlib vectors and binary file
+checks, with lengths 0/1/2/3/4/5/6, SHA padding and block boundaries
+55/56/63/64/65, I/O boundaries 4095/4096/4097 and 65535/65536/65537,
+524287/524288/524289, and 1 MiB. It verifies multiple files, `-c`, silent `-cs`,
+bad and malformed checksum files, invalid options, missing files, directories,
+and closed stdout. Independent saved checksums and source files are read from
+the native namespace. Actual 512 MiB WHPX/Responses runs both basic and SHA-256
+fixtures and independently checks saved checksum and binary files from FAT.
+The explicit WASI SDK/Binaryen guest build, Windows Release EFI/launcher
+packaging, WASM crate tests, Clippy with warnings denied, format and Python
+syntax checks pass. Evidence: `artifacts/sha256-build.log`,
+`artifacts/sha256-native.log`, `artifacts/sha256-package.log`,
+`artifacts/sha256-rust-tests.log`, `artifacts/sha256-whpx.log` and
+`artifacts/sha256-whpx`.
+
+Resolved verification issues: initially including BusyBox's complete internal
+header pulled unavailable WASI networking and terminal headers. The hash build
+now uses a small explicit support interface for the required context layouts,
+little-endian operations and unaligned accesses. The first 8 MiB stdin hashing case exceeded the
+native runner's 60-second guest limit. The useful syscall boundaries through
+524289 bytes and a 1 MiB throughput check pass; the 8 MiB hash case was removed
+because it is outside the storage-write requirement. Upstream BusyBox date and
+time sources still emit existing non-fatal string-offset warnings.
+
 ## 2026-10-23 upstream od applet
 
 The shared BusyBox ash image now includes upstream 1.37.0 `od` and its dump

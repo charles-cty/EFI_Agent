@@ -18,6 +18,18 @@ unsigned string_array_len(char **array)
     return length;
 }
 
+char *bin2hex(char *destination, const char *source, int count)
+{
+    static const char digits[] = "0123456789abcdef";
+    for (int index = 0; index < count; ++index) {
+        unsigned char value = (unsigned char)source[index];
+        destination[index * 2] = digits[value >> 4];
+        destination[index * 2 + 1] = digits[value & 15];
+    }
+    destination[count * 2] = '\0';
+    return destination;
+}
+
 FILE *xfopen_for_write(const char *path)
 {
     return xfopen(path, "w");

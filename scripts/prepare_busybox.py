@@ -27,7 +27,7 @@ ENABLED = {
     "DATE", "FEATURE_DATE_ISOFMT", "FEATURE_DATE_NANO",
     "SORT", "FEATURE_SORT_BIG", "UNIQ", "CUT", "FEATURE_CUT_REGEX",
     "TR", "FEATURE_TR_CLASSES", "FEATURE_TR_EQUIV",
-    "OD", "HEXDUMP", "BASE64",
+    "OD", "HEXDUMP", "BASE64", "SHA256SUM", "FEATURE_MD5_SHA1_SUM_CHECK",
 }
 
 
@@ -310,6 +310,24 @@ def prepare_base64(source: Path, output: Path):
     (output / "uuencode.c").write_text(text, encoding="utf-8")
 
 
+def prepare_sha256sum(source: Path, output: Path):
+    text = (source / "coreutils/md5_sha1_sum.c").read_text(encoding="utf-8")
+    text = replace_once(text, '''\tif (src_fd != STDIN_FILENO) {
+\t\tclose(src_fd);
+\t}''', '''    if (src_fd != STDIN_FILENO && close(src_fd) < 0) {
+        bb_perror_msg("can't close '%s'", filename);
+        free(hash_value);
+        hash_value = NULL;
+    }''')
+    text = replace_once(text, '\treturn return_value;\n}', '''    if (fflush(stdout) != 0 || ferror(stdout)) {
+        bb_simple_perror_msg("standard output");
+        return_value = EXIT_FAILURE;
+    }
+    return return_value;
+}''')
+    (output / "md5_sha1_sum.c").write_text(text, encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
@@ -330,6 +348,7 @@ def main():
              args.source / "coreutils/od.c", args.source / "util-linux/hexdump.c",
              args.source / "libbb/dump.c", args.source / "libbb/xatonum.c",
              args.source / "coreutils/uudecode.c", args.source / "libbb/uuencode.c",
+             args.source / "coreutils/md5_sha1_sum.c", args.source / "libbb/hash_md5_sha.c",
              args.source / "coreutils/date.c", args.source / "libbb/compare_string_array.c",
              *(args.source / f"coreutils/{name}.c" for name in ("sort", "uniq", "cut", "tr")),
              *(args.source / f"libbb/{name}.c" for name in (
@@ -348,6 +367,8 @@ def main():
         lines.append(f"#define IF_{name}(...) {'__VA_ARGS__' if enabled else ''}")
         lines.append(f"#define IF_NOT_{name}(...) {'' if enabled else '__VA_ARGS__'}")
     lines.extend(["#define HAVE_DEV_FD 0", "#define CONFIG_FEATURE_EDITING_MAX_LEN 1024",
+                  "#define CONFIG_SHA3_SMALL 0", "#define CONFIG_MD5_SMALL 0",
+                  "#define CONFIG_SHA1_SMALL 0",
                   "#define CONFIG_FEATURE_COPYBUF_KB 4", "#endif", ""])
     (args.output / "ash_config.h").write_text("\n".join(lines), encoding="utf-8")
     (args.output / "NUM_APPLETS.h").write_text("#define NUM_APPLETS 1\n", encoding="utf-8")
@@ -357,6 +378,7 @@ def main():
     prepare_text_applets(args.source, args.output, replace_once)
     prepare_dump(args.source, args.output)
     prepare_base64(args.source, args.output)
+    prepare_sha256sum(args.source, args.output)
     hexdump = (args.source / "util-linux/hexdump.c").read_text(encoding="utf-8")
     hexdump = replace_once(hexdump, '#include "libbb.h"', '''#include "libbb.h"
 #define OFF_T_MAX ((off_t)~((off_t)1 << (sizeof(off_t) * 8 - 1)))

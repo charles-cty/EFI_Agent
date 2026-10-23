@@ -4,7 +4,6 @@
 #include <alloca.h>
 #include <getopt.h>
 
-#define FIX_ALIASING
 #define ALIGN4 __attribute__((aligned(4)))
 #define BUILD_BUG_ON(condition) _Static_assert(!(condition), "invalid BusyBox buffer size")
 #define GETOPT_RESET() (optind = 0)
@@ -79,6 +78,59 @@ void sleep_for_duration(duration_t duration);
 #define isprint_asciionly(value) ((unsigned)((value) - 0x20) <= 0x7e - 0x20)
 #define DOT_OR_DOTDOT(text) ((text)[0] == '.' && \
     ((text)[1] == '\0' || ((text)[1] == '.' && (text)[2] == '\0')))
+
+#define FIX_ALIASING __attribute__((may_alias))
+typedef long bb__aliased_long FIX_ALIASING;
+typedef uint16_t bb__aliased_uint16_t FIX_ALIASING;
+typedef uint32_t bb__aliased_uint32_t FIX_ALIASING;
+typedef uint64_t bb__aliased_uint64_t FIX_ALIASING;
+#define BB_BIG_ENDIAN 0
+#define BB_LITTLE_ENDIAN 1
+#define ALIGN8 __attribute__((aligned(8)))
+#define bb_bswap_64(value) __builtin_bswap64(value)
+#define SWAP_LE32(value) (value)
+#define SWAP_BE32(value) __builtin_bswap32(value)
+#define SWAP_LE64(value) (value)
+#define SWAP_BE64(value) __builtin_bswap64(value)
+#define move_from_unaligned16(value, pointer) memcpy(&(value), (pointer), 2)
+#define move_from_unaligned32(value, pointer) memcpy(&(value), (pointer), 4)
+#define move_from_unaligned64(value, pointer) memcpy(&(value), (pointer), 8)
+#define move_from_unaligned_long(value, pointer) memcpy(&(value), (pointer), sizeof(long))
+#define move_to_unaligned32(pointer, value) memcpy((pointer), &(uint32_t){value}, 4)
+#define move_to_unaligned64(pointer, value) memcpy((pointer), &(uint64_t){value}, 8)
+
+typedef struct md5_ctx_t {
+    uint8_t wbuffer[64];
+    void (*process_block)(struct md5_ctx_t *);
+    uint64_t total64;
+    uint32_t hash[8];
+} md5_ctx_t;
+typedef md5_ctx_t sha1_ctx_t;
+typedef md5_ctx_t sha256_ctx_t;
+typedef struct sha512_ctx_t {
+    uint64_t total64[2];
+    uint64_t hash[8];
+    uint8_t wbuffer[128];
+} sha512_ctx_t;
+typedef struct sha3_ctx_t {
+    uint64_t state[25];
+    unsigned bytes_queued;
+    unsigned input_block_bytes;
+} sha3_ctx_t;
+void sha256_begin(sha256_ctx_t *context);
+void md5_begin(md5_ctx_t *context);
+void md5_hash(md5_ctx_t *context, const void *buffer, size_t length);
+unsigned md5_end(md5_ctx_t *context, void *result);
+void sha1_begin(sha1_ctx_t *context);
+#define sha1_hash md5_hash
+unsigned sha1_end(sha1_ctx_t *context, void *result);
+#define sha256_hash md5_hash
+#define sha256_end sha1_end
+void sha512_begin(sha512_ctx_t *context);
+void sha512_hash(sha512_ctx_t *context, const void *buffer, size_t length);
+unsigned sha512_end(sha512_ctx_t *context, void *result);
+char *bin2hex(char *destination, const char *source, int count);
+void die_if_ferror(FILE *stream, const char *name);
 
 typedef struct llist_t {
     struct llist_t *link;
