@@ -550,6 +550,12 @@ def main():
                     assert workspace.read('basic-applets-result') == b'UPSTREAM_BASIC_APPLETS_OK\n'
                     assert workspace.read('od-octal-result') == b'0000000 101 000 377 102\n0000004\n'
                     assert workspace.read('od-character-result') == b'0000000   A  \\0 377   B\n0000004\n'
+                    assert workspace.read('hexdump-result') == (
+                        b'00000000  41 00 ff 42                                       |A..B|\n'
+                        b'00000004\n'
+                    )
+                    hexdump_octal = workspace.read('hexdump-octal-result')
+                    assert hexdump_octal == b'0000000 101 000 377 102' + b' ' * 48 + b'\n0000004\n'
                     verify_text_applets(workspace)
                 print("PASS WHPX upstream basic/text applets and saved FAT bytes", flush=True)
                 return

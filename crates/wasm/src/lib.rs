@@ -246,6 +246,7 @@ impl World {
                 | "true"
                 | "false"
                 | "od"
+                | "hexdump"
         )
     }
 

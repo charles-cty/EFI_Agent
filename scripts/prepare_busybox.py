@@ -27,7 +27,7 @@ ENABLED = {
     "DATE", "FEATURE_DATE_ISOFMT", "FEATURE_DATE_NANO",
     "SORT", "FEATURE_SORT_BIG", "UNIQ", "CUT", "FEATURE_CUT_REGEX",
     "TR", "FEATURE_TR_CLASSES", "FEATURE_TR_EQUIV",
-    "OD",
+    "OD", "HEXDUMP",
 }
 
 
@@ -308,7 +308,8 @@ def main():
                  "cat", "head", "tail", "wc", "tee", "sleep", "basename",
                  "dirname", "pwd", "env", "printenv", "seq", "yes", "true", "false",
                  "mkdir", "rmdir", "rm", "touch")),
-             args.source / "coreutils/od.c", args.source / "libbb/dump.c",
+             args.source / "coreutils/od.c", args.source / "util-linux/hexdump.c",
+             args.source / "libbb/dump.c", args.source / "libbb/xatonum.c",
              args.source / "coreutils/date.c", args.source / "libbb/compare_string_array.c",
              *(args.source / f"coreutils/{name}.c" for name in ("sort", "uniq", "cut", "tr")),
              *(args.source / f"libbb/{name}.c" for name in (
@@ -335,6 +336,16 @@ def main():
     prepare_date(args.source, args.output)
     prepare_text_applets(args.source, args.output, replace_once)
     prepare_dump(args.source, args.output)
+    hexdump = (args.source / "util-linux/hexdump.c").read_text(encoding="utf-8")
+    hexdump = replace_once(hexdump, '#include "libbb.h"', '''#include "libbb.h"
+#define OFF_T_MAX ((off_t)~((off_t)1 << (sizeof(off_t) * 8 - 1)))
+''')
+    hexdump = replace_once(hexdump, 'fp = xfopen_for_read(name);', 'fp = xfopen(name, "r");')
+    hexdump = replace_once(hexdump, '\tfclose(fp);', '''    int read_error = ferror(fp);
+    int close_error = fclose(fp);
+    if (read_error || close_error)
+        bb_simple_perror_msg_and_die(name);''')
+    (args.output / "hexdump.c").write_text(hexdump, encoding="utf-8")
     sleep = (args.source / "coreutils/sleep.c").read_text(encoding="utf-8")
     sleep = replace_once(sleep, '\t\t\tsleep(INT_MAX);', '''            if (sleep(INT_MAX) != 0)
                 bb_simple_perror_msg_and_die("sleep");''')

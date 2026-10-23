@@ -63,6 +63,8 @@ BASIC_APPLETS_CHECK = dedent(r'''
         ("printf 'A\\000\\377B' | od -c > od-character-result", b'', 0),
         ('od missing-od-input', b'', 1),
         ('od -Q', b'', 1),
+        ("hexdump -C od-input > hexdump-result", b'', 0),
+        ("hexdump -b od-input > hexdump-octal-result", b'', 0),
     ]
     for name, expected, status in cases:
         result = subprocess.run(name, shell=True, capture_output=True)
@@ -95,7 +97,8 @@ BASIC_APPLETS_CHECK = dedent(r'''
         assert result.stderr == b'yes: Broken pipe\n', (size, result.stderr)
         print('PASS yes buffer boundary', size, flush=True)
     for command in ('basename /a/b', 'dirname /a/b', '/bin/pwd', 'seq 10000',
-                    'env -i A=1', 'env -i A=1 printenv A', 'yes', 'od -b od-input'):
+                    'env -i A=1', 'env -i A=1 printenv A', 'yes', 'od -b od-input',
+                    'hexdump -C od-input'):
         result = subprocess.run(command + ' >&-', shell=True, capture_output=True)
         assert result.returncode in (1, 255) and not result.stdout, (command, result)
     result = subprocess.run('od basic-dir', shell=True, capture_output=True)
@@ -111,6 +114,10 @@ BASIC_APPLETS_CHECK = dedent(r'''
             expected += (format(length, '07o') + '\n').encode()
         result = subprocess.run('od -bv od-boundary-input', shell=True, capture_output=True)
         assert (result.returncode, result.stdout, result.stderr) == (0, expected, b''), (length, result)
+        expected_hex = b''.join(('%02x\n' % byte).encode() for byte in payload)
+        result = subprocess.run('hexdump -v -e \'1/1 "%02x\\n"\' od-boundary-input',
+                                shell=True, capture_output=True)
+        assert (result.returncode, result.stdout, result.stderr) == (0, expected_hex, b''), (length, result)
         print('PASS od byte boundary', length, flush=True)
     with open('od-first', 'wb') as output:
         output.write(b'A')
@@ -128,11 +135,43 @@ BASIC_APPLETS_CHECK = dedent(r'''
     result = subprocess.run('od -bv', shell=True, input=b'A' * 64, capture_output=True)
     expected = b''.join(format(offset, '07o').encode() + b' 101' * 16 + b'\n' for offset in (0, 16, 32, 48)) + b'0000100\n'
     assert (result.returncode, result.stdout, result.stderr) == (0, expected, b''), result
+    result = subprocess.run('hexdump -b', shell=True, input=b'A' * 64, capture_output=True)
+    expected = b'0000000' + b' 101' * 16 + b'\n*\n0000040\n'
+    assert (result.returncode, result.stdout, result.stderr) == (0, expected, b''), result
+    result = subprocess.run('hexdump -bv', shell=True, input=b'A' * 64, capture_output=True)
+    expected = b''.join(format(offset, '07x').encode() + b' 101' * 16 + b'\n' for offset in (0, 16, 32, 48)) + b'0000040\n'
+    assert (result.returncode, result.stdout, result.stderr) == (0, expected, b''), result
     with open('basic-applets-result', 'w') as output:
         output.write('UPSTREAM_BASIC_APPLETS_OK\n')
     with open('od-octal-result', 'rb') as output:
         assert output.read() == b'0000000 101 000 377 102\n0000004\n'
     with open('od-character-result', 'rb') as output:
         assert output.read() == b'0000000   A  \\0 377   B\n0000004\n'
+    with open('hexdump-result', 'rb') as output:
+        hexdump_bytes = output.read()
+        assert hexdump_bytes == (
+            b'00000000  41 00 ff 42                                       |A..B|\n'
+            b'00000004\n'
+        ), hexdump_bytes
+    with open('hexdump-octal-result', 'rb') as output:
+        assert output.read() == b'0000000 101 000 377 102' + b' ' * 48 + b'\n0000004\n'
+    result = subprocess.run('hexdump -b -n 2 -s 1 od-input', shell=True, capture_output=True)
+    expected = b'0000001 000 377' + b' ' * 56 + b'\n0000003\n'
+    assert (result.returncode, result.stdout, result.stderr) == (0, expected, b''), result
+    result = subprocess.run('hexdump missing-hexdump-input', shell=True, capture_output=True)
+    assert result.returncode == 1 and result.stderr, result
+    result = subprocess.run('hexdump -Q', shell=True, capture_output=True)
+    assert result.returncode == 1 and result.stderr, result
+    for command in ('hexdump basic-dir', 'hexdump -f basic-dir od-input',
+                    'hexdump -f missing-format od-input', 'hexdump -n -1 od-input',
+                    'hexdump -s -1 od-input'):
+        result = subprocess.run(command, shell=True, capture_output=True)
+        assert result.returncode == 1 and result.stderr, (command, result)
+    with open('hexdump-format', 'w') as output:
+        output.write('# Byte format\n1/1 "%02x\\n"\n')
+    for command in ('hexdump -e \'1/1 "%02x\\n"\' od-input',
+                    'hexdump -f hexdump-format od-input'):
+        result = subprocess.run(command, shell=True, capture_output=True)
+        assert (result.returncode, result.stdout, result.stderr) == (0, b'41\n00\nff\n42\n', b''), (command, result)
     print('UPSTREAM_BASIC_APPLETS_OK')
 ''')

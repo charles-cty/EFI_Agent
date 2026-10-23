@@ -28,6 +28,7 @@ int yes_main(int argc, char **argv);
 int true_main(int argc, char **argv);
 int false_main(int argc, char **argv);
 int od_main(int argc, char **argv);
+int hexdump_main(int argc, char **argv);
 int mkdir_main(int argc, char **argv);
 int rmdir_main(int argc, char **argv);
 int rm_main(int argc, char **argv);
@@ -126,6 +127,7 @@ int efi_busybox_applet(int argc, char **argv)
     if (strcmp(name, "true") == 0) return true_main(argc, argv);
     if (strcmp(name, "false") == 0) return false_main(argc, argv);
     if (strcmp(name, "od") == 0) return od_main(argc, argv);
+    if (strcmp(name, "hexdump") == 0) return hexdump_main(argc, argv);
     if (strcmp(name, "grep") == 0) return grep_main(argc, argv);
     if (strcmp(name, "mkdir") == 0) return mkdir_main(argc, argv);
     if (strcmp(name, "rmdir") == 0) return rmdir_main(argc, argv);

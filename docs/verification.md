@@ -4504,6 +4504,35 @@ HTTPS/DNS, cancellation and background-root checks. Evidence:
 Full timezone, remaining commands, mounts, PATH, persistent sessions, the
 full network/application regression and the 256 MiB gate remain incomplete.
 
+## 2026-10-23 upstream hexdump applet
+
+The shared ash image now includes upstream BusyBox 1.37.0 hexdump, registered
+with the runtime and dispatched through ash. It reuses od's checked dump engine.
+The staged source uses the existing xfopen helper and the upstream off_t bound.
+Format-file read and close errors now fail instead of accepting a partial format.
+
+Native Release integration verifies canonical and octal output with NUL/high
+bytes, exact short-line padding, skip/length, inline and file formats, duplicate
+suppression and -v. Independent byte-format oracles cover lengths
+0/1/15/16/17/31/32/33/257. Missing files, invalid options/negative bounds,
+directory data/format reads and closed stdout fail. Saved hexdump bytes are
+checked independently through the native namespace and the WHPX FAT image.
+The final 512 MiB WHPX/Responses run executes both basic and text fixtures,
+including the od saved-byte assertions. WASM crate tests, Clippy with warnings
+denied, formatting, guest build and Windows Release EFI/launcher packaging pass.
+Evidence: `artifacts/hexdump-native.log`, `artifacts/hexdump-build.log`,
+`artifacts/hexdump-rust-tests.log`, `artifacts/hexdump-whpx.log` and
+`artifacts/hexdump-whpx`.
+
+Resolved verification issues: Windows Git avoided the slow WSL-mounted status
+scan; protected PowerShell quoting prevented Bash expansion of variables.
+The native runner was rebuilt to include the new command registration.
+Independent expected bytes were corrected for hexdump's default word format
+and octal-column padding. Packaging used explicit smoke configuration and the
+existing built Shell EFI. The firmware test received the OVMF CODE image after
+an incorrect EFI argument caused its first boot to reset the connection.
+Existing upstream string-pointer arithmetic warnings remain nonfatal.
+
 ## 2026-10-23 upstream od applet
 
 The shared BusyBox ash image now includes upstream 1.37.0 `od` and its dump

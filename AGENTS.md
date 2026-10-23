@@ -31,9 +31,12 @@ the combined current file/code-tool sequence and independent FAT checks in
 artifacts/date-applet-whpx and date-applet-tcg. Release packaging, mutation,
 basic/stream/awk/sed/grep and ash math/random regressions pass.
 
-Upstream BusyBox od and libbb dump support now build into the shared ash image.
+Upstream BusyBox od, hexdump and libbb dump support now build into the shared ash image.
 Native Release run_guest and actual 512 MiB WHPX/Responses checks pass binary
-octal/character output, missing-file status, and independent saved FAT bytes.
+octal/character/canonical output, custom formats, boundary lengths, skip/length,
+duplicate suppression, read/output errors and independent saved FAT bytes.
+Hexdump format-file read and close errors return failure. The runtime registry
+and ash dispatch expose hexdump from the shared image.
 
 BusyBox mkdir/rmdir/rm/touch now use upstream applets and shared make-directory,
 recursive-remove, confirmation and time helpers. Staged corrections report
