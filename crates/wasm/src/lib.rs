@@ -249,6 +249,7 @@ impl World {
                 | "hexdump"
                 | "base64"
                 | "sha256sum"
+                | "realpath"
         )
     }
 

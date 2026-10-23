@@ -30,6 +30,76 @@ char *bin2hex(char *destination, const char *source, int count)
     return destination;
 }
 
+char *xmalloc_realpath_coreutils(char *path)
+{
+    char *resolved = realpath(path, NULL);
+    if (resolved || errno != ENOENT)
+        return resolved;
+
+    char *link_target = malloc(PATH_MAX + 1);
+    if (!link_target)
+        return NULL;
+    ssize_t link_size = readlink(path, link_target, PATH_MAX);
+    if (link_size >= 0 && link_size < PATH_MAX) {
+        link_target[link_size] = '\0';
+        if (link_target[0] == '/')
+            return xmalloc_realpath_coreutils(link_target);
+        char *slash = strrchr(path, '/');
+        size_t parent_size = slash ? (size_t)(slash - path + 1) : 0;
+        size_t target_size = strlen(link_target);
+        char *joined = malloc(parent_size + target_size + 1);
+        if (!joined) {
+            free(link_target);
+            return NULL;
+        }
+        memcpy(joined, path, parent_size);
+        memcpy(joined + parent_size, link_target, target_size + 1);
+        free(link_target);
+        resolved = xmalloc_realpath_coreutils(joined);
+        free(joined);
+        return resolved;
+    }
+    free(link_target);
+
+    size_t path_size = strlen(path);
+    if (path_size == 0 || path[path_size - 1] == '/')
+        return NULL;
+    char *slash = strrchr(path, '/');
+    const char *name = slash ? slash + 1 : path;
+    if (!*name)
+        return NULL;
+    char *parent;
+    if (!slash)
+        parent = realpath(".", NULL);
+    else if (slash == path)
+        parent = realpath("/", NULL);
+    else {
+        size_t parent_size = (size_t)(slash - path);
+        char *parent_path = malloc(parent_size + 1);
+        if (!parent_path)
+            return NULL;
+        memcpy(parent_path, path, parent_size);
+        parent_path[parent_size] = '\0';
+        parent = realpath(parent_path, NULL);
+        free(parent_path);
+    }
+    if (!parent)
+        return NULL;
+    size_t parent_size = strlen(parent);
+    size_t name_size = strlen(name);
+    char *result = malloc(parent_size + name_size + 2);
+    if (!result) {
+        free(parent);
+        return NULL;
+    }
+    memcpy(result, parent, parent_size);
+    if (parent_size != 1 || parent[0] != '/')
+        result[parent_size++] = '/';
+    memcpy(result + parent_size, name, name_size + 1);
+    free(parent);
+    return result;
+}
+
 FILE *xfopen_for_write(const char *path)
 {
     return xfopen(path, "w");

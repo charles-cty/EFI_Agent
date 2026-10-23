@@ -54,6 +54,13 @@ hashlib vectors and binary files, padding/block boundaries, 524289-byte and
 stdout. Actual 512 MiB WHPX/Responses passes with independent saved FAT checks
 in artifacts/sha256-whpx.
 
+Upstream BusyBox realpath is registered in the shared ash image. It resolves
+relative/absolute paths and directory symlinks; the WASI helper also preserves
+upstream canonical output for a missing final component and dangling links.
+Native and actual 512 MiB WHPX/Responses checks pass path normalization,
+multiple inputs, missing-parent and trailing-slash errors, with independent
+saved FAT checks in artifacts/realpath-whpx.
+
 BusyBox mkdir/rmdir/rm/touch now use upstream applets and shared make-directory,
 recursive-remove, confirmation and time helpers. Staged corrections report
 directory traversal errors and new-file timestamp errors, preserve nonzero

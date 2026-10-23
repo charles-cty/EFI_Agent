@@ -32,6 +32,8 @@ from wasm_base64_fixture import BASE64_CHECK
 from test_busybox_base64 import verify_base64
 from wasm_sha256_fixture import SHA256_CHECK
 from test_busybox_sha256 import verify_sha256
+from wasm_realpath_fixture import REALPATH_CHECK
+from test_busybox_realpath import verify_realpath
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -277,6 +279,7 @@ def main():
     parser.add_argument("--text-applets", action="store_true", help="Run upstream basic and text applet WHPX checks")
     parser.add_argument("--base64-applet", action="store_true", help="Run upstream basic and base64 applet WHPX checks")
     parser.add_argument("--sha256-applet", action="store_true", help="Run upstream basic and SHA-256 applet WHPX checks")
+    parser.add_argument("--realpath-applet", action="store_true", help="Run upstream basic and realpath applet WHPX checks")
     args = parser.parse_args()
     if args.code_cancel_only and not args.code_workspace:
         parser.error("--code-cancel-only requires --code-workspace")
@@ -433,15 +436,17 @@ def main():
         Provider.code_expected.append('UPSTREAM_BASIC_APPLETS_OK')
         Provider.code_steps.append(('python', {'code': MUTATION_APPLETS_CHECK + DATE_CHECK}))
         Provider.code_expected.append('UPSTREAM_DATE_OK')
-    applet_modes = sum((args.text_applets, args.base64_applet, args.sha256_applet))
+    applet_modes = sum((args.text_applets, args.base64_applet, args.sha256_applet, args.realpath_applet))
     if applet_modes:
         if not args.code_workspace or args.filesystem_tools or args.code_cancel_only:
             parser.error("Applet checks require --code-workspace and exclude other code modes")
         if applet_modes != 1:
             parser.error("Select one applet check mode")
-        fixture = (SHA256_CHECK if args.sha256_applet else
+        fixture = (REALPATH_CHECK if args.realpath_applet else
+                   SHA256_CHECK if args.sha256_applet else
                    BASE64_CHECK if args.base64_applet else TEXT_APPLETS_CHECK)
-        marker = ('UPSTREAM_SHA256_OK' if args.sha256_applet else
+        marker = ('UPSTREAM_REALPATH_OK' if args.realpath_applet else
+                  'UPSTREAM_SHA256_OK' if args.sha256_applet else
                   'UPSTREAM_BASE64_OK' if args.base64_applet else 'UPSTREAM_TEXT_APPLETS_OK')
         Provider.code_steps = [
             ('python', {'code': BASIC_APPLETS_CHECK}),
@@ -551,7 +556,7 @@ def main():
                 wait("Extra drivers started: 1")
                 send("/clear")
                 wait("Conversation cleared")
-            if args.text_applets or args.base64_applet or args.sha256_applet:
+            if args.text_applets or args.base64_applet or args.sha256_applet or args.realpath_applet:
                 send("Exercise code tools")
                 wait("CODE_TOOLS_VERIFIED", args.code_timeout)
                 send("/exit")
@@ -569,7 +574,9 @@ def main():
                     )
                     hexdump_octal = workspace.read('hexdump-octal-result')
                     assert hexdump_octal == b'0000000 101 000 377 102' + b' ' * 48 + b'\n0000004\n'
-                    if args.sha256_applet:
+                    if args.realpath_applet:
+                        verify_realpath(workspace)
+                    elif args.sha256_applet:
                         verify_sha256(workspace)
                     elif args.base64_applet:
                         verify_base64(workspace)

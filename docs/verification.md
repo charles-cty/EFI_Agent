@@ -4596,6 +4596,29 @@ native runner's 60-second guest limit. The useful syscall boundaries through
 because it is outside the storage-write requirement. Upstream BusyBox date and
 time sources still emit existing non-fatal string-offset warnings.
 
+## 2026-10-23 upstream realpath applet
+
+The shared ash image registers upstream BusyBox 1.37.0 `realpath`. The applet
+uses the WASI libc resolver for existing paths. Its platform helper retains the
+upstream behavior for a missing final component and dangling final symlink by
+canonicalizing the parent and resolving the link target.
+
+Native Release integration passes paths containing `.` and `..`, absolute and
+relative names, directory symlinks, multiple operands, dangling symlinks,
+missing final names, missing parents, trailing slash errors and argument errors.
+Expected canonical paths are independently checked with Python `os.path`
+resolution. Actual 512 MiB WHPX/Responses runs the basic applet and realpath
+fixtures, then reads the result and saved symlink target directly from FAT.
+The Windows Release EFI/launcher package, WASI guest build, WASM tests, Clippy
+with warnings denied, format and Python syntax checks pass. Evidence:
+`artifacts/realpath-build.log`, `artifacts/realpath-native.log`,
+`artifacts/realpath-package.log`, `artifacts/realpath-rust-tests.log`,
+`artifacts/realpath-whpx.log` and `artifacts/realpath-whpx`.
+
+Resolved verification issue: the upstream realpath applet has no option parser;
+`-Q` is a pathname, not an invalid option. The test now checks its documented
+operand behavior and uses a no-operand call for the usage error.
+
 ## 2026-10-23 upstream od applet
 
 The shared BusyBox ash image now includes upstream 1.37.0 `od` and its dump

@@ -131,6 +131,7 @@ void sha512_hash(sha512_ctx_t *context, const void *buffer, size_t length);
 unsigned sha512_end(sha512_ctx_t *context, void *result);
 char *bin2hex(char *destination, const char *source, int count);
 void die_if_ferror(FILE *stream, const char *name);
+char *xmalloc_realpath_coreutils(char *path);
 
 typedef struct llist_t {
     struct llist_t *link;

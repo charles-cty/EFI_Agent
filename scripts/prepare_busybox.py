@@ -27,7 +27,7 @@ ENABLED = {
     "DATE", "FEATURE_DATE_ISOFMT", "FEATURE_DATE_NANO",
     "SORT", "FEATURE_SORT_BIG", "UNIQ", "CUT", "FEATURE_CUT_REGEX",
     "TR", "FEATURE_TR_CLASSES", "FEATURE_TR_EQUIV",
-    "OD", "HEXDUMP", "BASE64", "SHA256SUM", "FEATURE_MD5_SHA1_SUM_CHECK",
+    "OD", "HEXDUMP", "BASE64", "SHA256SUM", "FEATURE_MD5_SHA1_SUM_CHECK", "REALPATH",
 }
 
 
@@ -349,6 +349,7 @@ def main():
              args.source / "libbb/dump.c", args.source / "libbb/xatonum.c",
              args.source / "coreutils/uudecode.c", args.source / "libbb/uuencode.c",
              args.source / "coreutils/md5_sha1_sum.c", args.source / "libbb/hash_md5_sha.c",
+             args.source / "coreutils/realpath.c",
              args.source / "coreutils/date.c", args.source / "libbb/compare_string_array.c",
              *(args.source / f"coreutils/{name}.c" for name in ("sort", "uniq", "cut", "tr")),
              *(args.source / f"libbb/{name}.c" for name in (
