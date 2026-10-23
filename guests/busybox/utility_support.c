@@ -100,6 +100,21 @@ char *xmalloc_realpath_coreutils(char *path)
     return result;
 }
 
+char *xmalloc_readlink_or_warn(const char *path)
+{
+    char *target = xmalloc(PATH_MAX + 1);
+    ssize_t length = readlink(path, target, PATH_MAX);
+    if (length < 0) {
+        int error = errno;
+        free(target);
+        bb_error_msg("%s: cannot read link: %s", path,
+                     error == EINVAL ? "not a symlink" : strerror(error));
+        return NULL;
+    }
+    target[length] = '\0';
+    return target;
+}
+
 FILE *xfopen_for_write(const char *path)
 {
     return xfopen(path, "w");

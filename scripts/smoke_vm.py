@@ -34,6 +34,8 @@ from wasm_sha256_fixture import SHA256_CHECK
 from test_busybox_sha256 import verify_sha256
 from wasm_realpath_fixture import REALPATH_CHECK
 from test_busybox_realpath import verify_realpath
+from wasm_stat_fixture import STAT_CHECK
+from test_busybox_stat import verify_stat
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -273,13 +275,14 @@ def main():
     parser.add_argument("--http", action="store_true", help="Use plaintext HTTP to test local-only transport and clean TCP EOF")
     parser.add_argument("--driver", type=Path, help="Optional EFI boot-service driver fixture")
     parser.add_argument("--code-workspace", type=Path, help="Stage ash, Python and its library; exercise real model code tools")
-    parser.add_argument("--code-timeout", type=float, default=480, help="Maximum seconds for the complete code-tool sequence under TCG")
+    parser.add_argument("--code-timeout", type=float, default=480, help="Maximum seconds for the complete code-tool sequence")
     parser.add_argument("--code-cancel-only", action="store_true", help="Run only code cancellation/isolation checks; requires --code-workspace")
     parser.add_argument("--filesystem-tools", action="store_true", help="Verify nested file-tool writes, mkdir, large writes and finite Python stdin")
     parser.add_argument("--text-applets", action="store_true", help="Run upstream basic and text applet WHPX checks")
     parser.add_argument("--base64-applet", action="store_true", help="Run upstream basic and base64 applet WHPX checks")
     parser.add_argument("--sha256-applet", action="store_true", help="Run upstream basic and SHA-256 applet WHPX checks")
     parser.add_argument("--realpath-applet", action="store_true", help="Run upstream basic and realpath applet WHPX checks")
+    parser.add_argument("--stat-applet", action="store_true", help="Run upstream basic and stat applet WHPX checks")
     args = parser.parse_args()
     if args.code_cancel_only and not args.code_workspace:
         parser.error("--code-cancel-only requires --code-workspace")
@@ -436,16 +439,18 @@ def main():
         Provider.code_expected.append('UPSTREAM_BASIC_APPLETS_OK')
         Provider.code_steps.append(('python', {'code': MUTATION_APPLETS_CHECK + DATE_CHECK}))
         Provider.code_expected.append('UPSTREAM_DATE_OK')
-    applet_modes = sum((args.text_applets, args.base64_applet, args.sha256_applet, args.realpath_applet))
+    applet_modes = sum((args.text_applets, args.base64_applet, args.sha256_applet, args.realpath_applet, args.stat_applet))
     if applet_modes:
         if not args.code_workspace or args.filesystem_tools or args.code_cancel_only:
             parser.error("Applet checks require --code-workspace and exclude other code modes")
         if applet_modes != 1:
             parser.error("Select one applet check mode")
-        fixture = (REALPATH_CHECK if args.realpath_applet else
+        fixture = (STAT_CHECK if args.stat_applet else
+                   REALPATH_CHECK if args.realpath_applet else
                    SHA256_CHECK if args.sha256_applet else
                    BASE64_CHECK if args.base64_applet else TEXT_APPLETS_CHECK)
-        marker = ('UPSTREAM_REALPATH_OK' if args.realpath_applet else
+        marker = ('UPSTREAM_STAT_OK' if args.stat_applet else
+                  'UPSTREAM_REALPATH_OK' if args.realpath_applet else
                   'UPSTREAM_SHA256_OK' if args.sha256_applet else
                   'UPSTREAM_BASE64_OK' if args.base64_applet else 'UPSTREAM_TEXT_APPLETS_OK')
         Provider.code_steps = [
@@ -556,7 +561,7 @@ def main():
                 wait("Extra drivers started: 1")
                 send("/clear")
                 wait("Conversation cleared")
-            if args.text_applets or args.base64_applet or args.sha256_applet or args.realpath_applet:
+            if args.text_applets or args.base64_applet or args.sha256_applet or args.realpath_applet or args.stat_applet:
                 send("Exercise code tools")
                 wait("CODE_TOOLS_VERIFIED", args.code_timeout)
                 send("/exit")
@@ -574,7 +579,9 @@ def main():
                     )
                     hexdump_octal = workspace.read('hexdump-octal-result')
                     assert hexdump_octal == b'0000000 101 000 377 102' + b' ' * 48 + b'\n0000004\n'
-                    if args.realpath_applet:
+                    if args.stat_applet:
+                        verify_stat(workspace)
+                    elif args.realpath_applet:
                         verify_realpath(workspace)
                     elif args.sha256_applet:
                         verify_sha256(workspace)

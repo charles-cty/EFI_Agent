@@ -289,9 +289,39 @@ gid_t *bb_getgroups(int *count, gid_t *groups)
     return groups;
 }
 
+static struct passwd guest_passwd = {
+    .pw_name = "agent",
+    .pw_uid = 1,
+    .pw_gid = 1,
+    .pw_dir = "/",
+};
+
+static struct group guest_group = {
+    .gr_name = "agent",
+    .gr_gid = 1,
+    .gr_mem = NULL,
+};
+
 struct passwd *getpwnam(const char *name)
 {
-    (void)name;
+    if (strcmp(name, guest_passwd.pw_name) == 0)
+        return &guest_passwd;
+    errno = ENOENT;
+    return NULL;
+}
+
+struct passwd *getpwuid(uid_t uid)
+{
+    if (uid == guest_passwd.pw_uid)
+        return &guest_passwd;
+    errno = ENOENT;
+    return NULL;
+}
+
+struct group *getgrgid(gid_t gid)
+{
+    if (gid == guest_group.gr_gid)
+        return &guest_group;
     errno = ENOENT;
     return NULL;
 }

@@ -8,6 +8,9 @@ tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true,
 false, od, hexdump, base64, sha256sum and realpath, plus mkdir, rmdir, rm,
 touch, date, sort, uniq, cut and tr. Other
 utility applets still need upstream replacement or addition.
+Upstream `stat` now reports file and symlink metadata, ownership, permissions,
+timestamps and custom/terse formats. Filesystem mode (`stat -f`) remains
+disabled until the namespace exposes capacity statistics.
 Date currently supports UTC; other TZ values fail explicitly and timezone
 support remains pending.
 Firmware monotonic waits now use a reported hardware-counter rate. The mount,

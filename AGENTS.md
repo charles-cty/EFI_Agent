@@ -9,6 +9,16 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Upstream BusyBox stat now builds into the shared image with file metadata,
+custom/terse formats, link-following control and the fixed `agent` uid/gid
+names. Filesystem-stat mode is disabled pending namespace capacity reporting.
+Native ash/CPython integration and independent saved-workspace checks pass.
+Actual 512 MiB Windows WHPX/OVMF passes both Responses and Chat Completions
+tool flows with independent saved FAT metadata and byte checks in
+`artifacts/stat-whpx-responses-final` and
+`artifacts/stat-whpx-chat_completions-final`. Native Linux and Windows Release
+checks include 64-bit epoch boundaries and buffered stdout failures.
+
 Upstream BusyBox sort/uniq/cut/tr now build into the shared image. Length-aware
 records preserve NUL and -z data. Sort fixes field-relative offsets, stable
 record positions, large decimal precision, negative/zero human suffixes and

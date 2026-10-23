@@ -90,8 +90,20 @@ enum {
 int efi_ash_spawn_task(union node *node, uint32_t input, uint32_t output, unsigned flags);
 int efi_ash_exec(const char *path, char *const arguments[], char *const environment[]);
 int efi_ash_run(char *const arguments[], char *const environment[]);
-struct passwd { char *pw_dir; };
+struct passwd {
+    char *pw_name;
+    uid_t pw_uid;
+    gid_t pw_gid;
+    char *pw_dir;
+};
+struct group {
+    char *gr_name;
+    gid_t gr_gid;
+    char **gr_mem;
+};
 struct passwd *getpwnam(const char *name);
+struct passwd *getpwuid(uid_t uid);
+struct group *getgrgid(gid_t gid);
 mode_t umask(mode_t mask);
 uid_t geteuid(void);
 uid_t getuid(void);
@@ -146,6 +158,8 @@ void sigprocmask2(int how, sigset_t *mask);
 void sigaction_set(int signal_number, const struct sigaction *action);
 extern const char bb_banner[];
 #define bb_default_path "/bin"
+#define major(device) ((unsigned)(((device) >> 8) & 0xfff))
+#define minor(device) ((unsigned)(((device) & 0xff) | (((device) >> 12) & 0xffffff00)))
 #define DEV_FD_PREFIX "/dev/fd/"
 #define getpid efi_process_getpid
 #define getppid efi_process_getppid

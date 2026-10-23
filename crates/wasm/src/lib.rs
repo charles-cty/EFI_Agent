@@ -250,6 +250,7 @@ impl World {
                 | "base64"
                 | "sha256sum"
                 | "realpath"
+                | "stat"
         )
     }
 

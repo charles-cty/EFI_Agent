@@ -4687,3 +4687,44 @@ Corrections and resolved issues:
 - Existing nonfatal upstream time.c format-string offset warnings remain.
   Regex cut is byte-oriented and rejects embedded NUL explicitly; full
   timezone and the wider delivery gates remain pending.
+
+## 2026-10-23 upstream BusyBox stat applet
+
+BusyBox 1.37.0 `stat` now uses the upstream file-status parser and formatter in
+the shared ash image. The guest supplies the namespace's fixed uid/gid name
+lookup and bounded symlink-reading helper. File status, custom formats,
+terse output, `-L`, and default link-target display are enabled. Filesystem
+status (`-f`) is disabled because the namespace has no capacity-statistics
+provider; it reports the upstream usage error.
+
+Native Release integration through real ash and unchanged CPython passes
+independent Python metadata comparisons for mode, type, size, ownership,
+link count and timestamps. It also checks default human-readable file/link
+output, followed and unfollowed symlinks, terse fields, unknown options,
+missing paths and missing arguments. The independent saved workspace checks
+the output bytes, source file bytes, modes, link targets and timestamps.
+Epoch-format tests cross 2147483647/2147483648 seconds and cover 4294967296
+seconds. The staged port uses 64-bit conversions because WASI has 64-bit
+time_t and 32-bit long. Buffered stdout failures now return failure.
+Evidence: `artifacts/stat-native.log`, `artifacts/stat-windows-native.log`,
+`artifacts/stat-windows-runner-build.log` and `artifacts/stat-build.log`.
+
+Windows Release EFI packaging and actual 512 MiB QEMU/OVMF WHPX tool flows
+pass under both Responses and Chat Completions. Each run independently checks
+the final FAT workspace metadata and bytes. Evidence is in
+`artifacts/stat-whpx-responses-final` and
+`artifacts/stat-whpx-chat_completions-final`. WASM crate tests, Clippy with
+warnings denied, Rust formatting, Python syntax and whitespace checks pass.
+
+The initial Windows packaging attempt lacked `EFI_AGENT_API_BASE`; packaging
+then succeeded with local smoke-only configuration values. The first applet
+build also exposed missing port declarations for passwd/group lookup and
+symlink reading; those interfaces now match the namespace's fixed identity
+and upstream stat behavior.
+
+WSL Git status recursively inspected the dirty submodule and stalled on Windows
+filesystem I/O. The queries were stopped; bounded top-level checks with
+submodule inspection disabled completed. Initial PowerShell quoting errors
+were corrected with a literal Bash heredoc; Visual Studio initialization and
+the Windows Release runner then completed. Existing upstream string-offset
+compiler warnings in head, tail, wc and time.c remain nonfatal.

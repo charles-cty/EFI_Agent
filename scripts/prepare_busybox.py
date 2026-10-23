@@ -28,6 +28,7 @@ ENABLED = {
     "SORT", "FEATURE_SORT_BIG", "UNIQ", "CUT", "FEATURE_CUT_REGEX",
     "TR", "FEATURE_TR_CLASSES", "FEATURE_TR_EQUIV",
     "OD", "HEXDUMP", "BASE64", "SHA256SUM", "FEATURE_MD5_SHA1_SUM_CHECK", "REALPATH",
+    "STAT", "FEATURE_STAT_FORMAT",
 }
 
 
@@ -350,6 +351,7 @@ def main():
              args.source / "coreutils/uudecode.c", args.source / "libbb/uuencode.c",
              args.source / "coreutils/md5_sha1_sum.c", args.source / "libbb/hash_md5_sha.c",
              args.source / "coreutils/realpath.c",
+             args.source / "coreutils/stat.c",
              args.source / "coreutils/date.c", args.source / "libbb/compare_string_array.c",
              *(args.source / f"coreutils/{name}.c" for name in ("sort", "uniq", "cut", "tr")),
              *(args.source / f"libbb/{name}.c" for name in (
@@ -380,6 +382,19 @@ def main():
     prepare_dump(args.source, args.output)
     prepare_base64(args.source, args.output)
     prepare_sha256sum(args.source, args.output)
+    stat = (args.source / "coreutils/stat.c").read_text(encoding="utf-8")
+    # WASI time_t is 64-bit while long is 32-bit.
+    stat = stat.replace('TYPE_SIGNED(time_t) ? "ld" : "lu"',
+                        'TYPE_SIGNED(time_t) ? "lld" : "llu"')
+    for field in ('atime', 'mtime', 'ctime'):
+        stat = replace_once(stat, f'(long) statbuf->st_{field}',
+                            f'(long long) statbuf->st_{field}')
+    stat = replace_once(stat, "\treturn (ok ? EXIT_SUCCESS : EXIT_FAILURE);", '''    if (fflush(stdout) != 0 || ferror(stdout)) {
+        bb_simple_perror_msg("standard output");
+        ok = 0;
+    }
+    return (ok ? EXIT_SUCCESS : EXIT_FAILURE);''')
+    (args.output / "stat.c").write_text(stat, encoding="utf-8")
     hexdump = (args.source / "util-linux/hexdump.c").read_text(encoding="utf-8")
     hexdump = replace_once(hexdump, '#include "libbb.h"', '''#include "libbb.h"
 #define OFF_T_MAX ((off_t)~((off_t)1 << (sizeof(off_t) * 8 - 1)))
