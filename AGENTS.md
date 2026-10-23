@@ -123,7 +123,11 @@ path based; rename/unlink tracking remains pending. Python subprocess now passes
 cwd and umask through its private process adapter; the native Release runner
 passes all 17 CPython integration tests, including relative/absolute cwd,
 missing cwd errors, umask inheritance and per-child overrides. This change has
-not been verified through Windows WHPX. Scandir entries are private proxies
+passed the full Windows WHPX filesystem-tool sequence with independent saved
+FAT checks. Firmware ash cwd behavior also passed. Native tests verify import
+caches, explicit py_compile/compileall and -B behavior. WHPX verifies import
+cache creation/reuse, py_compile, compileall, -B and independent saved FAT
+bytecode headers. Scandir entries are private proxies
 with the standard methods, rather than instances of the built-in DirEntry type.
 The full mount/session/command delivery remains incomplete.
 
@@ -440,8 +444,8 @@ filesystem PATH remain pending. File fd_write validates every iovec before
 effects and writes 64 KiB chunks without the former 512 KiB call limit.
 Finite input and captured output report stream types rather than character
 devices, so unchanged CPython reads `python -` as a script. Automatic import
-bytecode writes remain disabled until firmware rename/delete are complete.
-Explicit native py_compile and compileall work with mkdir/rename support.
+bytecode writes are enabled. Native and WHPX tests verify cache creation/reuse,
+py_compile, compileall and `-B` behavior.
 Model code tools discover root workspace .wasm files, validate their header and
 size, and compile on first spawn. Program lookup includes discovered modules.
 QuickJS has a qjs alias that shares its compiled module. Existing installations

@@ -18,8 +18,11 @@ coverage remains pending.
 The private subprocess adapter also passes cwd and per-child umask through the
 process ABI. Native Release integration verifies parent cwd/umask inheritance,
 relative and absolute child cwd, missing-cwd errors and explicit child umask.
-The full CPython suite passes 17 cases; Windows WHPX verification remains
-pending.
+The full CPython suite passes 17 cases. Windows Release packaging and the
+512 MiB WHPX/Responses filesystem-tool sequence pass, including inherited and
+explicit subprocess cwd/umask behavior and independent saved FAT checks.
+The same WHPX sequence also verifies automatic import cache creation/reuse,
+py_compile, compileall and `-B` suppression with independent saved FAT checks.
 
 ## Required commands
 

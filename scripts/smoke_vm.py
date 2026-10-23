@@ -387,8 +387,40 @@ def main():
                 assert open('stream-copy', 'rb').read() == payload
                 print('UPSTREAM_STREAMS_OK')
                 """)}),
+            ("python", {"code": dedent("""
+                import compileall, importlib.util, os, py_compile, subprocess, sys
+                os.makedirs('cache-check')
+                with open('cache-check/cached_module.py', 'w') as source:
+                    source.write('value = 731\\n')
+                sys.path.insert(0, 'cache-check')
+                import cached_module
+                cache = importlib.util.cache_from_source(os.path.abspath('cache-check/cached_module.py'))
+                assert cached_module.value == 731 and os.path.isfile(cache)
+                with open('cache-check/pyc-magic.bin', 'wb') as marker:
+                    marker.write(importlib.util.MAGIC_NUMBER)
+                with open(cache, 'rb') as bytecode:
+                    assert bytecode.read(4) == importlib.util.MAGIC_NUMBER
+                py_compile.compile('cache-check/cached_module.py', cfile='cache-check/explicit.pyc', doraise=True)
+                assert compileall.compile_dir('cache-check', quiet=2)
+                original = os.stat('cache-check/cached_module.py')
+                with open('cache-check/cached_module.py', 'w') as source:
+                    source.write('value = ???\\n')
+                os.utime('cache-check/cached_module.py', ns=(original.st_atime_ns, original.st_mtime_ns))
+                reused = subprocess.run(
+                    ['python', '-c', "import sys;sys.path.insert(0,'cache-check');import cached_module;assert cached_module.value==731"],
+                    capture_output=True)
+                assert (reused.returncode, reused.stdout, reused.stderr) == (0, b'', b''), reused
+                with open('cache-check/no_cache_module.py', 'w') as source:
+                    source.write('value = 193\\n')
+                no_cache = subprocess.run(
+                    ['python', '-B', '-c', "import sys;sys.path.insert(0,'cache-check');import no_cache_module"],
+                    capture_output=True)
+                assert (no_cache.returncode, no_cache.stdout, no_cache.stderr) == (0, b'', b''), no_cache
+                assert not os.path.exists(importlib.util.cache_from_source('cache-check/no_cache_module.py'))
+                print('PYTHON_CACHE_OK')
+                """)}),
         ]
-        Provider.code_expected = ["File saved", "NESTED_SCRIPT_OK", "FILESYSTEM_WRITES_OK", "HEREDOC_SCRIPT_OK", "FINITE_STDIN_OK", "PERMISSIONS_CWD_OK", "MUTATION_SHARED_OK", "UPSTREAM_STREAMS_OK"]
+        Provider.code_expected = ["File saved", "NESTED_SCRIPT_OK", "FILESYSTEM_WRITES_OK", "HEREDOC_SCRIPT_OK", "FINITE_STDIN_OK", "PERMISSIONS_CWD_OK", "MUTATION_SHARED_OK", "UPSTREAM_STREAMS_OK", "PYTHON_CACHE_OK"]
         Provider.code_steps.append(('python', {'code': TIME_CHECK}))
         Provider.code_expected.append('MONOTONIC_WAIT_OK')
         Provider.code_steps.append(('python', {'code': BASIC_APPLETS_CHECK}))
@@ -622,6 +654,12 @@ def main():
                                 assert workspace.read('stream-copy') == stream_payload
                                 assert workspace.read('stream-binary') == stream_payload
                                 assert workspace.read('stream-long') == b'x' * 1100003
+                                cached_bytecode = workspace.read('cache-check/__pycache__/cached_module.cpython-314.pyc')
+                                pyc_magic = workspace.read('cache-check/pyc-magic.bin')
+                                assert cached_bytecode[:4] == pyc_magic
+                                assert workspace.read('cache-check/cached_module.py') == b'value = ???\n'
+                                assert workspace.read('cache-check/explicit.pyc')[:4] == pyc_magic
+                                assert 'cache-check/__pycache__/no_cache_module.cpython-314.pyc' not in workspace.entries
                                 assert workspace.read('monotonic-result') == b'MONOTONIC_WAIT_OK\n'
                                 assert workspace.read('basic-applets-result') == b'UPSTREAM_BASIC_APPLETS_OK\n'
                                 verify_mutation_applets(workspace)

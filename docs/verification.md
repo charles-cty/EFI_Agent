@@ -3867,7 +3867,13 @@ Finite stdin and captured output now report WASI stream types instead of
 CHARACTER_DEVICE. The unchanged prebuilt CPython binary executes `python -`
 with finite stdin, empty stdin and ash here-documents without a REPL banner.
 Explicit native py_compile and compileall create nested caches. Automatic
-import bytecode writes remain disabled pending firmware rename/delete support.
+import bytecode writes are enabled; native integration verifies cache
+creation, reuse, explicit py_compile/compileall and -B behavior. Windows WHPX
+verification also passes the full 512 MiB filesystem-tool sequence with
+automatic cache creation/reuse, explicit py_compile and compileall, and -B
+suppression. The guest writes its CPython magic value as an independent oracle;
+saved FAT inspection confirms valid headers, source contents and absence of the
+suppressed cache. Output is in `artifacts/python-cache-whpx`.
 
 Model code tools discover workspace `.wasm` files before execution, validate
 headers and sizes, and compile on first spawn. The qjs alias shares the
@@ -4174,10 +4180,19 @@ All 17 CPython integration tests pass on the native Release `run_guest`,
 including relative and absolute cwd, cwd inheritance, absent cwd, umask
 inheritance/override, normal imports, finite stdin, descriptor mapping and
 large duplex pipes. `cargo test -p efi-agent-wasm --test process_control`
-passes all seven cases, and `cargo fmt --all` passes. This change has not been
-verified through Windows WHPX. The existing workspace ash WASM predates the
-current BusyBox source, so these tests verify cwd with the prebuilt Python
-module and do not establish firmware ash cwd behavior.
+passes all seven cases, and `cargo fmt --all` passes. The native tests verify
+the prebuilt Python module; firmware ash cwd behavior is covered by the WHPX
+follow-up below.
+
+Follow-up verification built and packaged the Windows Release EFI, then ran
+`scripts/smoke_vm.py` with WHPX, 512 MiB RAM, the Responses protocol and the
+current ash/Python workspace. The complete filesystem-tool sequence passed,
+including inherited cwd/umask, explicit relative and absolute subprocess cwd,
+missing-cwd failure, explicit child umask, filesystem mutations, upstream
+applets, monotonic waits and 8 MiB writes. Independent FAT checks confirmed
+saved file bytes, names, modes and deletions. The run also passed tool
+cancellation, background-process isolation, HTTPS streaming and request
+cancellation. Output is in `artifacts/cwd-umask-whpx`.
 
 ## 2026-10-22 upstream stream applets and output backpressure
 
