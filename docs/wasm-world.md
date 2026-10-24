@@ -17,6 +17,15 @@ inode takes the former name. Mounted views add the correct mount prefix.
 This query does not expand directory-fd capabilities. Process cwd and guest libc
 still use path strings; anchored cwd routing remains pending.
 
+The host-only `parent_directory` operation obtains the actual parent anchor for
+runtime cwd traversal. Namespace commits retain the last parent of a newly
+detached, open directory. An integer inode-reference graph keeps this ancestry
+live without an Rc cycle or persistent directory names. Last-reference release
+walks the detached chain iteratively; garbage collection reclaims unused nodes.
+Failed journal commits publish no new parent references. Parent views preserve
+mount routing when traversal reaches the workspace or temporary mount root.
+This operation is not exposed through guest directory capabilities.
+
 `namespace::read_snapshot` reads the committed logical tree without recovery
 writes or garbage collection. It exposes validated backing paths to host
 export code only. The firmware raw provider now implements deletion and volume

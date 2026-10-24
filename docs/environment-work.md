@@ -205,7 +205,9 @@ The namespace derives the path from the retained inode and its current parents;
 mounted views preserve the workspace or temporary mount prefix. Rename and
 old-name reuse cannot redirect this query to a replacement inode. Removed or
 replaced anchors return NotFound. Existing directory capabilities stay bounded.
-Runtime cwd ownership, parent navigation, libc adaptation and full native/WHPX
+A host-only parent operation also retains deleted-directory ancestry until its
+last live reference closes and restores root routing at mount boundaries.
+Runtime cwd ownership, cwd-aware traversal, libc adaptation and full native/WHPX
 cwd acceptance remain pending.
 
 ## Delivery requirements

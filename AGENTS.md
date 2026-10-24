@@ -14,6 +14,16 @@ Namespace and mounted views follow ancestor renames and reject path queries
 for removed or replaced directory inodes, including when an old name is reused.
 Ordinary directory-fd capability bounds remain unchanged. This is a prerequisite
 for anchored cwd; process cwd and guest libc still use path strings.
+The host-only parent-directory operation follows actual inode parents and retains
+the last parent of a removed directory until its last live reference closes.
+Detached ancestry is absent from snapshots and journals. Parent views restore
+virtual root routing across workspace and temporary mount boundaries. Cwd has
+not yet been connected to these operations.
+Full host tests, interruption recovery, host/UEFI Clippy, formatting, Release
+packaging, all 17 CPython cases and native mount/process-file regressions pass.
+Both 512 MiB WHPX APIs pass current namespace/process-file regression and
+independent saved FAT checks in artifacts/cwd-parent-whpx-responses and
+artifacts/cwd-parent-whpx-chat_completions.
 
 Process files now expose actual PID/parent/dispatcher state, startup cmdline and
 environment, cwd/exe links, fd links and mounts. Proc self views bind per process,

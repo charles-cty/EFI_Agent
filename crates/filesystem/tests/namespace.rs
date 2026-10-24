@@ -601,6 +601,50 @@ fn directory_paths_follow_inode_identity_through_ancestor_moves_and_replacement(
 }
 
 #[test]
+fn detached_directory_parents_are_live_only_and_reclaim_after_last_close() {
+    let work = Workspace::new();
+    let namespace = work.open();
+    let initial = namespace.filesystem_statistics("").unwrap().files_free;
+    namespace.create_directory("a").unwrap();
+    namespace.create_directory("a/b").unwrap();
+    let b = namespace.directory_view("a/b").unwrap().unwrap();
+    let a_inode = namespace.metadata("a").unwrap().inode;
+    namespace.remove_directory("a/b").unwrap();
+    namespace.remove_directory("a").unwrap();
+    let a = b.parent_directory().unwrap();
+    assert_eq!(a.metadata("").unwrap().inode, a_inode);
+    assert_eq!(a.directory_path(), Err(FileError::NotFound));
+    assert_eq!(
+        namespace.filesystem_statistics("").unwrap().files_free,
+        initial - 2
+    );
+    namespace.flush().unwrap();
+    // Snapshot export contains directory names, never retained detached ancestry.
+    let snapshot = efi_agent_filesystem::namespace::read_snapshot(work.raw().as_ref())
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.len(), 1);
+    drop(b);
+    assert_eq!(
+        namespace.filesystem_statistics("").unwrap().files_free,
+        initial - 1
+    );
+    drop(a);
+    assert_eq!(
+        namespace.filesystem_statistics("").unwrap().files_free,
+        initial
+    );
+    assert!(namespace.take_errors().is_empty());
+    drop(namespace);
+    let reopened = work.open();
+    assert_eq!(
+        reopened.filesystem_statistics("").unwrap().files_free,
+        initial
+    );
+    assert_eq!(reopened.metadata("a").unwrap_err(), FileError::NotFound);
+}
+
+#[test]
 fn directory_views_survive_rename_and_removed_views_cannot_escape_their_anchor() {
     let work = Workspace::new();
     let namespace = work.open();
@@ -820,6 +864,50 @@ struct FaultFs {
 }
 
 #[test]
+fn interrupted_directory_detach_recovers_without_persistent_parent_references() {
+    for fail_flush in [false, true] {
+        let work = Workspace::new();
+        let faults = Rc::new(Faults {
+            remaining: Cell::new(None),
+            flush: Cell::new(false),
+        });
+        let raw: Rc<dyn FileSystem> = Rc::new(FaultFs {
+            raw: work.raw(),
+            faults: faults.clone(),
+        });
+        let namespace = Namespace::open(raw.clone(), None).unwrap();
+        let initial = namespace.filesystem_statistics("").unwrap().files_free;
+        namespace.create_directory("a").unwrap();
+        namespace.create_directory("a/b").unwrap();
+        let b = namespace.directory_view("a/b").unwrap().unwrap();
+        if fail_flush {
+            faults.flush.set(true);
+        } else {
+            faults.remaining.set(Some(32));
+        }
+        assert_eq!(namespace.remove_directory("a/b"), Err(FileError::Io));
+        assert_eq!(b.directory_path(), Err(FileError::Io));
+        assert_eq!(b.parent_directory().err(), Some(FileError::Io));
+        drop(b);
+        drop(namespace);
+        faults.remaining.set(None);
+        let recovered = Namespace::open(raw, None).unwrap();
+        if fail_flush {
+            assert_eq!(recovered.metadata("a/b").unwrap_err(), FileError::NotFound);
+        } else {
+            assert!(recovered.metadata("a/b").unwrap().is_directory());
+            recovered.remove_directory("a/b").unwrap();
+        }
+        recovered.remove_directory("a").unwrap();
+        assert_eq!(
+            recovered.filesystem_statistics("").unwrap().files_free,
+            initial
+        );
+        assert!(recovered.take_errors().is_empty());
+    }
+}
+
+#[test]
 fn hard_link_import_and_link_creation_recover_after_failed_commits() {
     let work = Workspace::new();
     fs::write(work.0.join("source"), b"preserved").unwrap();
@@ -862,6 +950,9 @@ fn hard_link_import_and_link_creation_recover_after_failed_commits() {
     assert_eq!(read(&namespace, "alias"), b"preserved");
 }
 impl FileSystem for FaultFs {
+    fn capacity(&self) -> Result<efi_agent_filesystem::Capacity, FileError> {
+        self.raw.capacity()
+    }
     fn open(&self, path: &str, options: OpenOptions) -> Result<Box<dyn File>, FileError> {
         let file = self.raw.open(path, options)?;
         if path.starts_with(".efi-agent-fs/state") {

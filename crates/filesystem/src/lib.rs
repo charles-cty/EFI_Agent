@@ -298,6 +298,11 @@ pub trait FileSystem: core::any::Any {
     fn directory_path(&self) -> Result<String, FileError> {
         Err(FileError::Unsupported)
     }
+    /// Obtain a directory's actual parent for runtime cwd traversal. This host
+    /// operation is not a guest directory capability. Roots return themselves.
+    fn parent_directory(&self) -> Result<Rc<dyn FileSystem>, FileError> {
+        Err(FileError::Unsupported)
+    }
     fn identity(&self) -> usize {
         self as *const Self as *const () as usize
     }

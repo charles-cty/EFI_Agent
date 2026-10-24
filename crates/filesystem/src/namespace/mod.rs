@@ -34,6 +34,7 @@ struct Inner {
     dirty: Cell<bool>,
     uncertain: Cell<bool>,
     open: RefCell<BTreeMap<u64, usize>>,
+    detached_parents: RefCell<BTreeMap<u64, u64>>,
     errors: RefCell<Vec<FileError>>,
     clock: RefCell<Option<Clock>>,
     storage: Storage,
@@ -187,7 +188,7 @@ impl Inner {
     fn commit(&self, candidate: State) -> Result<(), FileError> {
         self.check()?;
         if matches!(self.storage, Storage::Temporary { .. }) {
-            *self.state.borrow_mut() = candidate;
+            self.install(candidate);
             self.dirty.set(false);
             return Ok(());
         }
@@ -203,10 +204,41 @@ impl Inner {
             self.uncertain.set(true);
             return Err(error);
         }
-        *self.state.borrow_mut() = candidate;
+        self.install(candidate);
         self.generation.set(generation);
         self.dirty.set(false);
         Ok(())
+    }
+
+    fn install(&self, candidate: State) {
+        // Detached directory ancestry is live runtime state, never a name in
+        // the journal. Keep parents until the last retained child is released.
+        let parents: Vec<_> = self
+            .state
+            .borrow()
+            .nodes
+            .iter()
+            .filter_map(|(&id, node)| {
+                let parent = node.parent?;
+                (node.kind == EntryType::Directory
+                    && self.open.borrow().contains_key(&id)
+                    && candidate
+                        .nodes
+                        .get(&id)
+                        .is_some_and(|node| node.parent.is_none()))
+                .then_some((id, parent))
+            })
+            .collect();
+        for (id, parent) in parents {
+            self.retain(parent);
+            assert!(
+                self.detached_parents
+                    .borrow_mut()
+                    .insert(id, parent)
+                    .is_none()
+            );
+        }
+        *self.state.borrow_mut() = candidate;
     }
 
     fn flush(&self) -> Result<(), FileError> {
@@ -222,12 +254,20 @@ impl Inner {
         *self.open.borrow_mut().entry(inode).or_default() += 1;
     }
 
-    fn release(&self, inode: u64) {
-        let mut open = self.open.borrow_mut();
-        let count = open.get_mut(&inode).expect("Retained inode exists");
-        *count -= 1;
-        if *count == 0 {
+    fn release(&self, mut inode: u64) {
+        loop {
+            let mut open = self.open.borrow_mut();
+            let count = open.get_mut(&inode).expect("Retained inode exists");
+            *count -= 1;
+            if *count != 0 {
+                break;
+            }
             open.remove(&inode);
+            drop(open);
+            let Some(parent) = self.detached_parents.borrow_mut().remove(&inode) else {
+                break;
+            };
+            inode = parent;
         }
     }
 
@@ -363,6 +403,7 @@ impl Namespace {
             dirty: Cell::new(false),
             uncertain: Cell::new(false),
             open: RefCell::new(BTreeMap::new()),
+            detached_parents: RefCell::new(BTreeMap::new()),
             errors: RefCell::new(Vec::new()),
             clock: RefCell::new(clock),
             storage: Storage::Journal,
@@ -386,6 +427,7 @@ impl Namespace {
                 dirty: Cell::new(false),
                 uncertain: Cell::new(false),
                 open: RefCell::new(BTreeMap::new()),
+                detached_parents: RefCell::new(BTreeMap::new()),
                 errors: RefCell::new(Vec::new()),
                 clock: RefCell::new(clock),
                 storage: Storage::Temporary { slots, device },
@@ -978,6 +1020,24 @@ impl FileSystem for Namespace {
     fn directory_path(&self) -> Result<String, FileError> {
         self.inner().check()?;
         self.inner().state.borrow().path(self.anchor.inode)
+    }
+    fn parent_directory(&self) -> Result<Rc<dyn FileSystem>, FileError> {
+        self.inner().check()?;
+        let inode = self.anchor.inode;
+        let parent = if inode == ROOT {
+            ROOT
+        } else {
+            self.inner()
+                .state
+                .borrow()
+                .nodes
+                .get(&inode)
+                .ok_or(FileError::NotFound)?
+                .parent
+                .or_else(|| self.inner().detached_parents.borrow().get(&inode).copied())
+                .ok_or(FileError::NotFound)?
+        };
+        Ok(Rc::new(Self::view(self.inner().clone(), parent)))
     }
     fn resolve_path(&self, base: &str, path: &str) -> Result<String, FileError> {
         self.inner().check()?;

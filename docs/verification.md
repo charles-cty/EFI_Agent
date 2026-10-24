@@ -1,5 +1,48 @@
 # Verification record
 
+## 2026-10-24: Retained parent-directory ancestry
+
+The host-only parent-directory operation uses inode parents. A successful
+namespace commit retains the last parent of each newly detached, open directory.
+These runtime references contain inode IDs, not Rc links or persistent names.
+Last-reference release follows the detached chain iteratively. Ordinary guest
+directory capabilities continue to reject parent escape. Runtime-mounted parent
+views restore the virtual root when they cross a workspace or temporary root.
+
+Independent namespace tests check a deleted child followed by parent movement,
+old-name reuse, deletion of the remaining ancestors and distinct inode identity.
+Quota checks cover multiple children retaining one parent, independent parent
+handles, a 96-level detached chain and complete last-close reclamation. Journal
+snapshots exclude detached ancestry; closing all views and reopening recovers
+the original free-inode count. Interrupted writes recover the previous names;
+a failed flush after a complete generation recovers the deleted names. Both
+uncertain cases reject live path/parent queries until recovery.
+
+Full host tests pass in `artifacts/cwd-parent-host-tests.log`. The added
+interruption case and all 29 persistent namespace cases pass in
+`artifacts/cwd-parent-namespace-final.log`. Host and UEFI Clippy with warnings
+denied pass in `artifacts/cwd-parent-clippy-host.log` and
+`artifacts/cwd-parent-clippy-uefi.log`; formatting and whitespace checks pass.
+Release runner and EFI/launcher packaging pass in
+`artifacts/cwd-parent-runner.log` and `artifacts/cwd-parent-package.log`.
+All 17 unchanged-CPython cases, the mount-path fixture and process-file fixture
+pass with independent saved-state checks in `artifacts/cwd-parent-cpython.log`,
+`artifacts/cwd-parent-mounts.log` and `artifacts/cwd-parent-process-files.log`.
+Both actual 512 MiB WHPX model API flows pass the current applet/process-file
+sequence and independent saved FAT checks in
+`artifacts/cwd-parent-whpx-responses` and
+`artifacts/cwd-parent-whpx-chat_completions`. These are regression checks for
+the shared namespace; they do not establish anchored guest cwd behavior.
+
+The initial interruption test used an existing fault-injection wrapper that
+did not forward capacity queries. Adding capacity delegation fixed its
+Unsupported error without changing production capacity behavior.
+QEMU reported an ignored interrupt-vector request and a missing host application
+manifest. Both runs completed successfully without changing the host setup.
+
+These operations are prerequisites. Process cwd, cwd-aware traversal, guest libc
+adaptation and end-to-end anchored cwd acceptance remain pending.
+
 ## 2026-10-24: Physical paths for retained directory views
 
 The filesystem interface now exposes a directory view's current physical path,

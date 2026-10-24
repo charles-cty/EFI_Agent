@@ -29,6 +29,102 @@ fn temporary_names_do_not_reserve_persistent_journal_paths() {
 }
 
 #[test]
+fn detached_directory_ancestry_tracks_moves_and_releases_the_full_chain() {
+    let filesystem = Namespace::temporary(32, 8, 3, None);
+    filesystem.create_directory("parent").unwrap();
+    filesystem.create_directory("parent/child").unwrap();
+    filesystem.create_directory("elsewhere").unwrap();
+    let child = filesystem.directory_view("parent/child").unwrap().unwrap();
+    let parent_inode = filesystem.metadata("parent").unwrap().inode;
+    let child_inode = child.metadata("").unwrap().inode;
+    filesystem.remove_directory("parent/child").unwrap();
+    filesystem.rename("parent", "elsewhere/moved").unwrap();
+    filesystem.create_directory("parent").unwrap();
+    let parent = child.parent_directory().unwrap();
+    assert_eq!(parent.metadata("").unwrap().inode, parent_inode);
+    assert_eq!(parent.directory_path().unwrap(), "elsewhere/moved");
+    drop(parent);
+
+    filesystem.remove_directory("elsewhere/moved").unwrap();
+    filesystem.remove_directory("elsewhere").unwrap();
+    filesystem.remove_directory("parent").unwrap();
+    assert_eq!(child.metadata("").unwrap().inode, child_inode);
+    assert_eq!(child.directory_path(), Err(FileError::NotFound));
+    let parent = child.parent_directory().unwrap();
+    assert_eq!(parent.metadata("").unwrap().inode, parent_inode);
+    assert_eq!(parent.directory_path(), Err(FileError::NotFound));
+    let ancestor = parent.parent_directory().unwrap();
+    assert_eq!(ancestor.directory_path(), Err(FileError::NotFound));
+    let root = ancestor.parent_directory().unwrap();
+    assert_eq!(root.directory_path().unwrap(), "");
+    assert_eq!(
+        root.parent_directory().unwrap().directory_path().unwrap(),
+        ""
+    );
+    assert_eq!(child.metadata("..").unwrap_err(), FileError::NotCapable);
+    assert_eq!(filesystem.filesystem_statistics("").unwrap().files_free, 4);
+    drop(child);
+    drop(parent);
+    drop(ancestor);
+    assert_eq!(filesystem.filesystem_statistics("").unwrap().files_free, 7);
+    assert!(filesystem.take_errors().is_empty());
+}
+
+#[test]
+fn detached_parent_references_are_counted_per_child_and_release_iteratively() {
+    let filesystem = Namespace::temporary(32, 128, 3, None);
+    filesystem.create_directory("a").unwrap();
+    filesystem.create_directory("a/left").unwrap();
+    filesystem.create_directory("a/right").unwrap();
+    let left = filesystem.directory_view("a/left").unwrap().unwrap();
+    let right = filesystem.directory_view("a/right").unwrap().unwrap();
+    filesystem.remove_directory("a/left").unwrap();
+    filesystem.remove_directory("a/right").unwrap();
+    filesystem.remove_directory("a").unwrap();
+    drop(left);
+    assert_eq!(
+        filesystem.filesystem_statistics("").unwrap().files_free,
+        125
+    );
+    assert_eq!(
+        right
+            .parent_directory()
+            .unwrap()
+            .metadata("")
+            .unwrap()
+            .links,
+        0
+    );
+    drop(right);
+    assert_eq!(
+        filesystem.filesystem_statistics("").unwrap().files_free,
+        127
+    );
+
+    let mut paths = Vec::new();
+    let mut path = String::new();
+    for _ in 0..96 {
+        if !path.is_empty() {
+            path.push('/');
+        }
+        path.push('d');
+        filesystem.create_directory(&path).unwrap();
+        paths.push(path.clone());
+    }
+    let deepest = filesystem.directory_view(&path).unwrap().unwrap();
+    for path in paths.iter().rev() {
+        filesystem.remove_directory(path).unwrap();
+    }
+    assert_eq!(filesystem.filesystem_statistics("").unwrap().files_free, 31);
+    drop(deepest);
+    assert_eq!(
+        filesystem.filesystem_statistics("").unwrap().files_free,
+        127
+    );
+    assert!(filesystem.take_errors().is_empty());
+}
+
+#[test]
 fn temporary_tree_preserves_identity_metadata_and_renamed_directory_anchors() {
     let filesystem = Namespace::temporary(128, 16, 3, Some(Rc::new(|| Ok(731))));
     filesystem.create_directory("dir").unwrap();

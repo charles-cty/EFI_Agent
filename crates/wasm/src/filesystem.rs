@@ -445,6 +445,42 @@ impl FileSystem for VirtualFileSystem {
         }
     }
 
+    fn parent_directory(&self) -> Result<Rc<dyn FileSystem>, FileError> {
+        let mut parent = self.clone();
+        match &self.scope {
+            Scope::Root => (),
+            Scope::Workspace => {
+                parent.base = self.base.parent_directory()?;
+                match parent.base.directory_path() {
+                    Ok(path) if path.is_empty() => parent.scope = Scope::Root,
+                    Ok(_) | Err(FileError::NotFound) => (),
+                    Err(error) => return Err(error),
+                }
+            }
+            Scope::Mount(mount) if mount == "tmp" => match self.tmp.directory_path() {
+                Ok(path) if path.is_empty() => parent.scope = Scope::Root,
+                Ok(_) | Err(FileError::NotFound) => {
+                    let namespace = self.tmp.parent_directory()?;
+                    parent.tmp = Rc::new(
+                        (namespace.as_ref() as &dyn core::any::Any)
+                            .downcast_ref::<namespace::Namespace>()
+                            .expect("Namespace returns its own parent views")
+                            .clone(),
+                    );
+                }
+                Err(error) => return Err(error),
+            },
+            Scope::Mount(mount) => {
+                self.metadata_raw("")?;
+                parent.scope = match mount.rsplit_once('/') {
+                    Some((path, _)) => Scope::Mount(path.into()),
+                    None => Scope::Root,
+                };
+            }
+        }
+        Ok(Rc::new(parent))
+    }
+
     fn resolve_path(&self, base: &str, path: &str) -> Result<String, FileError> {
         if path.is_empty() {
             return Err(FileError::NotFound);
