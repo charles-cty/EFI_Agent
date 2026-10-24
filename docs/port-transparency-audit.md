@@ -97,8 +97,17 @@ Mount construction now rejects existing workspace dev/tmp/proc entries,
 non-directory bin entries and installed-command conflicts before publication.
 The error retains the path; failed replacement preserves the previous root.
 Ordinary bin children remain merged. Firmware model file tools and module
-loaders now use the same mounted root as guest code. Complete devices/process
-information remain incomplete.
+loaders now use the same mounted root as guest code.
+Null/zero/random/urandom now report character metadata and fixed 0666 modes.
+Reads provide EOF, zero bytes or the configured cryptographic provider; writes
+discard data without seeding entropy. Random reads use bounded staging and do
+not publish bytes on provider failure. Device fdstat uses UNKNOWN to avoid
+WASI libc's character-device-as-terminal assumption; filestat retains the
+character type. Standard isatty and unchanged Python stdin remain noninteractive.
+Seek returns zero; truncate and explicit sync fail with EINVAL, while mode/time
+mutations fail with EROFS. BusyBox mount selection omits the Linux UBI character
+device special case and uses the containing filesystem. Descriptor aliases and
+actual process information remain incomplete.
 
 The 2026-10-22 filesystem expansion connects directory creation to native and
 firmware providers, and rename to the native provider. File writes now use

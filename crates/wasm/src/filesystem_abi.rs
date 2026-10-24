@@ -1,5 +1,5 @@
 use alloc::{rc::Rc, string::String};
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use wasmi::{Caller, Linker};
 
 use crate::{
@@ -357,15 +357,17 @@ fn open(
                 Err(error) => return Err(error.errno()),
             }
         }
-        let (target_exists, target_is_directory) = match directory.filesystem.metadata(&path) {
-            Ok(metadata) => (true, metadata.is_directory()),
-            Err(FileError::NotFound) if oflags & 1 != 0 && oflags & 2 == 0 => (false, false),
+        let (target_exists, target_kind) = match directory.filesystem.metadata(&path) {
+            Ok(metadata) => (true, metadata.kind),
+            Err(FileError::NotFound) if oflags & 1 != 0 && oflags & 2 == 0 => {
+                (false, EntryType::File)
+            }
             Err(failure) => return Err(failure.errno()),
         };
         if target_exists && oflags & 5 == 5 {
             return Err(20);
         }
-        let descriptor = if oflags & 2 != 0 || target_is_directory {
+        let descriptor = if oflags & 2 != 0 || target_kind == EntryType::Directory {
             if oflags & !2 != 0 {
                 return Err(28);
             }
@@ -374,7 +376,7 @@ fn open(
             if flags & !4 != 0 {
                 return Err(58);
             }
-            if !target_is_directory {
+            if target_kind != EntryType::Directory {
                 return Err(54);
             }
             let view = directory
@@ -395,7 +397,12 @@ fn open(
                 flags: flags as u16,
             })
         } else {
-            if flags & !1 != 0 {
+            let allowed_flags = if target_kind == EntryType::CharacterDevice {
+                5
+            } else {
+                1
+            };
+            if flags & !allowed_flags != 0 {
                 return Err(58);
             }
             let options = OpenOptions {
@@ -428,7 +435,7 @@ fn open(
                 read: options.read,
                 write: options.write,
                 rights: rights & io::FILE_RIGHTS,
-                append: options.append,
+                flags: Rc::new(Cell::new(flags as u16)),
             }
         };
         caller.data_mut().descriptors.insert(available, descriptor);
@@ -859,7 +866,7 @@ pub(crate) fn link(linker: &mut Linker<Context>) {
                 {
                     Some(Descriptor::File { handle, rights, .. }) if rights & right != 0 => handle
                         .borrow_mut()
-                        .flush()
+                        .sync(name == "fd_datasync")
                         .err()
                         .map(FileError::errno)
                         .unwrap_or(0),

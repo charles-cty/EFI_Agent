@@ -57,7 +57,7 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $build 'stat.c'),
     (Join-Path $build 'du.c'),
     (Join-Path $build 'df.c'), 'guests/busybox/filesystem_support.c',
-    (Join-Path $Source 'libbb/find_mount_point.c'),
+    (Join-Path $build 'find_mount_point.c'),
     (Join-Path $build 'ln.c'),
     (Join-Path $Source 'libbb/isdirectory.c'),
     (Join-Path $Source 'findutils/find.c'),

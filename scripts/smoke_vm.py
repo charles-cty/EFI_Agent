@@ -56,6 +56,7 @@ from wasm_tar_fixture import TAR_CHECK
 from test_busybox_tar import verify_tar
 from wasm_temporary_fixture import TEMPORARY_CHECK, verify_temporary
 from wasm_mount_paths_fixture import MOUNT_PATHS_CHECK, verify_mount_paths
+from wasm_character_devices_fixture import CHARACTER_DEVICES_CHECK, verify_character_devices
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -316,6 +317,7 @@ def main():
     parser.add_argument("--tar-applet", action="store_true", help="Verify upstream tar streams, containment, links and saved archives")
     parser.add_argument("--temporary-mount", action="store_true", help="Verify shared temporary inodes, quotas, mutations and saved workspace exclusion")
     parser.add_argument("--mount-paths", action="store_true", help="Verify cross-mount links, parent traversal and directory bounds")
+    parser.add_argument("--character-devices", action="store_true", help="Verify non-terminal null/zero/random devices and independent saved bytes")
     args = parser.parse_args()
     if args.code_cancel_only and not args.code_workspace:
         parser.error("--code-cancel-only requires --code-workspace")
@@ -477,13 +479,14 @@ def main():
                         args.find_applet, args.program_paths, args.copy_move_applets,
                         args.xargs_applet, args.compression_applets, args.unzip_applet,
                         args.du_applet, args.ln_applet, args.df_applet, args.tar_applet,
-                        args.temporary_mount, args.mount_paths))
+                        args.temporary_mount, args.mount_paths, args.character_devices))
     if applet_modes:
         if not args.code_workspace or args.filesystem_tools or args.code_cancel_only:
             parser.error("Applet checks require --code-workspace and exclude other code modes")
         if applet_modes != 1:
             parser.error("Select one applet check mode")
-        fixture = (MOUNT_PATHS_CHECK if args.mount_paths else
+        fixture = (CHARACTER_DEVICES_CHECK if args.character_devices else
+                   MOUNT_PATHS_CHECK if args.mount_paths else
                    TEMPORARY_CHECK if args.temporary_mount else
                    TAR_CHECK if args.tar_applet else
                    DF_CHECK if args.df_applet else
@@ -500,7 +503,8 @@ def main():
                    REALPATH_CHECK if args.realpath_applet else
                    SHA256_CHECK if args.sha256_applet else
                    BASE64_CHECK if args.base64_applet else TEXT_APPLETS_CHECK)
-        marker = ('MOUNT_PATHS_OK' if args.mount_paths else
+        marker = ('CHARACTER_DEVICES_OK' if args.character_devices else
+                  'MOUNT_PATHS_OK' if args.mount_paths else
                   'TEMPORARY_MOUNT_OK' if args.temporary_mount else
                   'UPSTREAM_TAR_OK' if args.tar_applet else
                   'UPSTREAM_DF_OK' if args.df_applet else
@@ -690,6 +694,8 @@ def main():
                         verify_compression(workspace)
                     elif args.unzip_applet:
                         verify_unzip(workspace)
+                    elif args.character_devices:
+                        verify_character_devices(workspace)
                     elif args.mount_paths:
                         verify_mount_paths(workspace)
                         assert workspace.read('shared-mount-tool-source') == b"print('SHARED_MOUNT_MODEL_EDITED')\n"

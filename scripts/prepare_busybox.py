@@ -566,6 +566,14 @@ def main():
     df = (args.source / "coreutils/df.c").read_text(encoding="utf-8")
     df = replace_once(df, '\treturn status;', '\tfflush_stdout_and_exit(status);')
     (args.output / "df.c").write_text(df, encoding="utf-8")
+    mount = (args.source / "libbb/find_mount_point.c").read_text(encoding="utf-8")
+    # WASI has no UBI volumes or st_rdev. Character devices belong to devfs;
+    # use their containing filesystem identity as for other ordinary paths.
+    mount = replace_once(mount,
+        '\t/* Why S_ISCHR? - UBI volumes use char devices, not block */\n'
+        '\tif (S_ISBLK(s.st_mode) || S_ISCHR(s.st_mode)) {',
+        '\tif (S_ISBLK(s.st_mode)) {')
+    (args.output / "find_mount_point.c").write_text(mount, encoding="utf-8")
     prepare_date(args.source, args.output)
     prepare_text_applets(args.source, args.output, replace_once)
     prepare_dump(args.source, args.output)

@@ -9,6 +9,20 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Null/zero/random/urandom now expose character metadata, distinct inodes and
+fixed 0666 modes. Discard writes, seek, explicit sync/truncate failures,
+shared descriptor flags and non-terminal unchanged Python stdin pass native
+integration. Random reads share the configured cryptographic provider and
+stage at most 64 KiB without publishing failed results. WASI fdstat uses UNKNOWN
+to avoid libc's character-device-as-terminal assumption; filestat retains the
+character type. Upstream BusyBox mount lookup omits its Linux UBI character
+device special case, fixing df device and cross-mount link capacity selection.
+Host tests, host/UEFI Clippy, formatting, native regressions and Release packaging
+pass. Both actual 512 MiB WHPX model API flows and independent saved FAT checks
+pass in artifacts/character-devices-whpx-responses-final and
+artifacts/character-devices-whpx-chat_completions-final. Descriptor aliases,
+actual process files, anchored cwd tracking, manifests and sessions remain.
+
 Mount initialization now rejects existing workspace dev/tmp/proc entries,
 including empty directories and dangling links, before publishing a root.
 Real bin directories remain merged; non-directory bin entries and installed

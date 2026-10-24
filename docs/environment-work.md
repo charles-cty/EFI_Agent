@@ -173,6 +173,19 @@ mount, with independent saved FAT checks in artifacts/mount-layout-whpx-response
 and artifacts/mount-layout-whpx-chat_completions. Devices, process information,
 anchored cwd tracking, manifests and sessions still need completion.
 
+Character devices now provide null EOF, zero bytes and shared cryptographic
+random/urandom reads with bounded staging. Character filestat, distinct inode
+identities, discard writes, seek behavior, explicit sync/truncate errors,
+non-terminal Python stdin and shared descriptor flags pass native integration.
+BusyBox df uses the containing mount for these devices and links to them; its
+Linux UBI special case is omitted because WASI has no st_rdev or UBI volumes.
+Both actual 512 MiB WHPX model API flows pass with independent saved zero bytes,
+random sample digests and device mount exclusion in
+artifacts/character-devices-whpx-responses-final and
+artifacts/character-devices-whpx-chat_completions-final. Descriptor aliases,
+process information, anchored cwd tracking, manifests, sessions and final
+delivery gates remain incomplete.
+
 ## Delivery requirements
 
 - One namespace shared by shell, Python, C, model files and module resolution.

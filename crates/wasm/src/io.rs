@@ -7,7 +7,7 @@ use alloc::{
 use core::cell::{Cell, RefCell};
 
 use crate::MAX_OUTPUT_BYTES;
-use crate::filesystem::{Directory, File, FileError};
+use crate::filesystem::{Directory, EntryType, File, FileError};
 use crate::network::Connection;
 
 pub const PIPE_CAPACITY: usize = 64 * 1024;
@@ -75,7 +75,7 @@ pub(crate) enum Descriptor {
         read: bool,
         write: bool,
         rights: u64,
-        append: bool,
+        flags: Rc<Cell<u16>>,
     },
     Directory(Directory),
     Socket {
@@ -241,21 +241,37 @@ impl Descriptor {
         )
     }
 
-    pub(crate) fn fdstat(&self) -> [u8; 24] {
+    pub(crate) fn fdstat(&self) -> Result<[u8; 24], i32> {
         let mut stat = [0u8; 24];
         match self {
-            Self::File { rights, append, .. } => {
-                stat[0] = 4;
-                stat[2] = u8::from(*append);
+            Self::File {
+                handle,
+                rights,
+                flags,
+                ..
+            } => {
+                let kind = handle
+                    .borrow_mut()
+                    .metadata()
+                    .map_err(FileError::errno)?
+                    .kind;
+                // WASI libc treats CHARACTER_DEVICE as a terminal. These
+                // devices have character filestat but no terminal interface.
+                stat[0] = if kind == EntryType::CharacterDevice {
+                    0
+                } else {
+                    kind as u8
+                };
+                stat[2..4].copy_from_slice(&flags.get().to_le_bytes());
                 stat[8..16].copy_from_slice(&rights.to_le_bytes());
-                return stat;
+                return Ok(stat);
             }
             Self::Directory(directory) => {
                 stat[0] = 3;
                 stat[2..4].copy_from_slice(&directory.flags.to_le_bytes());
                 stat[8..16].copy_from_slice(&directory.rights.to_le_bytes());
                 stat[16..24].copy_from_slice(&directory.inheriting.to_le_bytes());
-                return stat;
+                return Ok(stat);
             }
             _ => {}
         }
@@ -276,7 +292,7 @@ impl Descriptor {
             rights |= 1 << 3; // FD_FDSTAT_SET_FLAGS
         }
         stat[8..16].copy_from_slice(&rights.to_le_bytes());
-        stat
+        Ok(stat)
     }
 
     pub(crate) fn set_flags(&self, requested: u32) -> Result<(), i32> {
@@ -290,7 +306,32 @@ impl Descriptor {
             flags.set(requested as u16);
             return Ok(());
         }
-        let stat = self.fdstat();
+        if let Self::File {
+            handle,
+            rights,
+            flags,
+            ..
+        } = self
+            && handle
+                .borrow_mut()
+                .metadata()
+                .map_err(FileError::errno)?
+                .kind
+                == EntryType::CharacterDevice
+        {
+            if requested == u32::from(flags.get()) {
+                return Ok(());
+            }
+            if rights & (1 << 3) == 0 {
+                return Err(76);
+            }
+            if requested & !5 != 0 {
+                return Err(58);
+            }
+            flags.set(requested as u16);
+            return Ok(());
+        }
+        let stat = self.fdstat()?;
         if requested == u16::from_le_bytes([stat[2], stat[3]]) as u32 {
             Ok(())
         } else {
@@ -331,7 +372,11 @@ impl Descriptor {
                 }
                 let mut handle = handle.borrow_mut();
                 let result = (|| {
-                    let size = handle.metadata()?.size;
+                    let metadata = handle.metadata()?;
+                    if metadata.kind == EntryType::CharacterDevice {
+                        return Ok(0);
+                    }
+                    let size = metadata.size;
                     let position = handle.seek(0, 1)?;
                     Ok::<_, FileError>(
                         size.saturating_sub(position)
@@ -391,7 +436,7 @@ impl Descriptor {
                 .wasi()),
             _ => {
                 let mut stat = [0; 64];
-                stat[16] = self.fdstat()[0];
+                stat[16] = self.fdstat()?[0];
                 stat[24..32].copy_from_slice(&1u64.to_le_bytes());
                 Ok(stat)
             }
@@ -422,6 +467,7 @@ impl Descriptor {
 pub(crate) const FILE_RIGHTS: u64 = (1 << 0)
     | (1 << 1)
     | (1 << 2)
+    | (1 << 3)
     | (1 << 4)
     | (1 << 5)
     | (1 << 6)

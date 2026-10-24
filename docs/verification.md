@@ -1,5 +1,102 @@
 # Verification record
 
+## 2026-10-24: Non-terminal character devices
+
+The null, zero, random and urandom paths now expose character filestat and
+directory-entry types, fixed 0666 modes, distinct inodes and no allocated data.
+Null reads EOF; zero fills the requested buffer. All four accept discard writes
+without changing size or crediting entropy. Valid seeks return zero; truncate,
+fsync and fdatasync reject EINVAL. Close-time flush remains successful. Namespace
+mode/time changes reject EROFS. The device mount reports five inodes and retains
+read-only namespace semantics.
+
+Both random devices share World's configured cryptographic provider, including
+when provider installation follows filesystem or file-handle creation. Each
+read stages at most 64 KiB and returns an ordinary short read. Empty reads need
+no provider. Missing/unavailable entropy returns NOTSUP; provider I/O errors
+return IO without changing the caller's buffer. Writes never seed the provider.
+
+WASI libc identifies terminals from fdstat CHARACTER_DEVICE. Device fdstat
+therefore uses UNKNOWN, while path/fd filestat retains CHARACTER_DEVICE. This
+keeps standard isatty and the unchanged Python stdin CLI noninteractive.
+Descriptor flags share one status cell across duplicates and children. Devices
+support APPEND/NONBLOCK; changed flags require their WASI right. Poll readiness
+does not consume entropy or seek character devices. Explicit sync has a separate
+File method so it can reject EINVAL without turning a normal close into failure.
+
+Three native Rust integration tests verify metadata/identity, null/zero bytes,
+open modes, exclusive create, discard/seek/sync/truncate, configuration order,
+continuous entropy, failure atomicity, 65536/65537 short reads and zero requests.
+A real WAT guest verifies path/fd metadata, non-terminal fdstat, duplicate flags,
+rights, poll readiness, sync/truncate errors and invalid later iovecs before
+entropy use. A provider that fills bytes before returning an error proves guest
+buffer and result-count preservation. Evidence:
+`artifacts/character-devices-focused.log`.
+
+Native Release Python/ash checks pass character tests, 8 MiB discard writes,
+shared blocking flags, mode/time failures, null EOF, zero transfer boundaries,
+an 8 MiB zero file, upstream head/stat/test and shell redirection. Unchanged
+python - with null stdin exits without a banner; inherited zero stdin and
+subprocess.DEVNULL retain non-terminal behavior. Random samples are checked
+through Python and upstream sha256sum, then independently against saved bytes
+and hashlib on the host. Device entries are excluded from persistent storage.
+Evidence: `artifacts/character-devices-native.log` and the extended metadata
+checks in `artifacts/character-devices-regression-character_devices.log`.
+
+Host workspace tests, host/UEFI Clippy and formatting pass in
+`artifacts/character-devices-rust-tests.log`,
+`artifacts/character-devices-clippy-host.log`,
+`artifacts/character-devices-clippy-uefi.log` and
+`artifacts/character-devices-format.log`.
+
+Check corrections: the prebuilt Python distribution omits fcntl. The integration
+fixture uses the existing standard os.get_blocking/os.set_blocking methods;
+poll is verified through the real WASI guest instead of a Python extension.
+An initial read-only inspection named an absent descriptor source file; file
+discovery identified io.rs without changing build or runtime state.
+
+The first df regression exposed upstream's UBI character-device branch using
+WASI's absent st_rdev field and selecting the workspace for /dev/null. The
+prepared upstream mount helper now applies that branch only to block devices.
+Its normal containing-filesystem lookup handles these character devices.
+The corrected native df suite passes, including all four devices and links
+from the workspace and /tmp, compared with independent Python statvfs results
+and saved host capacity in `artifacts/character-devices-final-busybox_df.log`.
+The character-device fixture also checks df source, mount and capacity so the
+firmware checks exercise this correction.
+Its first firmware run used -B1P, which upstream parsed as the invalid block
+size 1P. The corrected fixture passes -B1 and -P as separate arguments; the
+native rerun passes. A documentation patch with an outdated context was rejected
+without changing files and was reapplied against the current text.
+
+Native regressions pass all 17 CPython cases, permission effects/persistence and
+the C wrappers, stream cases and independent saved tee bytes in
+`artifacts/character-devices-final-cpython.log`,
+`artifacts/character-devices-final-guest_permissions.log` and
+`artifacts/character-devices-final-busybox_streams.log`. Mount paths and temporary
+inode regressions pass in `artifacts/character-devices-regression-mount_paths.log`
+and `artifacts/character-devices-regression-temporary_mount.log`. The final
+device/df native fixture passes in
+`artifacts/character-devices-final-character_devices.log`.
+
+Windows WASI SDK 34/Binaryen 133 guest and metadata fixture builds pass in
+`artifacts/character-devices-busybox-build.log`. Release EFI/launcher packaging
+passes in `artifacts/character-devices-final-package-configured.log`. The first
+packaging recheck lacked EFI_AGENT_API_BASE and exited before packaging; a
+process-local test URL, key and model supplied the required configuration.
+
+Both actual 512 MiB Windows WHPX/OVMF model API flows pass the existing basic
+applet sequence and the character-device fixture, including df device/link
+mount selection and standard Python null stdin without a REPL banner.
+Independent saved FAT checks verify the 8 MiB zero file, both random samples
+against saved digests and absence of persistent dev entries. Evidence:
+`artifacts/character-devices-whpx-responses-final` and
+`artifacts/character-devices-whpx-chat_completions-final`, plus their adjacent
+logs. The full networking/application combination was not rerun for this change.
+
+Descriptor aliases, actual process files, anchored cwd tracking, installation
+manifests, retained sessions and final environment delivery remain incomplete.
+
 ## 2026-10-24: Mount conflicts and shared model file tools
 
 Mount construction now inspects workspace entries without following links

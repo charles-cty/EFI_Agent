@@ -140,6 +140,10 @@ pub trait File {
     fn seek(&mut self, offset: i64, whence: u32) -> Result<u64, FileError>;
     fn metadata(&mut self) -> Result<Metadata, FileError>;
     fn flush(&mut self) -> Result<(), FileError>;
+    /// Synchronize stored data for an explicit fsync or fdatasync request.
+    fn sync(&mut self, _data_only: bool) -> Result<(), FileError> {
+        self.flush()
+    }
     /// Change length without changing the cursor. Extended bytes are zero.
     fn resize(&mut self, size: u64) -> Result<(), FileError>;
     fn set_times(&mut self, _access: TimeUpdate, _modify: TimeUpdate) -> Result<(), FileError> {

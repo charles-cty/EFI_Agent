@@ -41,6 +41,13 @@ DF_CHECK = dedent(r'''
         output.write(b'workspace data')
     for path in ['/', '.', 'df-work/data', '/bin/df', '/tmp', '/dev/null', '/proc/uptime']:
         check(path)
+    for name in ('null', 'zero', 'random', 'urandom'):
+        path = '/dev/' + name
+        assert check(path).f_fsid == os.statvfs('/dev').f_fsid
+        for parent in ('df-work', '/tmp'):
+            link = parent + '/df-' + name
+            os.symlink(path, link)
+            assert check(link).f_fsid == os.statvfs('/dev').f_fsid
     for unit, arguments in [(512, ['-B512', '-P']), (1, ['-B1', '-P']),
                             (1048576, ['-mP']), (1024, ['-BKiB', '-P'])]:
         check('/', unit, arguments)

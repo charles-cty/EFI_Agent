@@ -10,7 +10,9 @@ fn virtual_metadata(kind: EntryType, size: u64) -> Metadata {
     metadata
 }
 
+mod device;
 mod walk;
+use device::{Device, DeviceFile, Entropy};
 use walk::Follow;
 
 pub const TEMP_CAPACITY: u64 = 32 * 1024 * 1024;
@@ -23,7 +25,7 @@ fn special_statistics(device: u32) -> FileSystemStatistics {
             available: 0,
             block_size: 1,
         },
-        files: 3,
+        files: if device == 2 { 5 } else { 3 },
         files_free: 0,
         id: device,
         kind: if device == 2 { 0x1373 } else { 0x9fa0 },
@@ -63,6 +65,7 @@ pub struct VirtualFileSystem {
     scope: Scope,
     identity: usize,
     programs: Programs,
+    entropy: Entropy,
 }
 
 impl VirtualFileSystem {
@@ -104,6 +107,7 @@ impl VirtualFileSystem {
             scope: Scope::Root,
             identity,
             programs,
+            entropy: Rc::new(RefCell::new(None)),
         }))
     }
 
@@ -166,8 +170,11 @@ impl VirtualFileSystem {
         if self.scope == Scope::Workspace {
             return None;
         }
+        if Device::from_path(path).is_some() {
+            return Some(EntryType::CharacterDevice);
+        }
         match path {
-            "dev/null" | "dev/zero" | "proc/self" | "proc/uptime" => Some(EntryType::File),
+            "proc/self" | "proc/uptime" => Some(EntryType::File),
             "dev" | "tmp" | "proc" | "bin" => Some(EntryType::Directory),
             _ => None,
         }
@@ -177,8 +184,6 @@ impl VirtualFileSystem {
 struct VirtualFile {
     data: Vec<u8>,
     offset: usize,
-    zero: bool,
-    discard: bool,
     device: u32,
 }
 
@@ -215,10 +220,6 @@ impl File for VirtualFile {
         Ok(special_statistics(self.device))
     }
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize, FileError> {
-        if self.zero {
-            buffer.fill(0);
-            return Ok(buffer.len());
-        }
         let count = buffer
             .len()
             .min(self.data.len().saturating_sub(self.offset));
@@ -230,10 +231,7 @@ impl File for VirtualFile {
         Ok(count)
     }
 
-    fn write(&mut self, buffer: &[u8]) -> Result<usize, FileError> {
-        if self.discard {
-            return Ok(buffer.len());
-        }
+    fn write(&mut self, _buffer: &[u8]) -> Result<usize, FileError> {
         Err(FileError::ReadOnly)
     }
 
@@ -436,26 +434,38 @@ impl VirtualFileSystem {
         if let Some(path) = self.temporary_path(path) {
             return self.tmp.open(path, options);
         }
+        if self.scope != Scope::Workspace
+            && let Some(kind) = Device::from_path(path)
+        {
+            if options.create && options.exclusive {
+                return Err(FileError::Exists);
+            }
+            if options.exclusive && !options.create {
+                return Err(FileError::Invalid);
+            }
+            if (options.truncate || options.append) && !options.write {
+                return Err(FileError::Access);
+            }
+            return Ok(Box::new(DeviceFile {
+                kind,
+                options,
+                entropy: self.entropy.clone(),
+            }));
+        }
         if let Some(kind) = self.virtual_entry(path) {
             if kind == EntryType::Directory {
                 return Err(FileError::IsDirectory);
             }
-            if (options.write || options.create || options.truncate || options.append)
-                && path != "dev/null"
-            {
+            if options.write || options.create || options.truncate || options.append {
                 return Err(FileError::ReadOnly);
             }
-            let (data, zero, discard) = match path {
-                "dev/null" => (Vec::new(), false, true),
-                "dev/zero" => (Vec::new(), true, false),
-                "proc/uptime" => (b"0.00 0.00\n".to_vec(), false, false),
-                _ => (Vec::new(), false, false),
+            let data = match path {
+                "proc/uptime" => b"0.00 0.00\n".to_vec(),
+                _ => Vec::new(),
             };
             return Ok(Box::new(VirtualFile {
                 data,
                 offset: 0,
-                zero,
-                discard,
                 device: if path.starts_with("dev/") { 2 } else { 4 },
             }));
         }
@@ -479,6 +489,11 @@ impl VirtualFileSystem {
         }
         if let Some(path) = self.temporary_path(path) {
             return self.tmp.metadata(path);
+        }
+        if self.scope != Scope::Workspace
+            && let Some(kind) = Device::from_path(path)
+        {
+            return Ok(kind.metadata());
         }
         if let Some(kind) = self.virtual_entry(path) {
             let mut metadata = virtual_metadata(kind, 0);
@@ -532,8 +547,11 @@ impl VirtualFileSystem {
                     )?;
                 }
             } else if path == "dev" {
-                entries.push("null".into(), EntryType::File)?;
-                entries.push("zero".into(), EntryType::File)?;
+                entries.push(".".into(), EntryType::Directory)?;
+                entries.push("..".into(), EntryType::Directory)?;
+                for name in ["null", "zero", "random", "urandom"] {
+                    entries.push(name.into(), EntryType::CharacterDevice)?;
+                }
             } else if path == "proc" {
                 entries.push("self".into(), EntryType::File)?;
                 entries.push("uptime".into(), EntryType::File)?;
@@ -836,6 +854,7 @@ impl VirtualFileSystem {
                 scope: Scope::Mount("tmp".into()),
                 identity: self.identity,
                 programs: self.programs.clone(),
+                entropy: self.entropy.clone(),
             })));
         }
         if self.virtual_directory(path) {
@@ -845,6 +864,7 @@ impl VirtualFileSystem {
                 scope: Scope::Mount(path.into()),
                 identity: self.identity,
                 programs: self.programs.clone(),
+                entropy: self.entropy.clone(),
             })));
         }
         Ok(self.base.directory_view(path)?.map(|base| {
@@ -854,12 +874,17 @@ impl VirtualFileSystem {
                 scope: Scope::Workspace,
                 identity: self.identity,
                 programs: self.programs.clone(),
+                entropy: self.entropy.clone(),
             }) as Rc<dyn FileSystem>
         }))
     }
 }
 
 impl VirtualFileSystem {
+    pub(crate) fn set_random(&self, random: Rc<dyn crate::random::Random>) {
+        *self.entropy.borrow_mut() = Some(random);
+    }
+
     fn temporary_path<'a>(&self, path: &'a str) -> Option<&'a str> {
         if self.scope == Scope::Workspace {
             return None;

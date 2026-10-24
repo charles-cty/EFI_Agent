@@ -488,6 +488,12 @@ impl World {
             self.processes.is_empty(),
             "Cannot replace a live world's random source"
         );
+        if let Some(filesystem) = &self.filesystem {
+            (filesystem.as_ref() as &dyn core::any::Any)
+                .downcast_ref::<filesystem::VirtualFileSystem>()
+                .expect("World installs the virtual root filesystem")
+                .set_random(random.clone());
+        }
         self.random = Some(random);
     }
 
@@ -522,6 +528,9 @@ impl World {
             filesystem::VirtualFileSystem::with_programs(filesystem, self.bin.clone())?;
         if let Some(clock) = &self.clock {
             filesystem.set_clock(clock.clone());
+        }
+        if let Some(random) = &self.random {
+            filesystem.set_random(random.clone());
         }
         self.filesystem = Some(filesystem);
         Ok(())

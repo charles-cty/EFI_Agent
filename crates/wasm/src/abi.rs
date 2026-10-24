@@ -1075,7 +1075,7 @@ pub(crate) fn linker(engine: &Engine) -> Linker<Context> {
             |mut caller: Caller<'_, Context>, fd: u32, ptr: u32| -> i32 {
                 let result = (|| {
                     let descriptor = caller.data().descriptors.get(&fd).ok_or(BADF)?;
-                    let stat = descriptor.fdstat();
+                    let stat = descriptor.fdstat()?;
                     memory(&caller)?
                         .write(&mut caller, ptr as usize, &stat)
                         .map_err(|_| FAULT)

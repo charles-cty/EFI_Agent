@@ -154,8 +154,20 @@ directory remains merged; non-directory bin entries and installed-command
 collisions fail with their path. Failed root replacement leaves the previous
 root and temporary storage installed. Firmware model file tools and module
 loaders share World's mounted root; the raw namespace owns persistent flushing.
-Missing dev/proc paths do not fall through to backing storage. Complete device
-and process-information support remain incomplete.
+Missing dev/proc paths do not fall through to backing storage.
+The null, zero, random and urandom devices report character filestat and directory
+entry types, distinct inodes and fixed 0666 modes. Null reads EOF; zero fills
+reads with NUL bytes. All four discard writes, accept seeks returning zero, and
+reject truncate and explicit synchronization with EINVAL. Namespace mode/time
+changes reject EROFS. Both random devices share the configured cryptographic
+provider; reads stage at most 64 KiB before publishing bytes. Missing entropy
+fails without a fallback. Writes do not seed or credit entropy. Duplicated and
+inherited descriptors share APPEND/NONBLOCK flags. Device fdstat uses UNKNOWN
+because WASI libc equates CHARACTER_DEVICE with a terminal; filestat keeps the
+character type and unchanged CPython treats these descriptors as non-terminals.
+BusyBox mount lookup uses the containing device filesystem instead of its
+Linux UBI character-device branch, since Preview 1 has no st_rdev or UBI volumes.
+Descriptor aliases and actual process-information files remain incomplete.
 
 Ln uses upstream option parsing, hard/symbolic link creation, destination
 directory handling, backups and verbose output. Force and backup operations
