@@ -77,6 +77,18 @@ including nanosecond reference times and link-local timestamps. A new-file
 timestamp failure is reported. Time parsing uses upstream libbb; CPU-time
 clocks, signals and clock setting remain outside these applets.
 
+Cp and mv use the upstream parsers and shared recursive copy, inode and stat
+helpers. They support multiple operands, target directories, archive/recursive
+copies, symlink policies, interactive/no-clobber/forced replacement, update and
+verbose modes. Existing destination symlinks are checked against the source
+before truncation. Traversal, metadata preservation and stdout failures fail;
+mv prints success only after a move succeeds. Long options are enabled.
+The fixed uid/gid may be preserved after a real metadata check; other ownership
+changes fail. Copy timestamp preservation retains upstream whole-second
+precision. Reflinks and automatic hard-link preservation are disabled pending
+provider support; explicit hard links and special node creation return errors.
+Cross-mount mv fallback has not been verified with the incomplete mount layer.
+
 Date uses upstream BusyBox UTC parsing and formatting, RFC/ISO output,
 nanosecond fields and file reference times. Invalid -D input tails, unavailable
 clock reads, oversized formatted output and closed stdout fail explicitly.

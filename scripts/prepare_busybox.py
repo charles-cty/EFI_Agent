@@ -23,6 +23,7 @@ ENABLED = {
     "SLEEP", "FEATURE_FANCY_SLEEP", "FLOAT_DURATION",
     "BASENAME", "DIRNAME", "PWD", "ENV", "PRINTENV", "SEQ", "YES", "TRUE", "FALSE",
     "MKDIR", "RMDIR", "RM", "TOUCH", "FEATURE_TOUCH_SUSV3", "FEATURE_VERBOSE",
+    "CP", "MV", "FEATURE_CP_LONG_OPTIONS", "FEATURE_VERBOSE_CP_MESSAGE",
     "MONOTONIC_SYSCALL",
     "DATE", "FEATURE_DATE_ISOFMT", "FEATURE_DATE_NANO",
     "SORT", "FEATURE_SORT_BIG", "UNIQ", "CUT", "FEATURE_CUT_REGEX",
@@ -212,6 +213,62 @@ def prepare_streams(source: Path, output: Path):
 
 def prepare_mutations(source: Path, output: Path):
     """Use upstream traversal, parsing and prompts with explicit I/O failures."""
+    for name in ("cp", "mv"):
+        text = (source / f"coreutils/{name}.c").read_text(encoding="utf-8")
+        text = replace_once(text, '\treturn status;', '\tfflush_stdout_and_exit(status);')
+        if name == "mv":
+            text = replace_once(text, '\tint copy_flag = 0;', '\tint copy_flag = 0;\n\tint moved = 0;')
+            text = replace_once(text, '\tdo {\n\t\tdest =', '\tdo {\n\t\tmoved = 0;\n\t\tdest =')
+            text = replace_once(text, '\t\t\t\t && (remove_file(*argv, FILEUTILS_RECUR | FILEUTILS_FORCE) >= 0)\n\t\t\t\t) {',
+                                '\t\t\t\t && (remove_file(*argv, FILEUTILS_RECUR | FILEUTILS_FORCE) >= 0)\n\t\t\t\t) {\n\t\t\t\t\tmoved = 1;')
+            text = replace_once(text, '\t\t\tstatus = 1;\n\t\t}',
+                                '\t\t\tstatus = 1;\n\t\t} else {\n\t\t\tmoved = 1;\n\t\t}')
+            text = replace_once(text, '\t\tif (flags & OPT_VERBOSE) {',
+                                '\t\tif (moved && (flags & OPT_VERBOSE)) {')
+        (output / f"{name}.c").write_text(text, encoding="utf-8")
+
+    copy = (source / "libbb/copy_file.c").read_text(encoding="utf-8")
+    copy = replace_once(copy, '\t\tif (dp == NULL) {\n\t\t\tretval = -1;', '''        if (dp == NULL) {
+            bb_perror_msg("can't open '%s'", source);
+            retval = -1;''')
+    copy = replace_once(copy, '\t\twhile ((d = readdir(dp)) != NULL) {', '''        for (;;) {
+            errno = 0;
+            d = readdir(dp);
+            if (d == NULL) {
+                if (errno) {
+                    bb_perror_msg("can't read '%s'", source);
+                    retval = -1;
+                }
+                break;
+            }''')
+    copy = replace_once(copy, '\t\tclosedir(dp);', '''        if (closedir(dp) < 0) {
+            bb_perror_msg("can't close '%s'", source);
+            retval = -1;
+        }''')
+    copy = replace_once(copy, '\t\t/* retval = -1; - WRONG! copy *WAS* made */',
+                        '\t\tretval = -1;')
+    copy = replace_once(copy, '\t\tsrc_fd = open_or_warn(source, O_RDONLY);', '''        /* POSIX truncation follows an existing destination symlink. Compare
+         * its target before opening it, so an alias cannot erase the source. */
+        if (!ENABLE_FEATURE_NON_POSIX_CP && !(flags & FILEUTILS_INTERACTIVE)
+            && stat(dest, &dest_stat) == 0
+            && source_stat.st_dev == dest_stat.st_dev
+            && source_stat.st_ino == dest_stat.st_ino) {
+            bb_error_msg("'%s' and '%s' are the same file", source, dest);
+            return -1;
+        }
+\t\tsrc_fd = open_or_warn(source, O_RDONLY);''')
+    copy = replace_once(copy, '''\t\tif (lpath) {
+\t\t\tint r = symlink(lpath, dest);''', '''        if (!lpath)
+            return -1;
+        if (lpath) {
+            int r = symlink(lpath, dest);''')
+    copy = replace_once(copy, '\tif (flags & FILEUTILS_VERBOSE) {',
+                        '\tif (retval == 0 && (flags & FILEUTILS_VERBOSE)) {')
+    for attribute in ("times", "ownership", "permissions"):
+        marker = f'bb_perror_msg("can\'t preserve %s of \'%s\'", "{attribute}", dest);'
+        copy = copy.replace(marker, '{ ' + marker + ' retval = -1; }')
+    (output / "copy_file.c").write_text(copy, encoding="utf-8")
+
     for name in ("mkdir", "rmdir", "rm"):
         text = (source / f"coreutils/{name}.c").read_text(encoding="utf-8")
         text = replace_once(text, '\treturn status;', '\tfflush_stdout_and_exit(status);')
@@ -359,7 +416,8 @@ def main():
              *(args.source / f"coreutils/{name}.c" for name in (
                  "cat", "head", "tail", "wc", "tee", "sleep", "basename",
                  "dirname", "pwd", "env", "printenv", "seq", "yes", "true", "false",
-                 "mkdir", "rmdir", "rm", "touch")),
+                 "mkdir", "rmdir", "rm", "touch", "cp", "mv")),
+             args.source / "libbb/copy_file.c", args.source / "libbb/inode_hash.c",
              args.source / "coreutils/od.c", args.source / "util-linux/hexdump.c",
              args.source / "libbb/dump.c", args.source / "libbb/xatonum.c",
              args.source / "coreutils/uudecode.c", args.source / "libbb/uuencode.c",

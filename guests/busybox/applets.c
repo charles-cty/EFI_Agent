@@ -35,6 +35,8 @@ int realpath_main(int argc, char **argv);
 int stat_main(int argc, char **argv);
 int find_main(int argc, char **argv);
 int which_main(int argc, char **argv);
+int cp_main(int argc, char **argv);
+int mv_main(int argc, char **argv);
 int ls_main(int argc, char **argv);
 int mkdir_main(int argc, char **argv);
 int rmdir_main(int argc, char **argv);
@@ -45,55 +47,7 @@ int uniq_main(int argc, char **argv);
 int cut_main(int argc, char **argv);
 int tr_main(int argc, char **argv);
 
-static int copy_stream(int input, int output, long limit)
-{
-    char buffer[65536];
-    for (;;) {
-        ssize_t count = read(input, buffer, sizeof(buffer));
-        if (count == 0)
-            return 0;
-        if (count < 0)
-            return 1;
-        if (limit >= 0 && count > limit)
-            count = limit;
-        ssize_t written = 0;
-        while (written < count) {
-            ssize_t part = write(output, buffer + written, (size_t)(count - written));
-            if (part <= 0)
-                return 1;
-            written += part;
-        }
-        if (limit >= 0) {
-            limit -= count;
-            if (limit == 0)
-                return 0;
-        }
-    }
-}
-
 int grep_main(int argc, char **argv);
-
-static int applet_cp_mv(int argc, char **argv, int move)
-{
-    if (argc != 3) {
-        fputs(move ? "mv: expected source and destination\n" : "cp: expected source and destination\n", stderr);
-        return 2;
-    }
-    if (move)
-        return rename(argv[1], argv[2]) == 0 ? 0 : (bb_simple_perror_msg(argv[1]), 1);
-    int input = open(argv[1], O_RDONLY);
-    int output = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    if (input < 0 || output < 0) {
-        bb_simple_perror_msg(input < 0 ? argv[1] : argv[2]);
-        if (input >= 0) close(input);
-        if (output >= 0) close(output);
-        return 1;
-    }
-    int status = copy_stream(input, output, -1);
-    close(input);
-    close(output);
-    return status;
-}
 
 int efi_busybox_applet(int argc, char **argv)
 {
@@ -132,8 +86,8 @@ int efi_busybox_applet(int argc, char **argv)
     if (strcmp(name, "cut") == 0) return cut_main(argc, argv);
     if (strcmp(name, "tr") == 0) return tr_main(argc, argv);
     if (strcmp(name, "rm") == 0) return rm_main(argc, argv);
-    if (strcmp(name, "cp") == 0) return applet_cp_mv(argc, argv, 0);
-    if (strcmp(name, "mv") == 0) return applet_cp_mv(argc, argv, 1);
+    if (strcmp(name, "cp") == 0) return cp_main(argc, argv);
+    if (strcmp(name, "mv") == 0) return mv_main(argc, argv);
     if (strcmp(name, "date") == 0) return date_main(argc, argv);
     if (strcmp(name, "sleep") == 0) return sleep_main(argc, argv);
     if (strcmp(name, "sed") == 0) return sed_main(argc, argv);

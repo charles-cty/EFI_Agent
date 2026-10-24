@@ -6,7 +6,7 @@ expansion. Initial native/firmware interfaces do not establish full completion.
 The shared image currently uses upstream ls, find, awk, sed, grep, chmod, cat, head,
 tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true,
 false, od, hexdump, base64, sha256sum and realpath, plus mkdir, rmdir, rm,
-touch, date, sort, uniq, cut and tr. Other
+touch, date, sort, uniq, cut, tr, cp, mv and which. Other
 utility applets still need upstream replacement or addition.
 Upstream `stat` now reports file and symlink metadata, ownership, permissions,
 timestamps and custom/terse formats. Filesystem mode (`stat -f`) remains
@@ -42,13 +42,22 @@ traversal, the remaining command inventory and retained sessions remain pending.
 
 ## Required commands
 
-Build the upstream BusyBox implementations of cat, cp, mv, mkdir,
+Build the upstream BusyBox implementations of ls, cat, cp, mv, rm, mkdir,
 rmdir, touch, pwd, head, tail, wc, grep, sed, awk, sort, uniq, cut, tr,
-tee, xargs, basename, dirname, realpath, stat, du, df, date, sleep, env,
+tee, find, xargs, basename, dirname, realpath, stat, du, df, date, sleep, env,
 printenv, seq, yes, true, false, which, od, hexdump, base64, sha256sum, tar,
 gzip, gunzip, unzip, zcat, ln and chmod. Keep the existing ash builtins.
 Each external invocation gets a fresh process, with one shared compiled
 multicall module. Preserve upstream parsing and command algorithms.
+
+Cp and mv now use upstream parsers and shared copy/stat/inode helpers. Windows
+native integration and both 512 MiB WHPX model APIs pass 50 copy/move cases,
+with independent saved FAT bytes, links, modes and timestamps. Same-file aliases
+are checked before truncation; traversal and preservation failures report errors.
+Long options and symbolic links are enabled. Hard-link creation/preservation,
+special node creation and reflinks still require provider support; reflink and
+automatic hard-link preservation features are disabled. Cross-mount move
+fallback remains unverified until mount support is complete.
 
 ## Delivery requirements
 

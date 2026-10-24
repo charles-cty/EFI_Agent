@@ -9,6 +9,19 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Upstream cp/mv now replace the handwritten subsets and link shared copy-file,
+inode-hash and coreutils stat helpers. Long options, recursive/archive copies,
+symlink policies, prompts, update and multioperand moves work through ash.
+Staged corrections prevent same-file truncation through destination symlinks,
+fix --remove-destination's flag, report traversal/preservation/output failures
+and suppress false move-success messages. Native and both 512 MiB WHPX model
+APIs pass 50 semantic/boundary cases plus independent saved FAT bytes, modes,
+symlinks and times in artifacts/copy-move-whpx-responses and
+artifacts/copy-move-whpx-chat_completions. Basic/mutation/PATH regressions,
+host/UEFI Clippy and formatting pass. Hard links, special node creation and
+reflinks remain unavailable; cross-mount moves remain unverified. The broader
+command, mount, manifest and retained-session requirements remain incomplete.
+
 Installed commands and shared BusyBox aliases now appear in executable `/bin`
 entries, including upstream which and the sh alias. Ash uses upstream PATH
 lookup with builtin/function precedence and owner execute checks. Runtime

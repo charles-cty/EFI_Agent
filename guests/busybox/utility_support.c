@@ -190,3 +190,43 @@ void xrename(const char *source, const char *destination)
     if (rename(source, destination) < 0)
         bb_perror_msg_and_die("rename '%s' to '%s'", source, destination);
 }
+
+int open3_or_warn(const char *path, int flags, int mode)
+{
+    int fd = open(path, flags, mode);
+    if (fd < 0)
+        bb_simple_perror_msg(path);
+    return fd;
+}
+
+static int preserve_owner(const char *path, uid_t owner, gid_t group, int follow)
+{
+    struct stat info;
+    if ((follow ? stat(path, &info) : lstat(path, &info)) < 0)
+        return -1;
+    if ((owner != (uid_t)-1 && owner != info.st_uid)
+        || (group != (gid_t)-1 && group != info.st_gid)) {
+        errno = EPERM;
+        return -1;
+    }
+    return 0;
+}
+
+int chown(const char *path, uid_t owner, gid_t group)
+{
+    return preserve_owner(path, owner, group, 1);
+}
+
+int lchown(const char *path, uid_t owner, gid_t group)
+{
+    return preserve_owner(path, owner, group, 0);
+}
+
+int mknod(const char *path, mode_t mode, dev_t device)
+{
+    (void)path;
+    (void)mode;
+    (void)device;
+    errno = ENOTSUP;
+    return -1;
+}

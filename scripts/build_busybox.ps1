@@ -18,7 +18,7 @@ $sysroot = Join-Path $WasiSdk 'share/wasi-sysroot'
 $optimizer = Join-Path $Binaryen 'bin/wasm-opt.exe'
 $compile = '--target=wasm32-wasip1', "--sysroot=$sysroot", '-O2',
     '-fno-optimize-sibling-calls', '-fwrapv', '-D_GNU_SOURCE', '-Iguests/busybox/include',
-    '-Iguests/sjlj/include', '-Iguests/include', '-Iguests/busybox', "-I$build", "-I$Source/include", '-iquote', "$Source/shell",
+    '-Iguests/sjlj/include', '-Iguests/include', '-Iguests/busybox', "-I$build", "-I$Source/include", '-iquote', "$Source/shell", '-iquote', "$Source/coreutils",
     '-Werror=return-type', '-Werror=implicit-function-declaration', '-Wl,-z,stack-size=1048576', '-Wl,--max-memory=67108864'
 foreach ($symbol in @('stat', 'lstat', 'fstat', 'fstatat', 'chmod', 'fchmod', 'open', 'mkdir', 'chdir')) {
     $compile += "-Wl,--wrap=$symbol"
@@ -56,6 +56,8 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $build 'stat.c'),
     (Join-Path $Source 'findutils/find.c'),
     (Join-Path $build 'which.c'), (Join-Path $build 'executable.c'),
+    (Join-Path $build 'cp.c'), (Join-Path $build 'mv.c'), (Join-Path $build 'copy_file.c'),
+    (Join-Path $Source 'coreutils/libcoreutils/cp_mv_stat.c'), (Join-Path $Source 'libbb/inode_hash.c'),
     (Join-Path $Source 'libbb/replace.c'),
     (Join-Path $build 'ls.c'), (Join-Path $Source 'libbb/human_readable.c'),
     (Join-Path $Source 'libbb/auto_string.c'), (Join-Path $Source 'libbb/printable_string.c'),

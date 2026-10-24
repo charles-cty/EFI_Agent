@@ -1,5 +1,52 @@
 # Verification record
 
+## 2026-10-24: Upstream copy and move applets
+
+Cp and mv now link the upstream 1.37.0 parsers, copy_file, inode_hash and
+coreutils stat helpers. Native Release integration passes 50 semantic/error
+cases, including binary copies at 65535/65536/65537 and
+524287/524288/524289 bytes. Independent guest assertions check no-clobber,
+interactive/forced replacement, source preservation after errors, directory
+recursion containment, symlink/dangling policies, archive modes/times, --parents,
+multiple sources, -t/-T, update, verbose output errors and retained old bytes
+after replacement. The host reader independently checks saved bytes, modes,
+links, timestamps and deleted names.
+
+Actual 512 MiB Windows WHPX/OVMF with qemu64,+rdrand passes both Responses and
+Chat Completions code-tool flows with the same 50 cases and basic/find applet
+regressions. Independent FAT checks pass in
+`artifacts/copy-move-whpx-responses` and
+`artifacts/copy-move-whpx-chat_completions`. Existing native basic, mutation
+and PATH integration passes. Host and UEFI Clippy, formatting and Python
+syntax checks pass. The shared ash image was rebuilt with Windows WASI SDK 34
+and Binaryen 133. No Rust production source changed in this step.
+
+High-risk checks distinguish same-file aliases from separate contents, a
+nonwritable target from a forced replacement, a recursive child destination
+from a separate tree, and success diagnostics from real copy/move results.
+The underlying namespace byte/mode oracle is independent of the applets.
+Destination-alias copies fail before truncating the source. Runtime cancellation
+and the complete networking/TLS combination were not rerun for this change.
+
+Build and integration issues corrected:
+
+- Configuration scanning initially omitted the new translation units, leaving
+  disabled feature macros undefined. It now scans their upstream feature uses.
+- A source-patch marker matched multiple move branches; it now identifies the
+  complete cross-filesystem copy/remove condition.
+- --remove-destination used the same flag as --parents in the imported helper
+  enum. The flag now matches the upstream getopt allocation. A separate
+  destination-symlink alias check prevents source truncation before a POSIX copy.
+- Existing upstream string-offset compiler warnings remain visible and do not
+  prevent the Windows WASM build.
+- The command ledger omitted ls, rm and find from its required inventory.
+  Those existing requirements are now listed explicitly.
+
+Hard-link creation/preservation, special node creation and reflinks still need
+provider support. They are not reported as available; automatic hard-link and
+reflink features are disabled. Cross-mount fallback awaits complete mounts.
+The wider environment delivery and retained sessions remain incomplete.
+
 ## 2026-10-24: Executable PATH, installed commands and shebangs
 
 Upstream ash now searches executable filesystem entries with its normal

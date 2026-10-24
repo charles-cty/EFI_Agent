@@ -3,6 +3,7 @@
 
 #include <alloca.h>
 #include <getopt.h>
+#include <sys/time.h>
 
 #define ALIGN4 __attribute__((aligned(4)))
 #define BUILD_BUG_ON(condition) _Static_assert(!(condition), "invalid BusyBox buffer size")
@@ -50,7 +51,7 @@ enum {	/* cp.c, mv.c, install.c depend on these values. CAREFUL when changing th
 /* How many bits in FILEUTILS_CP_OPTSTR? */
 	FILEUTILS_CP_OPTBITS      = 18 - !ENABLE_SELINUX,
 
-	FILEUTILS_RMDEST          = 1 << (19 - !ENABLE_SELINUX), /* cp --remove-destination */
+	FILEUTILS_RMDEST          = 1 << FILEUTILS_CP_OPTBITS, /* cp --remove-destination */
 	/* bit 18 skipped for "cp --parents" */
 	FILEUTILS_REFLINK         = 1 << (20 - !ENABLE_SELINUX), /* cp --reflink=auto */
 	FILEUTILS_REFLINK_ALWAYS  = 1 << (21 - !ENABLE_SELINUX), /* cp --reflink[=always] */
@@ -65,6 +66,13 @@ enum {	/* cp.c, mv.c, install.c depend on these values. CAREFUL when changing th
 };
 int bb_make_directory(char *path, long mode, int flags);
 int remove_file(const char *path, int flags);
+int copy_file(const char *source, const char *destination, int flags);
+char *is_in_ino_dev_hashtable(const struct stat *info);
+void add_to_ino_dev_hashtable(const struct stat *info, const char *name);
+int open3_or_warn(const char *path, int flags, int mode);
+int chown(const char *path, uid_t owner, gid_t group);
+int lchown(const char *path, uid_t owner, gid_t group);
+int mknod(const char *path, mode_t mode, dev_t device);
 int bb_ask_y_confirmation(void);
 int bb_ask_y_confirmation_FILE(FILE *stream);
 void xstat(const char *path, struct stat *metadata);
