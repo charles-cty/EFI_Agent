@@ -125,7 +125,7 @@ pub fn valid_path(path: &str) -> bool {
             .all(|part| !part.is_empty() && part != "." && part != "..")
         && !matches!(
             path.split('/').next().unwrap(),
-            "bin" | "dev" | "proc" | "tmp" | ".efi-agent-fs" | ".efi-process"
+            "bin" | "dev" | "proc" | "tmp" | ".efi-agent-fs" | ".efi-process" | ".efi-session"
         )
         && path != MANIFEST_PATH
 }

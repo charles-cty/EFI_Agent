@@ -152,7 +152,8 @@ impl State {
             if let Some(parent) = node.parent {
                 valid_name(&node.name).map_err(|_| FileError::Corrupt)?;
                 if parent == ROOT
-                    && (node.name.eq_ignore_ascii_case(PRIVATE) || node.name == ".efi-process")
+                    && (node.name.eq_ignore_ascii_case(PRIVATE)
+                        || matches!(node.name.as_str(), ".efi-process" | ".efi-session"))
                 {
                     return Err(FileError::Corrupt);
                 }
@@ -186,7 +187,8 @@ impl State {
             if parent.kind != EntryType::Directory
                 || (link.parent != ROOT && parent.parent.is_none())
                 || (link.parent == ROOT
-                    && (link.name.eq_ignore_ascii_case(PRIVATE) || link.name == ".efi-process"))
+                    && (link.name.eq_ignore_ascii_case(PRIVATE)
+                        || matches!(link.name.as_str(), ".efi-process" | ".efi-session")))
                 || !names.insert((link.parent, link.name.as_str()))
             {
                 return Err(FileError::Corrupt);

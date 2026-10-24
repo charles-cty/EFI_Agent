@@ -140,13 +140,13 @@ impl World {
                         .store
                         .data_mut();
                     let descriptor = context.descriptors.get(&source).ok_or(-9)?.clone();
-                    if matches!(descriptor, Descriptor::Control(_)) {
+                    if descriptor.is_private() {
                         return Err(-22);
                     }
                     if operation == 3
                         && matches!(
                             context.descriptors.get(&target),
-                            Some(Descriptor::Control(_))
+                            Some(Descriptor::Control(_) | Descriptor::Session(_))
                         )
                     {
                         return Err(-22);
@@ -183,7 +183,7 @@ impl World {
                     if operation == 4 {
                         return Ok((i32::from(context.close_on_exec.contains(&source)), 0));
                     }
-                    if matches!(descriptor, Descriptor::Control(_)) && flags == 0 {
+                    if descriptor.is_private() && flags == 0 {
                         return Err(-22);
                     }
                     if flags == 1 {
@@ -230,7 +230,7 @@ impl World {
                                 .data()
                                 .descriptors
                                 .get(&source),
-                            Some(Descriptor::Control(_))
+                            Some(Descriptor::Control(_) | Descriptor::Session(_))
                         ) {
                             return Err(-9);
                         }
@@ -300,7 +300,7 @@ impl World {
                                 .data()
                                 .descriptors
                                 .get(&source),
-                            Some(Descriptor::Control(_))
+                            Some(Descriptor::Control(_) | Descriptor::Session(_))
                         ) {
                             return Err(-9);
                         }
@@ -326,7 +326,11 @@ impl World {
                             Some(env),
                             Vec::new(),
                             Some(mapping),
-                            SpawnSettings { cwd, umask },
+                            SpawnSettings {
+                                cwd,
+                                umask,
+                                ..SpawnSettings::default()
+                            },
                         )
                         .map_err(|error| error.spawn_errno())?;
                     Ok((child as i32, 0))

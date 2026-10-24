@@ -143,9 +143,14 @@ fn valid_path(path: &str) -> Result<(), Error> {
         }
     }
     let first = path.split('/').next().unwrap();
-    if [HOST_METADATA, ".efi-agent-fs", ".efi-process"]
-        .iter()
-        .any(|reserved| first.eq_ignore_ascii_case(reserved))
+    if [
+        HOST_METADATA,
+        ".efi-agent-fs",
+        ".efi-process",
+        ".efi-session",
+    ]
+    .iter()
+    .any(|reserved| first.eq_ignore_ascii_case(reserved))
     {
         return Err(format!("Reserved workspace path: {path}").into());
     }

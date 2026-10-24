@@ -328,7 +328,7 @@ fn open(
         let memory = memory(&caller)?;
         range(opened, 4, memory.data_size(&caller))?;
         let path = path(&caller, &directory, ptr, len)?;
-        if directory.preopen && path == ".efi-process" {
+        if directory.preopen && matches!(path.as_str(), ".efi-process" | ".efi-session") {
             if oflags != 0 || flags != 0 || rights & ((1 << 1) | (1 << 6)) != ((1 << 1) | (1 << 6))
             {
                 return Err(28);
@@ -336,10 +336,17 @@ fn open(
             let available = (4..io::MAX_DESCRIPTORS)
                 .find(|fd| !caller.data().descriptors.contains_key(fd))
                 .ok_or(io::MFILE)?;
-            caller.data_mut().descriptors.insert(
-                available,
-                Descriptor::Control(Rc::new(RefCell::new(alloc::collections::VecDeque::new()))),
-            );
+            let descriptor = if path == ".efi-session" {
+                let channel = caller.data().session.clone().ok_or(44)?;
+                if channel.borrow().opened {
+                    return Err(20);
+                }
+                channel.borrow_mut().opened = true;
+                Descriptor::Session(channel)
+            } else {
+                Descriptor::Control(Rc::new(RefCell::new(alloc::collections::VecDeque::new())))
+            };
+            caller.data_mut().descriptors.insert(available, descriptor);
             caller.data_mut().close_on_exec.insert(available);
             memory
                 .write(&mut caller, opened as usize, &available.to_le_bytes())

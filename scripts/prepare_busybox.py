@@ -970,17 +970,25 @@ evalsubshell(union node *node, int flags)
     marker = "/*\n * Main routine.  We initialize things"
     if ash.count(marker) != 1:
         raise ValueError("Upstream ash task include marker changed")
-    ash = ash.replace(marker, '#include "tasks.inc"\n\n' + marker)
+    ash = ash.replace(marker, '#include "tasks.inc"\n#include "session.inc"\n\n' + marker)
     marker = "\tlogin_sh = procargs(argv);"
     if ash.count(marker) != 1:
         raise ValueError("Upstream ash startup marker changed")
-    ash = ash.replace(marker, '''    if (argv[1] && strcmp(argv[1], "--efi-task") == 0) {
+    ash = ash.replace(marker, '''    efi_session = argv[1] && strcmp(argv[1], "--efi-session") == 0;
+    if (efi_session) {
+        if (argv[2])
+            ash_msg_and_raise_error("code session does not accept arguments");
+        argv[1] = NULL;
+    }
+    if (argv[1] && strcmp(argv[1], "--efi-task") == 0) {
         arg0 = argv[0];
         if (!argv[2] || !argv[3] || argv[4])
             ash_msg_and_raise_error("shell task requires size and descriptor arguments");
         efi_ash_task_entry(argv[2], argv[3]);
     }
 ''' + marker)
+    ash = replace_once(ash, "\tstate = 4;\n\tif (minusc) {",
+                       "\tstate = 4;\n\tif (efi_session) efi_ash_session_loop();\n\tif (minusc) {")
     (args.output / "ash.c").write_text(ash, encoding="utf-8")
     prepare_read(args.source, args.output)
     (args.output / "LICENSE").write_bytes((args.source / "LICENSE").read_bytes())

@@ -37,7 +37,7 @@ Python options now determine shell use, decoding and nonzero-exit handling.
 | --- | --- | --- |
 | High | QuickJS's custom `main` in `guests/quickjs/main.c` accepts only `-e`. `scripts/build_quickjs.ps1` omits upstream `qjs` and `quickjs-libc`. | Script-file entry, upstream `std`/`os` modules and file module loading remain absent. Restore those interfaces above internal host adapters. The requested zx-like `$` extension is a separate feature. |
 | High | The prebuilt `_socket` module is present, but its socket creation backend remains unavailable. Runtime WASI socket imports reject unsupported operations explicitly. | Standard Python socket clients cannot use existing client TCP/DNS operations. Add the backend below standard socket interfaces. |
-| Medium | Installed commands appear in `/bin`; ash uses upstream PATH lookup and the runtime supports executable files, shebangs and mount/link traversal. Persistent manifests now validate modules, aliases, libraries and licenses before publication. | Native coverage includes manifest reload/removal, failed-install rollback and explicit BusyBox-name overrides. Full retained-session delivery and the final environment regression remain incomplete. |
+| Medium | Installed commands appear in `/bin`; ash uses upstream PATH lookup and the runtime supports executable files, shebangs and mount/link traversal. Persistent manifests validate modules, aliases, libraries and licenses before publication. | Native coverage includes manifest reload/removal, failed-install rollback and explicit BusyBox-name overrides. Retained shell/Python sessions pass both WHPX APIs; the final environment regression remains incomplete. |
 | Medium | `crates/uefi/src/wasm.rs` uses `split_whitespace`. | Quoted source code, filenames with spaces and empty arguments cannot pass through `/wasm run/start` normally. Add a defined quoting grammar without invoking a shell implicitly. Script-file invocation currently avoids source-code quoting. |
 | Medium | The Python adapter explicitly rejects distinct custom argv[0], pre-exec callbacks, process groups and credentials. Signals and timeouts are unavailable. | Standard per-child cwd/umask and virtual `/dev/null` work. Cwd anchors preserve rename/unlink identity below standard file interfaces. Infinite `communicate`/wait and `poll()` are supported. |
 | Medium | Private Python scandir entry proxies expose the standard methods and correct modes, including fd anchors, but are not instances of built-in `os.DirEntry`. | Type identity remains an interface difference. Preserve the upstream binary and resolve the missing Preview 1 mode representation below the public API where feasible. |
@@ -55,6 +55,18 @@ in artifacts/installation-final-whpx-responses and
 artifacts/installation-final-whpx-chat_completions. This covers command
 installation and dispatch; the final combined networking regression remains
 a separate delivery gate.
+
+Conversation-owned live ash and Python processes retain interpreter state,
+environment and anchored cwd. Private request/reply frames use a non-inheritable
+channel separate from finite stdin and captured stdout/stderr. Python uses an
+additional private startup driver; the upstream binary and library remain
+unchanged. Ordinary exceptions retain Python globals. Exit, fatal shell errors
+and cancellation report session resets; clear resets both. Unfinished child
+processes are reaped after each call. Both actual 512 MiB WHPX APIs verify
+consecutive state, top-level shell return, errors, cancellation isolation and
+clear while preserving independent background roots, with independent saved
+FAT checks in artifacts/sessions-final-whpx-responses and
+artifacts/sessions-final-whpx-chat_completions.
 
 File-backed command caches now validate inode/device identity, size and provider
 content revisions. Namespace data mutations change the revision independently

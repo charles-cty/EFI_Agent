@@ -5,6 +5,8 @@ use efi_agent_wasm::{Status, World};
 mod native_fs;
 #[path = "support/native_net.rs"]
 mod native_net;
+#[path = "support/sessions.rs"]
+mod sessions;
 use std::{
     env,
     io::{self, Write},
@@ -72,6 +74,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     world
         .discover_programs()
         .map_err(|error| format!("Discover workspace programs: {error}"))?;
+    if argv.first().is_some_and(|arg| arg == "--sessions") {
+        sessions::run(&mut world, &argv[1..])?;
+        return flush(&filesystem);
+    }
     let root = world.spawn(argv, Vec::new())?;
     let deadline = Instant::now() + std::time::Duration::from_secs(60);
     while Instant::now() < deadline {

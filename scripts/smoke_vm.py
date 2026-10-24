@@ -65,6 +65,7 @@ from wasm_executable_freshness_fixture import (
     EXECUTABLE_FRESHNESS_CHECK, executable_image, verify_executable_freshness,
 )
 from wasm_installation_fixture import INSTALLATION_CHECK, verify_installation
+from wasm_sessions_fixture import SESSION_STEPS, CLEAR_STEPS, verify_sessions
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -109,16 +110,16 @@ class Provider(BaseHTTPRequestHandler):
     cancel_started = threading.Event()
     code_steps = [
         ("shell", {"command": "printf '%s\\n' 'a b' '中' > code-shell.txt\necho shell-out; echo shell-err >&2"}),
-        ("write", {"path": "ash.wasm", "content": "Already loaded; this replacement must not be compiled."}),
-        ("shell", {"command": "echo cached-ash"}),
+        ("shell", {"command": "export TOOL_SESSION_VALUE=retained; echo session-ash"}),
+        ("shell", {"command": "test \"$TOOL_SESSION_VALUE\" = retained || exit 9; echo retained-ash"}),
         ("python", {"code": "import subprocess\nfrom pathlib import Path\nr = subprocess.run(\"printf '%s' 'python child 中'\", shell=True, capture_output=True, text=True, check=True)\nPath('code-python.txt').write_text(r.stdout)\nprint(r.stdout)"}),
         ("shell", {"command": "echo failure-out; echo failure-err >&2; exit 7"}),
         ("python", {"code": "raise ValueError('code-error-419')"}),
         ("python", {"code": "import sys\nsys.stdout.write('A' * 65536)\nsys.stderr.write('B' * 65537)"}),
         ("shell", {"command": "echo forbidden\u0000"}),
-        ("python", {"code": "print('fresh-interpreter', 'subprocess' in globals())"}),
+        ("python", {"code": "print('retained-interpreter', 'subprocess' in globals())"}),
     ]
-    code_expected = ["shell-out", "File saved", "cached-ash", "python child 中", "Exit code: 7", "code-error-419", "[Output truncated at 64 KiB]", "Tool error: Code must contain no NUL", "fresh-interpreter False"]
+    code_expected = ["shell-out", "session-ash", "retained-ash", "python child 中", "Exit code: 7", "code-error-419", "[Output truncated at 64 KiB]", "Tool error: Code must contain no NUL", "retained-interpreter True"]
     filesystem_tools = False
 
     def log_message(self, *_):
@@ -216,6 +217,10 @@ class Provider(BaseHTTPRequestHandler):
                 text = ""
             else:
                 text = "CODE_TOOLS_VERIFIED"
+        elif prompt == "Cancel Python code tool":
+            code = "import subprocess\np = subprocess.Popen(['sleep', '100'])\np.wait()"
+            call = {"id": "cancel-code", "type": "function", "function": {"name": "python", "arguments": json.dumps({"code": code})}, "extra_content": {"signature": "SIGNED_419"}}
+            text = ""
         elif prompt == "Cancel code tool":
             command = "echo started > code-cancel-started.txt; (sleep 30) & wait" if Provider.filesystem_tools else "echo started > code-cancel-started.txt; (while :; do :; done) & wait"
             call = {"id": "cancel-code", "type": "function", "function": {"name": "shell", "arguments": json.dumps({"command": command})}, "extra_content": {"signature": "SIGNED_419"}}
@@ -308,6 +313,7 @@ def run(services):
     parser.add_argument("--cwd-probe", type=Path, help="C cwd fixture binary; required with --c-port-cwd")
     parser.add_argument("--executable-freshness", action="store_true", help="Verify live and cached executable images across source mutation")
     parser.add_argument("--installation", action="store_true", help="Verify manifest-installed commands, libraries and licenses")
+    parser.add_argument("--sessions", action="store_true", help="Verify consecutive live shell/Python tool state and clear")
     parser.add_argument("--code-timeout", type=float, default=480, help="Maximum seconds for the complete code-tool sequence")
     parser.add_argument("--code-cancel-only", action="store_true", help="Run only code cancellation/isolation checks; requires --code-workspace")
     parser.add_argument("--filesystem-tools", action="store_true", help="Verify nested file-tool writes, mkdir, large writes and finite Python stdin")
@@ -494,7 +500,7 @@ def run(services):
                         args.xargs_applet, args.compression_applets, args.unzip_applet,
                         args.du_applet, args.ln_applet, args.df_applet, args.tar_applet,
                         args.temporary_mount, args.mount_paths, args.character_devices, args.process_files, args.cwd,
-                        args.c_port_cwd, args.executable_freshness, args.installation))
+                        args.c_port_cwd, args.executable_freshness, args.installation, args.sessions))
     if applet_modes:
         if not args.code_workspace or args.filesystem_tools or args.code_cancel_only:
             parser.error("Applet checks require --code-workspace and exclude other code modes")
@@ -568,6 +574,10 @@ def run(services):
         if fixture is not None:
             Provider.code_steps.append(('python', {'code': fixture}))
             Provider.code_expected.append(marker)
+        if args.sessions:
+            Provider.code_steps = [('python', {'code': BASIC_APPLETS_CHECK})] + [(language, {'code' if language == 'python' else 'command': source})
+                                   for language, source, _ in SESSION_STEPS]
+            Provider.code_expected = ['UPSTREAM_BASIC_APPLETS_OK'] + [expected for _, _, expected in SESSION_STEPS]
         Provider.filesystem_tools = False
     for index, (name, arguments) in enumerate(Provider.code_steps, 1):
         if name == 'python':
@@ -687,6 +697,51 @@ def run(services):
             if applet_modes:
                 send("Exercise code tools")
                 wait("CODE_TOOLS_VERIFIED", args.code_timeout)
+                if args.sessions:
+                    send('/clear')
+                    wait('Conversation cleared')
+                    Provider.code_steps = [(language, {'code' if language == 'python' else 'command': source})
+                                           for language, source, _ in CLEAR_STEPS]
+                    Provider.code_expected = [expected for _, _, expected in CLEAR_STEPS]
+                    send('Exercise code tools')
+                    wait('CODE_TOOLS_VERIFIED', args.code_timeout)
+                    send('/wasm start ash background-loop.sh')
+                    visible = wait('WASM: ash background-loop.sh')
+                    background_pid = int(re.search(r'WASM: ash background-loop.sh.*PID (\d+)', visible).group(1))
+                    send('Cancel code tool')
+                    wait('Running shell')
+                    time.sleep(1)
+                    connection.sendall(b'\x1b')
+                    wait('Request cancelled')
+                    Provider.code_steps = [
+                        ('shell', {'command': 'test "${CANCEL_SESSION_TOKEN-unset}" = unset || exit 61; test "$(pwd)" = / || exit 62; export SURVIVE_PYTHON_CANCEL=retained; echo SHELL_CANCEL_RESET_OK'}),
+                        ('python', {'code': 'assert survivor == 71; print("PYTHON_SURVIVED_SHELL_CANCEL")'}),
+                    ]
+                    Provider.code_expected = ['SHELL_CANCEL_RESET_OK', 'PYTHON_SURVIVED_SHELL_CANCEL']
+                    send('Exercise code tools')
+                    wait('CODE_TOOLS_VERIFIED', args.code_timeout)
+                    send('Cancel Python code tool')
+                    wait('Running python')
+                    time.sleep(1)
+                    connection.sendall(b'\x1b')
+                    wait('Request cancelled')
+                    Provider.code_steps = [
+                        ('python', {'code': 'assert "survivor" not in globals(); print("PYTHON_CANCEL_RESET_OK")'}),
+                        ('shell', {'command': 'test "$SURVIVE_PYTHON_CANCEL" = retained || exit 63; echo SHELL_SURVIVED_PYTHON_CANCEL'}),
+                    ]
+                    Provider.code_expected = ['PYTHON_CANCEL_RESET_OK', 'SHELL_SURVIVED_PYTHON_CANCEL']
+                    send('Exercise code tools')
+                    wait('CODE_TOOLS_VERIFIED', args.code_timeout)
+                    send('/clear')
+                    wait('Conversation cleared')
+                    send('/wasm ps')
+                    visible = wait(f'{background_pid}: Ready')
+                    records = re.findall(r'\b(\d+): (?:Ready|Waiting|Exited|Reading)', visible)
+                    assert records == [str(background_pid)], visible
+                    send(f'/wasm kill {background_pid}')
+                    wait(f'Cancelled {background_pid}')
+                    send(f'/wasm reap {background_pid}')
+                    wait(f'Reaped {background_pid}')
                 if args.mount_paths:
                     send('/wasm load mounted /tmp/model-tools/ash-copy.wasm')
                     wait('Loaded mounted', args.code_timeout)
@@ -744,6 +799,8 @@ def run(services):
                         verify_executable_freshness(workspace)
                     elif args.installation:
                         verify_installation(workspace, args.code_workspace)
+                    elif args.sessions:
+                        verify_sessions(workspace)
                     elif args.c_port_cwd:
                         verify_c_port_cwd(workspace)
                         assert ssh_peer.errors == [] and ssh_peer.commands == ['nonzero']
@@ -805,7 +862,7 @@ def run(services):
                         wait("CODE_TOOLS_VERIFIED", args.code_timeout)
                         send("/wasm ps")
                         wait("Ready  •")
-                        print("PASS file tools, 8 MiB writes, finite stdin, mutations, permissions, inherited cwd/umask, upstream BusyBox applets and monotonic waits" if args.filesystem_tools else "PASS real model shell/Python tools, cached WASM, source preservation, subprocess, failure, capture boundaries and fresh state", flush=True)
+                        print("PASS file tools, 8 MiB writes, finite stdin, mutations, permissions, inherited cwd/umask, upstream BusyBox applets and monotonic waits" if args.filesystem_tools else "PASS real model shell/Python tools, retained interpreters, source preservation, subprocess, failure and capture boundaries", flush=True)
                     send("/clear")
                     wait("Conversation cleared")
                     send("/wasm start ash background-loop.sh")

@@ -9,6 +9,21 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Conversation-owned live ash/Python tool sessions now retain variables, globals,
+environment, cwd anchors, shell functions/aliases/options/status and user fds.
+Bounded private frames are separate from finite command stdin and output. The
+channel cannot be duplicated, overwritten, renumbered or inherited. Private
+process-control descriptors now have the same C ABI protections. Python ordinary
+exceptions retain state; exit, fatal shell errors and cancellation report resets.
+Top-level shell return preserves its status without poisoning the next request.
+Clear resets both sessions and preserves unrelated slash-command roots. Each
+call stops/reaps unfinished descendants. Native sessions, standard Python,
+streams, PATH/proc regressions, host tests and Clippy pass. Both actual 512 MiB
+Windows WHPX APIs pass latest session lifecycle and independent saved FAT checks
+in artifacts/sessions-final-whpx-responses and
+artifacts/sessions-final-whpx-chat_completions. Non-UTC timezone support and the
+final combined environment audit remain incomplete.
+
 Root programs.json now declares unique module sources, shared aliases, libraries
 and licenses. Discovery validates bodies, supported import signatures and command
 exports without translation or execution. Revision caches avoid repeated binary

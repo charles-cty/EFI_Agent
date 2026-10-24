@@ -71,10 +71,14 @@ fn submit(
     }
     app.message("user", text.clone());
     if text == "/clear" {
+        let sessions = wasm.clear_sessions(app);
         agent.clear();
         app.clear_messages();
         app.scroll = 0;
         app.status = String::from("Conversation cleared");
+        if let Err(error) = sessions {
+            app.status.push_str(&alloc::format!("; {error}"));
+        }
         return Ok(());
     }
     let previous_status = app.status.clone();

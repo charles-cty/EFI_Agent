@@ -67,6 +67,7 @@ impl Drop for Endpoint {
 #[derive(Clone)]
 pub(crate) enum Descriptor {
     Control(Rc<RefCell<VecDeque<u8>>>),
+    Session(Rc<RefCell<crate::session::Channel>>),
     Input(Rc<RefCell<VecDeque<u8>>>),
     Output(Rc<RefCell<Vec<u8>>>),
     Pipe(Endpoint),
@@ -85,6 +86,9 @@ pub(crate) enum Descriptor {
 }
 
 impl Descriptor {
+    pub(crate) fn is_private(&self) -> bool {
+        matches!(self, Self::Control(_) | Self::Session(_))
+    }
     pub(crate) fn metadata(&self) -> Result<crate::filesystem::Metadata, FileError> {
         match self {
             Self::File { handle, .. } => handle.borrow_mut().metadata(),
@@ -112,7 +116,7 @@ impl Descriptor {
             Self::Output(_) => "output".into(),
             Self::Pipe(_) => "pipe".into(),
             Self::Socket { .. } => "socket".into(),
-            Self::Control(_) => return Err(FileError::NotFound),
+            Self::Control(_) | Self::Session(_) => return Err(FileError::NotFound),
             Self::Directory(_) | Self::File { .. } => {
                 let metadata = self.metadata()?;
                 alloc::format!(
@@ -147,6 +151,7 @@ impl Descriptor {
             return Ok(Some(Vec::new()));
         }
         match self {
+            Self::Session(channel) => Ok(channel.borrow_mut().read(maximum)),
             Self::Control(reply) => {
                 let mut reply = reply.borrow_mut();
                 let count = maximum.min(reply.len());
@@ -209,6 +214,10 @@ impl Descriptor {
             return Ok(Some(0));
         }
         match self {
+            Self::Session(channel) => {
+                channel.borrow_mut().complete(bytes)?;
+                Ok(Some(bytes.len()))
+            }
             Self::Control(_) => unreachable!("Control writes are dispatched by the world"),
             Self::Socket {
                 connection, flags, ..
@@ -261,6 +270,7 @@ impl Descriptor {
         matches!(
             self,
             Self::Control(_)
+                | Self::Session(_)
                 | Self::Socket { .. }
                 | Self::File { read: true, .. }
                 | Self::Input(_)
@@ -275,6 +285,7 @@ impl Descriptor {
         matches!(
             self,
             Self::Control(_)
+                | Self::Session(_)
                 | Self::Socket { .. }
                 | Self::File { write: true, .. }
                 | Self::Output(_)
@@ -404,6 +415,16 @@ impl Descriptor {
             );
         }
         match self {
+            Self::Session(channel) => {
+                let size = channel.borrow().readable();
+                if writing {
+                    ready(8, false, 0)
+                } else if size > 0 {
+                    ready(size, false, 0)
+                } else {
+                    None
+                }
+            }
             Self::Control(reply) => ready(reply.borrow().len(), false, 0),
             Self::Socket { connection, .. } => match connection.borrow_mut().readiness(writing) {
                 Ok(Some(state)) => ready(state.bytes, state.hangup, 0),
@@ -618,6 +639,9 @@ pub(crate) fn dup2(table: &mut Table, old: u32, new: u32) -> Result<(), i32> {
         return Err(BADF);
     }
     let descriptor = table.get(&old).ok_or(BADF)?;
+    if descriptor.is_private() || table.get(&new).is_some_and(|fd| fd.is_private()) {
+        return Err(BADF);
+    }
     if old == new {
         return Ok(());
     }

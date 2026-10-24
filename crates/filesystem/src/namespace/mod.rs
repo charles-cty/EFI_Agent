@@ -651,7 +651,8 @@ impl Namespace {
         permission(node, 0o300)?;
         if matches!(self.inner().storage, Storage::Journal)
             && parent == ROOT
-            && (name.eq_ignore_ascii_case(PRIVATE) || name == ".efi-process")
+            && (name.eq_ignore_ascii_case(PRIVATE)
+                || matches!(name, ".efi-process" | ".efi-session"))
         {
             return Err(FileError::Access);
         }
@@ -803,7 +804,10 @@ fn import(
         if parent == ROOT && name == PRIVATE && resume {
             continue;
         }
-        if parent == ROOT && (name.eq_ignore_ascii_case(PRIVATE) || name == ".efi-process") {
+        if parent == ROOT
+            && (name.eq_ignore_ascii_case(PRIVATE)
+                || matches!(name, ".efi-process" | ".efi-session"))
+        {
             return Err(FileError::Exists);
         }
         valid_name(name)?;

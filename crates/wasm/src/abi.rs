@@ -1347,6 +1347,9 @@ pub(crate) fn linker(engine: &Engine) -> HostLinker {
                 if flags & !1 != 0 {
                     return -22;
                 }
+                if flags == 0 && caller.data().descriptors[&fd].is_private() {
+                    return -22;
+                }
                 if flags == 0 {
                     caller.data_mut().close_on_exec.remove(&fd);
                 } else {
@@ -1365,6 +1368,9 @@ pub(crate) fn linker(engine: &Engine) -> HostLinker {
                     return -22;
                 }
                 let table = &mut caller.data_mut().descriptors;
+                if table.get(&old).is_some_and(|fd| fd.is_private()) {
+                    return -9;
+                }
                 let Some(descriptor) = table.get(&old).map(io::Descriptor::duplicate) else {
                     return -9;
                 };
@@ -1415,6 +1421,9 @@ pub(crate) fn linker(engine: &Engine) -> HostLinker {
             |mut caller: Caller<'_, Context>, old: u32, new: u32| -> i32 {
                 let table = &mut caller.data_mut().descriptors;
                 if new >= io::MAX_DESCRIPTORS || !table.contains_key(&old) {
+                    return BADF;
+                }
+                if table[&old].is_private() || table.get(&new).is_some_and(|fd| fd.is_private()) {
                     return BADF;
                 }
                 if old != new {

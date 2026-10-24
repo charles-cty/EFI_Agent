@@ -265,22 +265,34 @@ byte-oriented as in upstream BusyBox. Tr enables classes and equivalence sets
 and operates on all byte values. All four propagate input/output errors.
 
 The model receives `shell(command)` and `python(code)` in addition to the
-read/write/edit file tools. Shell code runs as `ash -c`; Python code runs as
-`python -c`. Source is passed as one unchanged argument, including whitespace,
-quotes and newlines. Source must be at most 60 KiB and contain no NUL bytes.
+read/write/edit file tools. Each conversation owns one live ash process and one
+live Python process. Ash evaluates source in its retained shell; Python compiles
+and executes source in its retained `__main__` namespace. Source preserves
+whitespace, quotes and newlines, must be at most 60 KiB and cannot contain NUL.
 The tools load workspace `ash.wasm` on first use, and `python.wasm` on first
 Python use. A registered name is reused, including a module loaded manually.
 Python requires the prepared standard library and startup adapter in `lib`.
-Each call starts a fresh process with empty finite stdin. Workspace files
-persist across calls; shell variables and interpreter globals do not.
+Code and completion frames use a private, bounded process-local channel, separate
+from empty finite command stdin and captured output. The endpoint opens once,
+is hidden from proc fd views, and cannot be duplicated, overwritten, renumbered
+or inherited by children. Shell variables, functions, aliases, options, user
+descriptors and previous status persist. Python globals persist, including after
+ordinary exceptions. Each tool retains its own environment, cwd anchor and umask;
+both tools share files. Standalone CLI invocations still start fresh processes.
 
 Tool results contain readable exit status and separate stdout/stderr sections.
 Capture retains the first 64 KiB of each stream, drains further bytes and marks
 truncation explicitly. Text uses UTF-8 with replacement for invalid bytes.
 The existing tool disclosure shows the result; execution adds no WASM panel.
-Esc cancels execution. Completion, cancellation and terminal-refresh failures
-cancel and reap all remaining descendants of that tool root. Independent
-background roots remain active. Original root IDs survive parent adoption.
+Esc cancels the affected tool tree. Exit, trap, cancellation and terminal-refresh
+failure end that session and return an explicit reset notice. The next call
+starts a new interpreter. A normal nonzero command result retains the interpreter;
+fatal ash syntax errors terminate it. Top-level `return` stops the current shell
+request and preserves its status for the next request. `/clear` resets both
+sessions. Unfinished descendants are stopped and reaped after each call, with a
+count in the result. Independent background roots remain active. Original root
+IDs survive parent adoption. Idle session roots keep their output routing and
+do not create extra WASM panels.
 
 The model prompt describes an Alpine Linux-style BusyBox ash environment and
 states its actual WASM limits. POSIX shell syntax is available. Bash-only

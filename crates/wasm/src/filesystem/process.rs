@@ -97,9 +97,7 @@ impl Registry {
                             .borrow()
                             .values()
                             .filter_map(alloc::rc::Weak::upgrade)
-                            .filter(|descriptor| {
-                                !matches!(descriptor.as_ref(), Descriptor::Control(_))
-                            })
+                            .filter(|descriptor| !descriptor.is_private())
                             .count()
                     })
                     .unwrap_or(0);
@@ -160,7 +158,7 @@ impl Registry {
             .get(&fd)
             .and_then(alloc::rc::Weak::upgrade)
             .ok_or(FileError::NotFound)?;
-        if matches!(descriptor.as_ref(), Descriptor::Control(_)) {
+        if descriptor.is_private() {
             return Err(FileError::NotFound);
         }
         Ok(descriptor.duplicate())
@@ -520,7 +518,7 @@ impl VirtualFileSystem {
                 if let Some(table) = record.descriptors.upgrade() {
                     for (fd, descriptor) in table.borrow().iter() {
                         if let Some(descriptor) = descriptor.upgrade()
-                            && !matches!(descriptor.as_ref(), Descriptor::Control(_))
+                            && !descriptor.is_private()
                         {
                             entries.push(fd.to_string(), EntryType::Symlink)?;
                         }

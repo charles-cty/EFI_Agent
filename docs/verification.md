@@ -1,5 +1,62 @@
 # Verification record
 
+## 2026-10-24: Retained shell and Python tool sessions
+
+Each conversation owns two live WASM roots. Ash evaluates successive sources in
+its original shell; Python executes compiled source in its actual main namespace.
+The unchanged interpreter and standard library use an additional private driver.
+A 60 KiB request limit and sequence-numbered private channel keep source and
+completion separate from finite stdin and captured stdout/stderr. Early, short,
+stale and duplicate replies fail before effects. Private descriptors cannot be
+duplicated, overwritten, renumbered, made inheritable or passed to children;
+proc fd views omit them. The same C ABI checks now protect process-control fds.
+
+Native integration verifies retained variables/functions/aliases/options, cwd
+after cross-tool rename, umask, user fd cursor and prior status, Python globals
+after exceptions, finite stdin, child descriptor isolation, exit/clear/cancel,
+top-level shell return and fatal syntax recovery. Independent saved namespace
+checks compare result bytes and fd output, and exclude runtime mounts.
+Evidence: artifacts/sessions-native-final.log and
+artifacts/sessions-private-channel.log. The framing unit includes exact 60 KiB
+requests, oversized multibyte/NUL rejection before effects and rejection of
+overlapping replies. Full host tests, host Clippy and UEFI Clippy pass in
+artifacts/sessions-final-host-tests.log, artifacts/sessions-final-clippy.log
+and artifacts/sessions-final-uefi-clippy.log.
+Formatting passes in artifacts/sessions-final-format.log. Regressions pass all
+17 CPython cases, 112 stream cases, program paths and proc files in
+artifacts/sessions-regression-{python,streams,paths,proc}.log.
+The environment-dependent statfs test also passes with the prepared BusyBox
+image in artifacts/sessions-final-statfs.log. Full CPython preparation and
+syntax/byte checks pass in artifacts/sessions-final-python-{prepare,syntax}.log;
+the interpreter bytes match the extracted upstream distribution.
+
+Both actual 512 MiB Windows WHPX flows pass the latest session sequence through
+Responses and Chat Completions. Checks include exception/exit/return/syntax
+semantics, cancellation of both interpreter trees, the other interpreter's
+retained state, clear, and an independent slash-command background root.
+Independent saved FAT checks compare bytes and mount exclusion. Evidence:
+artifacts/sessions-final-whpx-responses and
+artifacts/sessions-final-whpx-chat_completions. Tool results retain one readable
+collapsed disclosure; idle session roots add no WASM output panels.
+
+Both default WHPX tool/API flows also pass retained-state semantics, ordinary
+errors, NUL rejection, stdout/stderr capture boundaries, cancellation isolation,
+streaming/usage/draft editing and independent saved FAT bytes in
+artifacts/sessions-default-whpx-responses and
+artifacts/sessions-default-whpx-chat_completions. Release EFI and launcher builds
+are recorded in artifacts/sessions-{efi,launcher}-build.log. Final prepared
+guest packaging passes to artifacts/sessions-final-package.
+
+Intermediate corrections: private endpoints need absolute paths because libc
+relative paths route through the retained cwd; Windows fixture sources need LF
+bytes for ash; an unused Rust import and new test formatting were corrected.
+Ash must clear the same function-return skip flags as its upstream command loop.
+An initial package invocation lacked the shell-binary environment setting; the
+existing packaged shell supplies it. Updated guest assets require a fresh output
+directory because package installation rejects conflicting existing bytes.
+Existing QEMU interrupt-vector and host AppxManifest warnings remain nonfatal.
+Non-UTC timezone support and the final combined delivery audit remain incomplete.
+
 ## 2026-10-24: Installation manifests and packaged command assets
 
 Root `programs.json` version 1 declares each module source once with command

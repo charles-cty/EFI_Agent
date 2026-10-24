@@ -10,11 +10,22 @@ Reload removes obsolete aliases and preserves explicit registrations. Standard
 packaging includes the declared assets without build caches or duplicate alias
 images. VM launch merges the packaged installation with the selected workspace,
 and content conflicts reject before staging. Native installation, actual FAT
-pack/extract and saved-asset checks pass. Retained interpreter sessions, non-UTC
-timezones and the final combined delivery gates remain incomplete.
+pack/extract and saved-asset checks pass. Non-UTC timezones and the final combined
+delivery gates remain incomplete.
 Both actual 512 MiB WHPX API flows pass manifest-installed applications and
 independent saved FAT assets/modes in artifacts/installation-final-whpx-responses
 and artifacts/installation-final-whpx-chat_completions.
+
+Conversation-owned live ash and Python sessions retain interpreter state,
+environment and cwd anchors over a bounded private request channel. Command
+stdin remains finite and empty. Ordinary Python exceptions and shell nonzero
+results retain state. Exit, fatal shell syntax errors and cancellation report
+resets. Top-level shell return stops only its current request. Clear resets both
+interpreters, and each completed request stops/reaps unfinished descendants
+without affecting unrelated roots. Native lifecycle/private-descriptor checks
+and both actual 512 MiB WHPX APIs pass, including independent saved FAT bytes,
+in artifacts/sessions-final-whpx-responses and
+artifacts/sessions-final-whpx-chat_completions.
 
 The shared image currently uses upstream ls, find, awk, sed, grep, chmod, cat, head,
 tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true,
@@ -29,11 +40,12 @@ interfaces now use measured native and firmware capacity and runtime mounts.
 Date currently supports UTC; other TZ values fail explicitly and timezone
 support remains pending.
 Firmware monotonic waits now use a reported hardware-counter rate. General mount
-traversal, packaging and persistent-session gates remain incomplete.
+traversal, installation packaging and retained sessions have focused native and
+both WHPX API evidence; the final combined delivery audit remains incomplete.
 Python's standard `os.remove`, `os.unlink` and `os.rmdir` now use the same
 namespace mutation providers as WASI and BusyBox. File and directory deletion
-therefore persists through the workspace namespace; focused WHPX application
-coverage remains pending.
+therefore persists through the workspace namespace and passes the filesystem
+tool WHPX sequence.
 The private subprocess adapter also passes cwd and per-child umask through the
 process ABI. Native Release integration verifies parent cwd/umask inheritance,
 relative and absolute child cwd, missing-cwd errors and explicit child umask.
@@ -52,8 +64,8 @@ WHPX/Responses checks pass PATH ordering, empty components, explicit child cwd,
 nonexecutable-file skipping, Python shebang options and independent saved script
 bytes/modes in `artifacts/program-paths-whpx-20261024`. Installation rejects
 workspace command collisions before publishing aliases and preserves unrelated
-workspace `/bin` entries. Persistent installation manifests, general mount/link
-traversal and retained sessions remain pending.
+workspace `/bin` entries. The manifest, mount/link and retained-session checks
+below extend this coverage.
 
 ## Required commands
 
@@ -136,8 +148,8 @@ attributes are restored after their children. Native integration checks saved
 archives, metadata, hard links, binary/pipe boundaries and path containment.
 Both actual 512 MiB WHPX model API flows pass with independent saved archive,
 byte, link and metadata checks in artifacts/tar-whpx-responses and
-artifacts/tar-whpx-chat_completions. The remaining mount, manifest,
-retained-session and final delivery gates are incomplete.
+artifacts/tar-whpx-chat_completions. The final combined delivery audit remains
+incomplete.
 
 The /tmp provider now uses the common inode namespace over bounded memory
 objects. Nested directories, relative symlinks, hard links, enforced modes,
@@ -149,8 +161,8 @@ and ash verify tempfile cleanup, child cwd, cross-device mv fallback and archive
 extraction. Both actual 512 MiB WHPX model APIs pass with independent saved FAT
 bytes/metadata and temporary mount exclusion in
 artifacts/tmp-inodes-whpx-responses and artifacts/tmp-inodes-whpx-chat_completions.
-Complete device/process files, anchored cwd tracking and retained sessions
-still need their delivery gates.
+The device/process, anchored cwd and retained-session checks below extend this
+coverage.
 
 The virtual root now resolves absolute and relative links across runtime mounts
 before provider dispatch. Link/parent ordering, stat/lstat policy, mutations,
@@ -183,8 +195,8 @@ paths cannot fall through to backing storage. Native conflict checks preserve
 saved bytes and names. Both actual 512 MiB WHPX model API flows verify model
 write/edit/read in /tmp, shell/Python access and /wasm load from the temporary
 mount, with independent saved FAT checks in artifacts/mount-layout-whpx-responses
-and artifacts/mount-layout-whpx-chat_completions. Devices, process information,
-anchored cwd tracking, manifests and sessions still need completion.
+and artifacts/mount-layout-whpx-chat_completions. The device/process, anchored
+cwd, manifest and session checks below extend this coverage.
 
 Character devices now provide null EOF, zero bytes and shared cryptographic
 random/urandom reads with bounded staging. Character filestat, distinct inode
@@ -195,9 +207,8 @@ Linux UBI special case is omitted because WASI has no st_rdev or UBI volumes.
 Both actual 512 MiB WHPX model API flows pass with independent saved zero bytes,
 random sample digests and device mount exclusion in
 artifacts/character-devices-whpx-responses-final and
-artifacts/character-devices-whpx-chat_completions-final. Descriptor aliases,
-process information, anchored cwd tracking, manifests, sessions and final
-delivery gates remain incomplete.
+artifacts/character-devices-whpx-chat_completions-final. The final combined
+delivery audit remains incomplete.
 
 Process files now expose actual identity, parent/state, startup arguments and
 environment, cwd/exe links, fd links and mounts. /proc/self follows each caller,
@@ -210,8 +221,7 @@ one link budget covers the full walk. Native integration and independent saved
 state checks pass. Both actual 512 MiB WHPX model API flows and independent FAT
 checks pass in artifacts/procfs-release-whpx-responses and
 artifacts/procfs-release-whpx-chat_completions. Host/target checks and Release
-packaging pass. Anchored cwd tracking, installation manifests, retained sessions
-and final delivery gates remain.
+packaging pass. The final combined delivery audit remains incomplete.
 
 Processes now own cwd anchors and inherit them directly. Python and BusyBox
 initialize libc's relative-path routing through /proc/self/cwd, while standard
@@ -232,8 +242,7 @@ in artifacts/c-port-cwd-native.log. Full application staging now selects a
 64/128 MiB ESP and allows a 64 MiB boot tree; the workspace limit remains 48 MiB.
 Both actual 512 MiB WHPX API flows and independent saved FAT checks pass in
 artifacts/c-port-cwd-whpx-responses and artifacts/c-port-cwd-whpx-chat_completions.
-Installation manifests, retained
-sessions and final delivery gates remain incomplete. Executable lookup now
+The final combined delivery audit remains incomplete. Executable lookup now
 canonicalizes cwd/descriptor routes before selecting cached modules or compiled
 command aliases. File-backed cache validation now includes inode/device identity,
 size and namespace content revisions, so same-size edits with restored times,
@@ -241,7 +250,7 @@ replacement, truncate and unlink cannot select stale code. Unchanged aliases
 share the current compiled module. Live Stores retain their loaded image;
 explicit byte registrations remain snapshots. Native and real Python checks
 pass in artifacts/executable-revision-host-tests.log and
-artifacts/executable-revision-native.log. Manifest delivery remains incomplete.
+artifacts/executable-revision-native.log. Manifest evidence is recorded above.
 Both actual 512 MiB WHPX API flows pass the same live-image and independent
 saved FAT checks in artifacts/executable-revision-whpx-responses and
 artifacts/executable-revision-whpx-chat_completions.

@@ -13,6 +13,7 @@ mod io;
 pub mod network;
 mod process_control;
 pub mod random;
+pub mod session;
 mod socket;
 pub use io::{MAX_DESCRIPTORS, PIPE_CAPACITY};
 
@@ -162,12 +163,14 @@ struct Context {
     network: Option<Rc<dyn network::Network>>,
     dns_server: Option<([u8; 4], u16)>,
     dns_query: Option<dns::Query>,
+    session: Option<Rc<RefCell<session::Channel>>>,
 }
 
 #[derive(Default)]
 pub(crate) struct SpawnSettings {
     pub(crate) cwd: Option<String>,
     pub(crate) umask: Option<u16>,
+    pub(crate) session: Option<Rc<RefCell<session::Channel>>>,
 }
 
 struct Process {
@@ -565,7 +568,7 @@ impl World {
             let explicit = descriptor_map.is_some();
             for (target, source) in descriptor_map.unwrap_or_else(|| vec![(0, 0), (1, 1), (2, 2)]) {
                 if let Some(descriptor) = table.get(&source) {
-                    if matches!(descriptor, io::Descriptor::Control(_)) {
+                    if descriptor.is_private() {
                         if explicit {
                             return Err(Error::BadDescriptor);
                         }
@@ -646,6 +649,7 @@ impl World {
             network: self.network.clone(),
             dns_server: self.dns_server,
             dns_query: None,
+            session: settings.session,
             limits: StoreLimitsBuilder::new()
                 .memory_size(MAX_MEMORY_BYTES)
                 .memories(1)

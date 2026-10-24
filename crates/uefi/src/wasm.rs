@@ -3,7 +3,6 @@ use alloc::{
     format,
     rc::Rc,
     string::{String, ToString},
-    vec,
     vec::Vec,
 };
 use efi_agent_core::ui::App;
@@ -94,6 +93,7 @@ pub struct Runtime {
     cancelled: BTreeSet<u32>,
     output_changed: bool,
     tool_outputs: BTreeMap<u32, ToolOutput>,
+    sessions: [Option<efi_agent_wasm::session::Session>; 2],
 }
 
 impl Runtime {
@@ -133,6 +133,7 @@ impl Runtime {
             cancelled: BTreeSet::new(),
             output_changed: false,
             tool_outputs: BTreeMap::new(),
+            sessions: [None, None],
         })
     }
 
@@ -244,55 +245,122 @@ impl Runtime {
         if python {
             self.ensure_program("python")?;
         }
-        let program = if python { "python" } else { "ash" };
-        let pid = self
-            .world
-            .spawn(vec![program.into(), "-c".into(), source.into()], Vec::new())
-            .map_err(|error| error.to_string())?;
+        let index = usize::from(python);
+        let mut notice = String::new();
+        if let Some(session) = &self.sessions[index]
+            && !self.world.status(session.pid()).is_ok_and(Status::is_live)
+        {
+            let pid = session.pid();
+            self.stop_tool_tree(pid, false, app);
+            if self.world.status(pid).is_ok() {
+                self.world.reap(pid).expect("Session is terminal");
+            }
+            self.roots.remove(&pid);
+            self.sessions[index] = None;
+            self.tool_outputs.remove(&pid);
+            notice.push_str("Previous session ended; started a new session.\n");
+        }
+        if self.sessions[index].is_none() {
+            self.sessions[index] = Some(
+                self.world
+                    .start_session(python)
+                    .map_err(|error| error.to_string())?,
+            );
+        }
+        let session = self.sessions[index].as_mut().unwrap();
+        session.submit(source).map_err(|error| error.to_string())?;
+        let pid = session.pid();
         self.roots.insert(pid, pid);
         self.tool_outputs.insert(pid, ToolOutput::default());
         let execution = (|| {
-            while self
-                .world
-                .status(pid)
-                .expect("Tool process exists")
-                .is_live()
-            {
+            loop {
+                if let Some(status) = self.sessions[index].as_mut().unwrap().take_completion() {
+                    return Ok(Some(status));
+                }
+                if !self
+                    .world
+                    .status(pid)
+                    .expect("Tool process exists")
+                    .is_live()
+                {
+                    return Ok(None);
+                }
                 self.poll(app);
                 if refresh(app, true)? {
                     return Err(String::from("Request cancelled"));
                 }
                 crate::event_loop::dispatch();
             }
-            Ok(())
         })();
-        // Terminate descendants as well, including children adopted by PID 0.
-        // Unrelated background slash-command roots remain active.
+        let retained =
+            matches!(execution, Ok(Some(_))) && self.world.status(pid).is_ok_and(Status::is_live);
+        let stopped = self.stop_tool_tree(pid, retained, app);
+        let status = match &execution {
+            Ok(Some(code)) => Status::Exited(*code),
+            _ => self.world.status(pid).expect("Tool root exists").clone(),
+        };
+        let capture = self.tool_outputs.remove(&pid).expect("Tool capture exists");
+        let mut output = notice + &capture.result(&status);
+        if retained {
+            self.tool_outputs.insert(pid, ToolOutput::default());
+        } else {
+            self.sessions[index] = None;
+            self.world.reap(pid).expect("Tool root is terminal");
+            self.roots.remove(&pid);
+            output.push_str("\n\nSession reset. The next call starts a new session.");
+        }
+        if stopped != 0 {
+            output.push_str(&format!(
+                "\nStopped {stopped} unfinished child process(es)."
+            ));
+        }
+        let storage = self.flush_workspace();
+        match (execution, storage) {
+            (Ok(_), Ok(())) => Ok(output),
+            (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(format!("{output}\n{error}")),
+            (Err(execution), Err(storage)) => Err(format!("{output}\n{execution}\n{storage}")),
+        }
+    }
+
+    /// Stop only this tool tree; the retained interpreter and unrelated roots
+    /// remain under their respective owners.
+    fn stop_tool_tree(&mut self, pid: u32, keep_root: bool, app: &mut App) -> usize {
         let pids: Vec<_> = self
             .world
             .process_ids()
-            .filter(|child| self.world.root(*child).expect("Listed process exists") == pid)
+            .filter(|child| {
+                *child != pid && self.world.root(*child).expect("Listed process exists") == pid
+            })
             .collect();
+        let mut stopped = 0;
         for &child in &pids {
+            stopped += usize::from(self.world.status(child).unwrap().is_live());
             self.world.cancel(child).expect("Tool process exists");
         }
+        if !keep_root && self.world.status(pid).is_ok() {
+            self.world.cancel(pid).expect("Tool root exists");
+        }
         self.poll(app);
-        let status = self.world.status(pid).expect("Tool root exists");
-        let output = self
-            .tool_outputs
-            .remove(&pid)
-            .expect("Tool capture exists")
-            .result(status);
         for child in pids {
             self.world.reap(child).expect("Tool process is terminal");
             self.roots.remove(&child);
         }
-        let storage = self.flush_workspace();
-        match (execution, storage) {
-            (Ok(()), Ok(())) => Ok(output),
-            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(format!("{output}\n{error}")),
-            (Err(execution), Err(storage)) => Err(format!("{output}\n{execution}\n{storage}")),
+        stopped
+    }
+
+    pub fn clear_sessions(&mut self, app: &mut App) -> Result<(), String> {
+        for index in 0..self.sessions.len() {
+            if let Some(session) = self.sessions[index].take() {
+                let pid = session.pid();
+                self.stop_tool_tree(pid, false, app);
+                self.tool_outputs.remove(&pid);
+                if self.world.status(pid).is_ok() {
+                    self.world.reap(pid).expect("Session is terminal");
+                }
+                self.roots.remove(&pid);
+            }
         }
+        self.flush_workspace()
     }
 
     pub fn command(
