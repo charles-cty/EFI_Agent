@@ -47,6 +47,9 @@ static ALLOCATOR: CountingAllocator = CountingAllocator;
 
 #[test]
 fn all_terminal_paths_release_execution_memory_before_reap_and_keep_output() {
+    exact_growth_and_file_image_lifetime();
+    translated_file_code_is_released_before_reap();
+    custom_sections_do_not_enter_the_runtime_heap();
     let mut world = World::new();
     world
         .set_filesystem(std::rc::Rc::new(
@@ -147,4 +150,136 @@ fn all_terminal_paths_release_execution_memory_before_reap_and_keep_output() {
         assert_eq!(world.reap(pid).unwrap(), status);
     }
     assert_eq!(world.process_ids().count(), 0);
+}
+
+fn custom_sections_do_not_enter_the_runtime_heap() {
+    let mut bytes =
+        wat::parse_str(r#"(module (memory (export "memory") 1) (func (export "_start")))"#)
+            .unwrap();
+    bytes.push(0);
+    let mut size = 8 * 1024 * 1024 + 2;
+    loop {
+        let mut byte = (size & 127) as u8;
+        size >>= 7;
+        if size != 0 {
+            byte |= 128;
+        }
+        bytes.push(byte);
+        if size == 0 {
+            break;
+        }
+    }
+    bytes.extend_from_slice(&[1, b'd']);
+    bytes.resize(bytes.len() + 8 * 1024 * 1024, 0);
+    let mut world = World::new();
+    let baseline = LIVE_BYTES.load(Ordering::Relaxed);
+    world.register("debug", &bytes).unwrap();
+    assert!(
+        LIVE_BYTES.load(Ordering::Relaxed) < baseline + 1024 * 1024,
+        "Unused custom section was retained in the runtime image"
+    );
+}
+
+fn translated_file_code_is_released_before_reap() {
+    use efi_agent_wasm::filesystem::{FileSystem, OpenOptions, namespace::Namespace};
+    let fs = std::rc::Rc::new(Namespace::temporary(8 * 1024 * 1024, 128, 0, None));
+    // Many unused functions make translated-code retention observable separately
+    // from the single-page instance. Eager compilation must release them too.
+    let body = "local.get 0 i32.const 1 i32.add local.set 0 ".repeat(64);
+    let source = format!(
+        "(module (memory (export \"memory\") 1) (func (export \"_start\")) {})",
+        format!("(func (param i32) {body})").repeat(2048)
+    );
+    let bytes = wat::parse_str(source).unwrap();
+    let mut file = fs
+        .open(
+            "code.wasm",
+            OpenOptions {
+                read: false,
+                write: true,
+                create: true,
+                exclusive: false,
+                truncate: true,
+                append: false,
+            },
+        )
+        .unwrap();
+    file.write(&bytes).unwrap();
+    drop(file);
+    let mut world = World::new();
+    world.set_filesystem(fs).unwrap();
+    world.discover_programs().unwrap();
+    let baseline = LIVE_BYTES.load(Ordering::Relaxed);
+    for _ in 0..3 {
+        let pid = world.spawn(vec!["code".into()], vec![]).unwrap();
+        assert!(LIVE_BYTES.load(Ordering::Relaxed) > baseline + 1024 * 1024);
+        world.step();
+        assert_eq!(world.status(pid).unwrap(), &Status::Exited(0));
+        assert!(
+            LIVE_BYTES.load(Ordering::Relaxed) < baseline + 256 * 1024,
+            "Translated code or Engine outlived its final execution"
+        );
+        world.reap(pid).unwrap();
+    }
+}
+
+fn exact_growth_and_file_image_lifetime() {
+    use efi_agent_wasm::filesystem::{FileSystem, OpenOptions, namespace::Namespace};
+    let fs = std::rc::Rc::new(Namespace::temporary(1024 * 1024, 128, 0, None));
+    let bytes = wat::parse_str(
+        r#"(module
+        (import "wasi_snapshot_preview1" "sched_yield" (func $yield (result i32)))
+        (memory (export "memory") 640 1024)
+        (func (export "_start")
+            (if (i32.ne (memory.grow (i32.const 1)) (i32.const 640)) (then unreachable))
+            (drop (call $yield))
+            (if (i32.ne (memory.grow (i32.const 383)) (i32.const 641)) (then unreachable))
+            (if (i32.ne (memory.grow (i32.const 1)) (i32.const -1)) (then unreachable))
+            (if (i32.ne (memory.size) (i32.const 1024)) (then unreachable))))"#,
+    )
+    .unwrap();
+    let mut file = fs
+        .open(
+            "grow.wasm",
+            OpenOptions {
+                read: false,
+                write: true,
+                create: true,
+                exclusive: false,
+                truncate: true,
+                append: false,
+            },
+        )
+        .unwrap();
+    file.write(&bytes).unwrap();
+    drop(file);
+    let mut world = World::new();
+    world.set_filesystem(fs).unwrap();
+    world.discover_programs().unwrap();
+    let baseline = LIVE_BYTES.load(Ordering::Relaxed);
+    for cycle in 0..8 {
+        let pid = world.spawn(vec!["grow".into()], vec![]).unwrap();
+        let initial = LIVE_BYTES.load(Ordering::Relaxed);
+        world.step();
+        let grown = LIVE_BYTES.load(Ordering::Relaxed);
+        assert_eq!(world.status(pid).unwrap(), &Status::Ready);
+        assert!(
+            grown < initial + 256 * 1024,
+            "One page caused excess allocation"
+        );
+        for _ in 0..100 {
+            if !world.status(pid).unwrap().is_live() {
+                break;
+            }
+            world.step();
+        }
+        assert_eq!(world.status(pid).unwrap(), &Status::Exited(0));
+        let terminal = LIVE_BYTES.load(Ordering::Relaxed);
+        assert!(
+            terminal < baseline + 256 * 1024,
+            "Cycle {cycle} retained image or memory: {}",
+            terminal.saturating_sub(baseline)
+        );
+        world.reap(pid).unwrap();
+    }
 }

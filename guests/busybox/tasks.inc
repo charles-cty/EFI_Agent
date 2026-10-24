@@ -281,10 +281,19 @@ int efi_ash_spawn_task(union node *node, uint32_t input, uint32_t output, unsign
     if (!node)
         ash_msg_and_raise_error("shell task requires a syntax tree");
     unsigned char *bytes = ckzalloc(EFI_TASK_BYTES);
+    struct jmploc *volatile saved_handler = exception_handler;
+    struct jmploc cleanup;
+    if (setjmp(cleanup.loc)) {
+        exception_handler = saved_handler;
+        free(bytes);
+        longjmp(exception_handler->loc, 1);
+    }
+    exception_handler = &cleanup;
     struct efi_task_codec codec = {bytes, EFI_TASK_BYTES, 0, 0, false};
     efi_task_word(&codec, flags);
     efi_task_state(&codec, node);
     int descriptor = efi_ash_input_snapshot(bytes, codec.cursor);
+    exception_handler = saved_handler;
     free(bytes);
     if (descriptor < 0)
         ash_msg_and_raise_error("cannot create shell task input");

@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/core", "crates/uefi", "crates/launcher", "crates/wasm", "crates/filesystem"]
-exclude = ["vendor/fatfs"]
+exclude = ["vendor/fatfs", "vendor/wasmi_core"]
 default-members = ["crates/core", "crates/launcher", "crates/wasm", "crates/filesystem"]
 resolver = "3"
 
@@ -20,3 +20,6 @@ serde_json = { version = "1", default-features = false, features = ["alloc"] }
 lto = true
 codegen-units = 1
 panic = "abort"
+
+[patch.crates-io]
+wasmi_core = { path = "vendor/wasmi_core" }

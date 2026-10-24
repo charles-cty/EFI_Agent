@@ -5,7 +5,6 @@ use crate::{
 };
 use alloc::{
     collections::{BTreeMap, BTreeSet},
-    format,
     string::String,
     vec,
     vec::Vec,
@@ -14,7 +13,7 @@ pub use efi_agent_filesystem::installation::{InstallError, MANIFEST_PATH, Manife
 use efi_agent_filesystem::installation::{
     MAX_COMMANDS, MAX_MANIFEST_BYTES, MAX_MODULES, valid_command,
 };
-use wasmi::{CompilationMode, Engine, ExternType, FuncType, IntoFunc, Linker, WasmTyList};
+use wasmi::{Engine, FuncType, IntoFunc, Linker, WasmTyList};
 
 /// Record signatures at the same call site that installs each host function.
 pub(crate) struct HostLinker {
@@ -81,8 +80,8 @@ fn read_file(
 }
 
 impl World {
-    /// Validate an installation before publishing aliases. Translation and
-    /// linear-memory allocation occur only when a command is launched.
+    /// Publish installation metadata without reading unused command images.
+    /// Binary validation and translation run before the requested command starts.
     pub fn discover_programs(&mut self) -> Result<(), InstallError> {
         let fs = self
             .filesystem
@@ -178,7 +177,20 @@ impl World {
             ));
         }
         for path in &sources {
-            self.validate_installation_module(fs.as_ref(), path)?;
+            let info = fs
+                .metadata(path)
+                .map_err(|kind| InstallError::new(path, "Find command module", kind))?;
+            if info.kind != EntryType::File || info.size > filesystem::MAX_RESIZE_BYTES {
+                return Err(InstallError::new(
+                    path,
+                    "Check command module file",
+                    if info.kind != EntryType::File {
+                        FileError::Invalid
+                    } else {
+                        FileError::FileTooLarge
+                    },
+                ));
+            }
         }
 
         // Dynamic explicit paths are separate from installation-owned names.
@@ -200,76 +212,6 @@ impl World {
             ));
         }
         self.installed_names = pending.into_keys().collect();
-        self.validated_files
-            .retain(|path, _| sources.contains(path));
-        Ok(())
-    }
-
-    fn validate_installation_module(
-        &mut self,
-        fs: &dyn FileSystem,
-        path: &str,
-    ) -> Result<(), InstallError> {
-        let error = |kind| InstallError::new(path, "Validate command module", kind);
-        let mut file = fs.open(path, read_options()).map_err(error)?;
-        let info = file.metadata().map_err(error)?;
-        if info.kind != EntryType::File {
-            return Err(error(FileError::Invalid));
-        }
-        if info.size > filesystem::MAX_RESIZE_BYTES {
-            return Err(error(FileError::FileTooLarge));
-        }
-        let revision = file
-            .content_revision()
-            .map_err(error)?
-            .map(|rev| (info.device, info.inode, rev, info.size));
-        if let Some(revision) = revision
-            && self.validated_files.get(path) == Some(&revision)
-        {
-            return Ok(());
-        }
-        drop(file);
-        let (bytes, revision) = read_file(fs, path, filesystem::MAX_RESIZE_BYTES as usize)?;
-        let mut config = self.engine.config().clone();
-        config.compilation_mode(CompilationMode::LazyTranslation);
-        // A short-lived engine releases validation buffers instead of retaining
-        // a second compiled image for the installed program's lifetime.
-        let engine = Engine::new(&config);
-        let module = wasmi::Module::new(&engine, bytes).map_err(|cause| {
-            InstallError::new(
-                path,
-                format!("Validate command module ({cause})"),
-                FileError::Invalid,
-            )
-        })?;
-        for import in module.imports() {
-            let signature = self
-                .import_signatures
-                .get(&(import.module().into(), import.name().into()));
-            if !matches!(import.ty(), ExternType::Func(ty) if signature == Some(ty)) {
-                return Err(InstallError::new(
-                    path,
-                    format!(
-                        "Check supported import {}.{}",
-                        import.module(),
-                        import.name()
-                    ),
-                    FileError::Unsupported,
-                ));
-            }
-        }
-        if !matches!(module.get_export("_start"), Some(ExternType::Func(ty)) if ty.params().is_empty() && ty.results().is_empty())
-            || !matches!(module.get_export("memory"), Some(ExternType::Memory(_)))
-        {
-            return Err(InstallError::new(
-                path,
-                "Check command memory and _start exports",
-                FileError::Invalid,
-            ));
-        }
-        if let Some(revision) = revision {
-            self.validated_files.insert(path.into(), revision);
-        }
         Ok(())
     }
 }

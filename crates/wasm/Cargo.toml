@@ -7,7 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 efi-agent-filesystem.workspace = true
-wasmi = { version = "2.0.0", default-features = false, features = ["stable", "validate", "portable-dispatch", "prefer-btree-collections", "libm"] }
+wasmi = { version = "2.0.0", default-features = false, features = ["stable", "validate", "portable-dispatch", "indirect-dispatch", "prefer-btree-collections", "libm"] }
 
 [dev-dependencies]
 efi-agent-filesystem = { workspace = true, features = ["std"] }

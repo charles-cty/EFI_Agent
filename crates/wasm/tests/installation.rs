@@ -163,56 +163,35 @@ fn explicit_command_overrides_the_implicit_busybox_applet() {
 }
 
 #[test]
-fn command_validation_checks_bodies_import_signatures_and_entrypoint_without_running() {
+fn command_validation_is_deferred_until_spawn_without_running_invalid_images() {
     let invalid = [
-        (
-            r#"(module (memory (export "memory") 1))"#,
-            FileError::Invalid,
-        ),
-        (
-            r#"(module (memory (export "memory") 1) (func (export "_start") (param i32)))"#,
-            FileError::Invalid,
-        ),
-        (r#"(module (func (export "_start")))"#, FileError::Invalid),
-        (
-            r#"(module (import "wasi_snapshot_preview1" "fd_read" (func (param i64) (result i32))) (memory (export "memory") 1) (func (export "_start")))"#,
-            FileError::Unsupported,
-        ),
-        (
-            r#"(module (import "unknown" "call" (func)) (memory (export "memory") 1) (func (export "_start")))"#,
-            FileError::Unsupported,
-        ),
-        (
-            r#"(module (import "unknown" "memory" (memory 1)) (export "memory" (memory 0)) (func (export "_start")))"#,
-            FileError::Unsupported,
-        ),
-        (
-            r#"(module (memory (export "memory") 1) (func $init) (start $init) (func (export "_start")))"#,
-            FileError::Invalid,
-        ),
+        r#"(module (memory (export "memory") 1))"#,
+        r#"(module (memory (export "memory") 1) (func (export "_start") (param i32)))"#,
+        r#"(module (func (export "_start")))"#,
+        r#"(module (import "wasi_snapshot_preview1" "fd_read" (func (param i64) (result i32))) (memory (export "memory") 1) (func (export "_start")))"#,
+        r#"(module (import "unknown" "call" (func)) (memory (export "memory") 1) (func (export "_start")))"#,
+        r#"(module (import "unknown" "memory" (memory 1)) (export "memory" (memory 0)) (func (export "_start")))"#,
+        r#"(module (memory (export "memory") 1) (func $init) (start $init) (func (export "_start")))"#,
     ];
-    for (text, expected) in invalid {
+    for text in invalid {
         let (mut world, fs) = fixture();
         write(fs.as_ref(), "bad.wasm", &wat::parse_str(text).unwrap());
-        assert_eq!(
-            world.discover_programs().unwrap_err().kind,
-            expected,
-            "{text}"
-        );
-        assert!(!world.has_program("bad"));
+        world.discover_programs().unwrap();
+        assert!(world.has_program("bad"));
+        assert!(world.spawn(vec!["bad".into()], vec![]).is_err(), "{text}");
+        assert_eq!(world.process_ids().count(), 0);
     }
     let (mut world, fs) = fixture();
-    // A valid binary envelope with a type-invalid body must fail before publish.
+    // A valid envelope with an invalid body must fail before allocating a process.
     let invalid_body = wat::parse_str(
         r#"(module (memory (export "memory") 1)
         (func (export "_start") i32.add drop))"#,
     )
     .unwrap();
     write(fs.as_ref(), "bad.wasm", &invalid_body);
-    assert_eq!(
-        world.discover_programs().unwrap_err().kind,
-        FileError::Invalid
-    );
+    world.discover_programs().unwrap();
+    assert!(world.spawn(vec!["bad".into()], vec![]).is_err());
+    assert_eq!(world.process_ids().count(), 0);
     fs.unlink("bad.wasm").unwrap();
     let trap = wat::parse_str(
         r#"(module (memory (export "memory") 1) (func (export "_start") unreachable))"#,

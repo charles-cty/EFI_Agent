@@ -25,6 +25,7 @@ pub(crate) enum Action {
         written: u32,
     },
     Yield,
+    CancelChild(Pid),
     ProgramExists(String),
     Spawn {
         args: Vec<String>,
@@ -1436,6 +1437,15 @@ pub(crate) fn linker(engine: &Engine) -> HostLinker {
                     }
                 }
                 0
+            },
+        )
+        .expect("Unique import");
+    linker
+        .func_wrap(
+            "efi_process",
+            "cancel_child",
+            |_caller: Caller<'_, Context>, child: u32| -> Result<i32, wasmi::Error> {
+                Err(wasmi::Error::host(Action::CancelChild(child)))
             },
         )
         .expect("Unique import");

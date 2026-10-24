@@ -20,7 +20,7 @@ pub use io::{MAX_DESCRIPTORS, PIPE_CAPACITY};
 use alloc::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     format,
-    rc::Rc,
+    rc::{Rc, Weak},
     string::{String, ToString},
     vec,
     vec::Vec,
@@ -194,6 +194,9 @@ struct Execution {
     wait_status: u32,
     control_wait: Option<(u32, u32, u32)>,
     pending_io: Option<abi::IoRequest>,
+    // Keep one shared image alive across concurrent instances and aliases.
+    // Its Engine releases translated code when the last execution finishes.
+    _program: Rc<Program>,
 }
 
 impl Process {
@@ -206,20 +209,66 @@ impl Process {
 
 struct CompiledFile {
     revision: (u64, u64, u64, u64),
+    program: Weak<Program>,
+}
+
+struct Program {
     module: Module,
+    linker: wasmi::Linker<Context>,
+}
+
+impl Program {
+    fn new(wasm: &[u8]) -> Result<Rc<Self>, Error> {
+        let mut config = Config::default();
+        // Compile before scheduling: lazy translation must also preserve fuel
+        // continuations when resolving an untranslated callee.
+        config
+            .consume_fuel(true)
+            .allow_start_fn(false)
+            .ignore_custom_sections(true)
+            .set_max_recursion_depth(4096)
+            .set_max_stack_height(8 * 1024 * 1024)
+            // Exited processes must not leave grown execution stacks cached.
+            .set_max_cached_stacks(0)
+            .compilation_mode(CompilationMode::Eager);
+        let engine = Engine::new(&config);
+        let module = Module::new(&engine, wasm)?;
+        let linker = abi::linker(&engine);
+        for import in module.imports() {
+            let signature = linker
+                .signatures
+                .get(&(import.module().into(), import.name().into()));
+            if !matches!(import.ty(), wasmi::ExternType::Func(ty) if signature == Some(ty)) {
+                return Err(wasmi::Error::new(format!(
+                    "Unsupported import {}.{}",
+                    import.module(),
+                    import.name()
+                ))
+                .into());
+            }
+        }
+        if !matches!(module.get_export("_start"), Some(wasmi::ExternType::Func(ty)) if ty.params().is_empty() && ty.results().is_empty())
+            || !matches!(
+                module.get_export("memory"),
+                Some(wasmi::ExternType::Memory(_))
+            )
+        {
+            return Err(wasmi::Error::new("Expected memory and _start command exports").into());
+        }
+        Ok(Rc::new(Self {
+            module,
+            linker: linker.linker,
+        }))
+    }
 }
 
 /// A single-threaded process world. Host code calls `step` between firmware polls.
 /// Each live process owns its store, memory and retained Wasm call stack.
 /// Terminal records keep status and output but release execution resources.
 pub struct World {
-    engine: Engine,
-    linker: wasmi::Linker<Context>,
-    import_signatures: BTreeMap<(String, String), wasmi::FuncType>,
-    programs: BTreeMap<String, Module>,
+    programs: BTreeMap<String, Rc<Program>>,
     program_files: BTreeMap<String, String>,
     installed_names: BTreeSet<String>,
-    validated_files: BTreeMap<String, installation::Revision>,
     compiled_files: BTreeMap<String, CompiledFile>,
     bin: Rc<RefCell<BTreeMap<String, Option<String>>>>,
     processes: BTreeMap<Pid, Process>,
@@ -242,29 +291,10 @@ impl World {
     }
 
     pub fn new() -> Self {
-        let mut config = Config::default();
-        // Module start sections run during instantiation and cannot join the dispatcher.
-        // WASI command modules use the separately scheduled `_start` export.
-        // Compile before scheduling: lazy translation can exhaust fuel while
-        // resolving a callee without returning a resumable Wasm continuation.
-        config
-            .consume_fuel(true)
-            .allow_start_fn(false)
-            // Asyncify adds helper frames around the guest's bounded shell
-            // tree traversal. Keep its 256-node depth check below this limit.
-            .set_max_recursion_depth(4096)
-            .set_max_stack_height(8 * 1024 * 1024)
-            .compilation_mode(CompilationMode::Eager);
-        let engine = Engine::new(&config);
-        let linker = abi::linker(&engine);
         Self {
-            engine,
-            linker: linker.linker,
-            import_signatures: linker.signatures,
             programs: BTreeMap::new(),
             program_files: BTreeMap::new(),
             installed_names: BTreeSet::new(),
-            validated_files: BTreeMap::new(),
             compiled_files: BTreeMap::new(),
             bin: Rc::new(RefCell::new(BTreeMap::new())),
             processes: BTreeMap::new(),
@@ -283,9 +313,9 @@ impl World {
         if name.is_empty() || name.contains('\0') {
             return Err(Error::InvalidArguments);
         }
-        let module = Module::new(&self.engine, wasm)?;
+        let program = Program::new(wasm)?;
         let previous_path = self.program_files.remove(name);
-        let previous = self.programs.insert(name.into(), module);
+        let previous = self.programs.insert(name.into(), program);
         if let Err(error) = self.refresh_bin() {
             if let Some(path) = previous_path {
                 self.program_files.insert(name.into(), path);
@@ -308,12 +338,14 @@ impl World {
                 && (self.programs.contains_key("ash") || self.program_files.contains_key("ash")))
     }
 
-    fn load_program(&mut self, name: &str) -> Result<Module, Error> {
+    fn load_program(&mut self, name: &str) -> Result<Rc<Program>, Error> {
         use filesystem::{FileError, OpenOptions};
         let name = name.strip_prefix("/bin/").unwrap_or(name);
-        if let Some(module) = self.programs.get(name) {
-            return Ok(module.clone());
+        if let Some(program) = self.programs.get(name) {
+            return Ok(program.clone());
         }
+        self.compiled_files
+            .retain(|_, cached| cached.program.strong_count() != 0);
         let path = self
             .program_files
             .get(name)
@@ -347,8 +379,9 @@ impl World {
         if let Some(revision) = revision
             && let Some(cached) = self.compiled_files.get(&path)
             && cached.revision == revision
+            && let Some(program) = cached.program.upgrade()
         {
-            return Ok(cached.module.clone());
+            return Ok(program);
         }
         let mut bytes = vec![0; info.size as usize];
         let mut used = 0;
@@ -362,17 +395,17 @@ impl World {
             }
             used += count;
         }
-        let module = Module::new(&self.engine, &bytes)?;
+        let program = Program::new(&bytes)?;
         if let Some(revision) = revision {
             self.compiled_files.insert(
                 path,
                 CompiledFile {
                     revision,
-                    module: module.clone(),
+                    program: Rc::downgrade(&program),
                 },
             );
         }
-        Ok(module)
+        Ok(program)
     }
 
     /// Install the host clock before spawning. A live world's timer epochs must
@@ -446,7 +479,6 @@ impl World {
         }
         self.filesystem = Some(filesystem);
         self.compiled_files.clear();
-        self.validated_files.clear();
         Ok(())
     }
 
@@ -534,7 +566,7 @@ impl World {
         {
             return Err(Error::ArgumentsTooLarge);
         }
-        let module = self.load_program(&module_name)?;
+        let program = self.load_program(&module_name)?;
         let pid = self.next_pid;
         let next_pid = pid
             .checked_add(1)
@@ -658,12 +690,14 @@ impl World {
                 .instances(1)
                 .build(),
         };
-        let mut store = Store::new(&self.engine, context);
+        let mut store = Store::new(program.module.engine(), context);
         store.limiter(|context| &mut context.limits);
         // Instantiation copies data segments but cannot execute guest code:
         // start sections are rejected by the engine configuration.
         store.set_fuel(u64::MAX)?;
-        let instance = self.linker.instantiate_and_start(&mut store, &module)?;
+        let instance = program
+            .linker
+            .instantiate_and_start(&mut store, &program.module)?;
         let memory = instance
             .get_memory(&store, "memory")
             .ok_or_else(|| wasmi::Error::new("Missing memory export"))?;
@@ -693,6 +727,7 @@ impl World {
                     wait_status: 0,
                     control_wait: None,
                     pending_io: None,
+                    _program: program,
                 }),
             },
         );
@@ -837,77 +872,108 @@ impl World {
     }
 
     fn handle(&mut self, pid: Pid, action: abi::Action) {
-        let reply = match action {
-            abi::Action::Control { fd, bytes, written } => {
-                self.control(pid, fd, &bytes, written);
-                return;
-            }
-            abi::Action::Yield => 0,
-            abi::Action::ProgramExists(name) => i32::from(self.has_program(&name)),
-            abi::Action::Spawn {
-                args,
-                environment,
-                descriptors,
-            } => {
-                match self.spawn_child(
-                    pid,
+        let reply =
+            match action {
+                abi::Action::Control { fd, bytes, written } => {
+                    self.control(pid, fd, &bytes, written);
+                    return;
+                }
+                abi::Action::Yield => 0,
+                abi::Action::CancelChild(child) => {
+                    if self
+                        .processes
+                        .get(&child)
+                        .is_none_or(|process| process.parent != pid)
+                    {
+                        -10
+                    } else {
+                        // Collect before cancellation reparents descendants. Ownership
+                        // is checked against the direct child, never a different root.
+                        let mut tree = vec![child];
+                        let mut index = 0;
+                        while index < tree.len() {
+                            let parent = tree[index];
+                            tree.extend(self.processes.iter().filter_map(|(&id, process)| {
+                                (process.parent == parent).then_some(id)
+                            }));
+                            index += 1;
+                        }
+                        // Stop parents first so a suspended wait cannot reap a
+                        // descendant in the middle of subtree cancellation.
+                        for &id in &tree {
+                            self.cancel(id).expect("Collected process exists");
+                        }
+                        for &id in tree.iter().skip(1).rev() {
+                            self.reap(id).expect("Cancelled descendant is terminal");
+                        }
+                        0
+                    }
+                }
+                abi::Action::ProgramExists(name) => i32::from(self.has_program(&name)),
+                abi::Action::Spawn {
                     args,
                     environment,
-                    Vec::new(),
                     descriptors,
-                    SpawnSettings::default(),
-                ) {
-                    Ok(child) => child as i32,
-                    Err(error) => error.spawn_errno(),
-                }
-            }
-            abi::Action::Io(request) => {
-                let process = self.processes.get_mut(&pid).expect("Caller exists");
-                process.status = match &request {
-                    abi::IoRequest::Connect { .. } | abi::IoRequest::ConnectSocket { .. } => {
-                        Status::Connecting
+                } => {
+                    match self.spawn_child(
+                        pid,
+                        args,
+                        environment,
+                        Vec::new(),
+                        descriptors,
+                        SpawnSettings::default(),
+                    ) {
+                        Ok(child) => child as i32,
+                        Err(error) => error.spawn_errno(),
                     }
-                    abi::IoRequest::Resolve { .. } => Status::Resolving,
-                    abi::IoRequest::CloseSocket { fd } => Status::Closing(*fd),
-                    abi::IoRequest::Read { fd, .. } => Status::Reading(*fd),
-                    abi::IoRequest::Write { fd, .. } => Status::Writing(*fd),
-                    abi::IoRequest::Poll { .. } => Status::Polling,
-                };
-                process
-                    .execution
-                    .as_mut()
-                    .expect("Caller is live")
-                    .pending_io = Some(request);
-                return;
-            }
-            abi::Action::Wait {
-                child,
-                status_ptr,
-                nohang,
-            } => {
-                if self
-                    .processes
-                    .get(&child)
-                    .is_none_or(|process| process.parent != pid)
-                {
-                    -10
-                } else if nohang && self.processes[&child].status.is_live() {
-                    // A status buffer is written only when a child is reaped.
-                    // Keep the caller runnable so it can drain other children.
-                    0
-                } else {
-                    let parent = self.processes.get_mut(&pid).expect("Caller exists");
-                    parent.status = Status::Waiting(child);
-                    parent
+                }
+                abi::Action::Io(request) => {
+                    let process = self.processes.get_mut(&pid).expect("Caller exists");
+                    process.status = match &request {
+                        abi::IoRequest::Connect { .. } | abi::IoRequest::ConnectSocket { .. } => {
+                            Status::Connecting
+                        }
+                        abi::IoRequest::Resolve { .. } => Status::Resolving,
+                        abi::IoRequest::CloseSocket { fd } => Status::Closing(*fd),
+                        abi::IoRequest::Read { fd, .. } => Status::Reading(*fd),
+                        abi::IoRequest::Write { fd, .. } => Status::Writing(*fd),
+                        abi::IoRequest::Poll { .. } => Status::Polling,
+                    };
+                    process
                         .execution
                         .as_mut()
                         .expect("Caller is live")
-                        .wait_status = status_ptr;
-                    self.wake_parent(child);
+                        .pending_io = Some(request);
                     return;
                 }
-            }
-        };
+                abi::Action::Wait {
+                    child,
+                    status_ptr,
+                    nohang,
+                } => {
+                    if self
+                        .processes
+                        .get(&child)
+                        .is_none_or(|process| process.parent != pid)
+                    {
+                        -10
+                    } else if nohang && self.processes[&child].status.is_live() {
+                        // A status buffer is written only when a child is reaped.
+                        // Keep the caller runnable so it can drain other children.
+                        0
+                    } else {
+                        let parent = self.processes.get_mut(&pid).expect("Caller exists");
+                        parent.status = Status::Waiting(child);
+                        parent
+                            .execution
+                            .as_mut()
+                            .expect("Caller is live")
+                            .wait_status = status_ptr;
+                        self.wake_parent(child);
+                        return;
+                    }
+                }
+            };
         self.processes
             .get_mut(&pid)
             .expect("Caller exists")

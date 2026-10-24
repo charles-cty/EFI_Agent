@@ -13,11 +13,11 @@ fn stop(world: &mut World, root: u32, keep_root: bool) -> Result<(), Error> {
         .process_ids()
         .filter(|pid| *pid != root && world.root(*pid).unwrap() == root)
         .collect();
-    for &pid in &children {
-        world.cancel(pid)?;
-    }
     if !keep_root {
         world.cancel(root)?;
+    }
+    for &pid in &children {
+        world.cancel(pid)?;
     }
     let (stdout, stderr) = world.take_output(root)?;
     io::stdout().write_all(&stdout)?;

@@ -38,6 +38,10 @@ EFI_PROCESS_IMPORT("get_fd_flags") int32_t efi_process_get_fd_flags(uint32_t des
 EFI_PROCESS_IMPORT("set_fd_flags") int32_t efi_process_set_fd_flags(
     uint32_t descriptor, uint32_t flags);
 EFI_PROCESS_IMPORT("waitpid") int32_t efi_process_waitpid(uint32_t pid, int32_t *status);
+/* Cancel a direct child's subtree. The direct child remains waitable with 130;
+ * descendants are reaped. Other callers' children return -ECHILD.
+ */
+EFI_PROCESS_IMPORT("cancel_child") int32_t efi_process_cancel_child(uint32_t pid);
 /* Returns 0 without writing status while the child remains live. */
 EFI_PROCESS_IMPORT("waitpid_nohang") int32_t efi_process_waitpid_nohang(
     uint32_t pid, int32_t *status);

@@ -19,8 +19,9 @@ The final network/application combination passes in
 artifacts/environment-applications-whpx-idle.
 
 Installation manifests now declare module sources, shared command aliases,
-libraries and licenses in root programs.json. Discovery validates binaries,
-supported imports and command exports before transactional alias publication.
+libraries and licenses in root programs.json. Discovery validates installation
+metadata before transactional alias publication. Binary bodies, supported
+imports and command exports are checked when the command is requested.
 Reload removes obsolete aliases and preserves explicit registrations. Standard
 packaging includes the declared assets without build caches or duplicate alias
 images. VM launch merges the packaged installation with the selected workspace,

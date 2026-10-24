@@ -6422,3 +6422,101 @@ The fixture checks actual NUL bytes from `-print0`. `-exec`, SELinux context
 tests and user/group name matching remain unavailable because the runtime has
 no execution, SELinux or account provider. The existing upstream string-offset
 warnings in head, tail, wc and time.c remain nonfatal.
+
+## Memory optimization and resource cleanup (2026-10-25)
+
+The Windows Release runtime now ignores custom sections, enables wasmi compact
+indirect dispatch, disables retained stack caches, and uses a local
+wasmi_core 2.0.0 exact-growth patch. Upstream source and both license texts are
+under vendor/wasmi_core. The unchanged CPython image SHA256 remains
+`d24bd98d3071af6b17d51d53a08700b9acef59172a0afcb6adb733645c2a1715`.
+Discovery publishes installation metadata without reading unused WASM images;
+requested binaries validate before PID allocation. Each file image owns an
+Engine, concurrent instances share it, and the revision cache is weak. Final
+exit releases code and execution storage before wait/reap. Explicit byte
+registrations remain snapshots until replaced or the World is dropped.
+
+Allocation integration checks cover a 40-MiB memory growing by one page without
+geometric capacity, successful growth to 64 MiB, unchanged size after the next
+page fails, ignored 8-MiB custom data, and repeated release of an image with
+2048 translated functions before reap. Existing return/proc_exit/trap/cancel
+checks still verify immediate release of at least 60 MiB with preserved output.
+Freshness tests verify active aliases share code and live old images survive
+source replacement. Invalid bodies/imports/exports fail without creating a PID.
+The cancel_child regression verifies direct-child ownership, rejection of self,
+unknown and independent roots, idempotent cancellation, a suspended parent
+waiting for its leaf, complete descendant reap, and retained wait status 130.
+
+Pipeline exceptions now close pending endpoints, cancel and reap partial stages,
+and free task serialization storage. The private child-cancellation operation
+stops parents before descendants. Tool frontend and native session cleanup use
+that order too, so cancelling a waiting tree cannot reap a child while cleanup
+still holds its PID. Descriptor endpoint reference counts and weak proc views
+release pipes on last close. Socket Drop releases native connections and UEFI
+TCP4 reset retires stable tokens before buffers are freed.
+
+`scripts/test_resource_lifecycle.py` drives repeated real guests in one World
+through the counting allocate-copy-free allocator in run_guest --lifecycle.
+It measures ordinary Python exit and cancellation, retained Python session exit
+and reset, large pipelines with early reader exit, failing stages, nested input,
+partial startup past the 32-process limit, serialization-limit errors, curl
+success/error/cancel and SSH success/cancel. Normal roots must leave no unreaped
+descendants. Every cycle drains output, reaps processes and checks retained
+allocation. Independent HTTP and AsyncSSH peers observe cancelled connections
+close. Evidence is in artifacts/memory-resource-lifecycle and its adjacent log.
+
+The retained Python session allocates about 55.3 MiB excluding firmware/UI.
+Its normal exit and cancellation leave 45815 bytes before reap, stable across
+six cycles. Repeated completed Python/curl/SSH/pipeline roots leave approximately
+25 KiB after reap, with zero process records and no increase across cycles.
+These small residuals include namespace metadata and host output storage.
+Conversation sessions deliberately retain interpreter state between calls;
+exit/cancel/clear releases the interpreter. Captured output and UI history have
+separate user-visible lifetimes. Explicit /wasm load keeps registered code.
+
+Windows WHPX acceptance uses only the current Release EFI and current guests:
+
+- artifacts/memory-applications-whpx-256: complete 256-MiB application workload,
+  TCP/DNS/POSIX, HTTP/TLS, WolfSSH, QuickJS and Python-to-ash chains, held peers,
+  cancellation, concurrent Python roots, pipelines and independent saved FAT bytes.
+- artifacts/memory-sessions-whpx-192 and
+  artifacts/memory-sessions-whpx-chat-192: both model APIs at 192 MiB, retained
+  interpreter state, Python children, clear/reset and saved-byte verification.
+- artifacts/memory-cancel-whpx-192: Esc cancellation reaps the tool tree and
+  preserves an independent background root, followed by a successful request.
+
+All 21 BusyBox native suites, 17 CPython cases, six curl cases, nine WolfSSH
+cases and the retained-session regression pass. Host workspace tests and both
+host/UEFI Clippy checks pass. Logs use artifacts/memory-optimization-* and
+artifacts/memory-test_busybox_*. Fresh VM/native packages are under
+artifacts/memory-optimization-package; hashes are in
+artifacts/memory-optimization-builds.tsv. The earlier ash-only RAM boundary predates
+these changes; no new ash minimum or full-environment minimum is claimed.
+The separate ash descriptor, here-document and math/structured-random suites
+also pass. The focused resource run checks the actual serialization-limit and
+process-limit diagnostics, in addition to no surviving children and bounded
+memory: artifacts/memory-resource-lifecycle-focused.
+
+Repeat the native allocation checks from Windows with:
+
+```powershell
+cargo.exe build --release -p efi-agent-wasm --example run_guest
+& artifacts/toolchains/uv-current/uv.exe run --no-project scripts/test_resource_lifecycle.py --runner target/release/examples/run_guest.exe --guests artifacts/wasm-guests --output artifacts/memory-resource-lifecycle
+```
+
+Intermediate issues resolved during this task: discovery tests initially
+expected early binary validation and were updated to check failure before spawn;
+a one-step growth assertion overlooked fuel suspension and now drives the
+scheduler to completion. A subtree stress run exposed wait-triggered automatic
+reap during child-first cancellation; parent-first cancellation and the waiting
+branch regression fix it. A draft test assumed ash retained a session after a
+fatal shell error; the existing reset semantics were preserved and the test now
+checks the failed child from a surviving parent shell. Initial packaging lacked
+local provider variables, then correctly rejected conflicting older ash bytes;
+local test settings and a fresh package directory resolved both without changing
+the user workspace. Host --workspace checks included the firmware panic handler
+and conflicted with std; host default members and the separate UEFI target pass.
+Test CLI argument selection, a missing ash-child fixture argument, a Markdown
+replacement quoting error and formatting differences were corrected. Upstream
+BusyBox string-offset warnings, QEMU interrupt-vector and GLib manifest warnings
+were nonfatal. The user workspace and submodule contents remain unchanged.

@@ -46,8 +46,9 @@ truncate invalidate the revision even when timestamps are restored; hard links
 share it. Metadata changes and reads preserve it. New launches use current code,
 while live Stores retain their original image. A provider without content
 revisions requires a fresh read and compilation. Explicit byte registrations
-are snapshots. Persistent manifests validate modules, shared aliases, libraries
-and licenses before publication and packaging.
+are snapshots. Persistent manifests validate aliases and required module,
+library and license metadata before publication. Each requested binary is
+validated before its process can start.
 
 `namespace::read_snapshot` reads the committed logical tree without recovery
 writes or garbage collection. It exposes validated backing paths to host
@@ -888,17 +889,22 @@ Version 1 records each module path once, its command names, library paths and
 license paths. Paths must be normalized workspace-relative paths outside runtime
 mounts and private storage. Names, duplicate sources/commands, asset types,
 required assets, the 64 KiB manifest bound and the 48 MiB module bound are checked.
-Module validation checks function bodies, supported import signatures, exported
-memory and the zero-argument/zero-result `_start` function without execution or
-function translation. Import signatures come from the host function registration
-sites. A short-lived validation engine releases its buffers after each image.
-Successful file revisions skip repeated binary validation; changed files must
-validate again. Providers without revisions are reread.
-Only a complete valid installation publishes executable entries in `/bin`.
+Discovery reads manifest and file metadata only; unused command binaries do
+not allocate parser or interpreter storage. Before a requested command starts,
+eager compilation validates its function bodies, supported import signatures,
+exported memory and zero-argument/zero-result `_start`. Import signatures come
+from the host function registration sites. Invalid commands fail before PID
+allocation. Providers without content revisions require a fresh read.
+Only complete valid installation metadata publishes entries in `/bin`.
 Failed publication retains the previous registry. Successful rediscovery removes
 obsolete installation aliases while preserving explicit byte registrations.
-First spawn reads and compiles the module; later spawns reuse it while the file
-identity and content revision remain unchanged. The `qjs` alias
+First spawn reads and compiles the module; concurrent instances reuse it while
+the file identity and content revision remain unchanged. The file cache holds
+weak references. Each image owns its Engine, so the final execution releases
+translated code, interpreter stacks and linear memory before wait/reap. A later
+launch compiles again. Unused custom sections are ignored, compact indirect
+dispatch is enabled, and linear-memory growth reserves the exact requested
+capacity through the local wasmi_core patch. The `qjs` alias
 shares `quickjs.wasm`'s current compiled module. Explicit registrations take
 precedence and remove their former file association. Replacing a world's root
 filesystem clears its file compilation cache.

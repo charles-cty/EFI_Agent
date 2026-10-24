@@ -337,12 +337,14 @@ impl Runtime {
             })
             .collect();
         let mut stopped = 0;
+        // Stop the root before children. A live root waiting for a child would
+        // otherwise reap that child during cancellation, invalidating this list.
+        if !keep_root && self.world.status(pid).is_ok() {
+            self.world.cancel(pid).expect("Tool root exists");
+        }
         for &child in &pids {
             stopped += usize::from(self.world.status(child).unwrap().is_live());
             self.world.cancel(child).expect("Tool process exists");
-        }
-        if !keep_root && self.world.status(pid).is_ok() {
-            self.world.cancel(pid).expect("Tool root exists");
         }
         self.poll(app);
         for child in pids {

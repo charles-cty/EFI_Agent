@@ -5,8 +5,8 @@ CPython 3.14.7 WASI SDK 24 distribution.
 
 The 512-MiB guest configuration is a passing configuration for the complete
 application workload. It is not a measured minimum or an inherent wasmi or
-CPython requirement. Current code has avoidable module, allocation-growth and
-installation-validation costs.
+CPython requirement. The baseline code had avoidable module, allocation-growth
+and installation-validation costs. The implementation below addresses them.
 
 ## Measurement method
 
@@ -197,3 +197,48 @@ Record firmware free bytes, largest successful allocation, live requested
 bytes and growth peaks. Total guest RAM and native allocated bytes must remain
 separate. The available evidence supports substantial reductions; it does not
 yet establish a replacement 128-, 192- or 256-MiB full-environment requirement.
+
+## Implemented memory and lifetime changes (2026-10-25)
+
+The runtime now ignores custom sections, uses compact indirect dispatch and
+keeps eager compilation. Discovery reads installation metadata only. Requested
+commands still validate all bodies, imports and command exports before PID
+allocation. The original CPython binary and library remain unchanged.
+
+The local wasmi_core 2.0.0 patch uses exact linear-memory reservation. The
+40-MiB-plus-one-page integration check rejects geometric excess allocation;
+growth to 64 MiB succeeds and the next page fails without changing memory size.
+Allocate-copy-free can still require both old and new buffers temporarily.
+Exact growth can copy more often for workloads that grow one page at a time.
+
+Each file-backed image owns an Engine and Linker. Concurrent instances share
+that image through strong references; the revision cache keeps weak references.
+The final execution drops the Store and image before wait/reap, which also
+releases translated code and Engine storage. Explicit byte registrations remain
+snapshots until replaced or the World is dropped. Retained conversation
+interpreters remain live between tool calls; exit, cancellation and clear
+release them. These lifetimes preserve concurrent process isolation.
+
+Pipeline exception cleanup now closes pending pipe ends, cancels and reaps
+already-started stages, and frees the task serialization buffer on failure.
+The private cancel_child import accepts only a direct child's subtree, leaves
+that child waitable with status 130, and reaps its descendants. Parents stop
+before their children so a suspended wait cannot reap a child midway through
+cleanup. Tool cancellation and the native session driver use the same ordering.
+
+The native lifecycle driver uses a counting allocate-copy-free allocator and
+runs repeated real applications in one World. Its integration script checks
+ordinary exits, failures, cancellations, early-reader EOF, large pipelines,
+partial pipeline startup failure and retained Python session exit/reset. HTTP
+and SSH peers independently observe connection closure on cancellation.
+Evidence and firmware acceptance results are recorded in docs/verification.md.
+
+The implemented Release lifecycle measurement retains about 55.3 MiB for one
+initialized Python session. Normal exit or cancellation releases its execution
+and code before reap, leaving about 45 KiB of namespace/runtime metadata.
+Repeated complete process cycles leave about 25 KiB after reap, without growth.
+The earlier configuration tables include explicitly registered ash code as
+well as Python and therefore are not an exact comparison with this single
+file-backed session. Actual WHPX passes the full concurrent application workload
+at 256 MiB and both model API session workloads at 192 MiB. These are measured
+passing configurations. The unchanged Python 40-MiB initial memory remains.

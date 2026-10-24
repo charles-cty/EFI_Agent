@@ -122,6 +122,7 @@ fn new_launches_use_current_bytes_while_live_stores_keep_their_image() {
             }))
             .unwrap();
         world.discover_programs().unwrap();
+        assert_eq!(reads.get(), 0, "Discovery must not read unused binaries");
         let old = world.spawn(vec!["tool".into()], vec![]).unwrap();
         let loaded_reads = reads.get();
         let reused = world.spawn(vec!["tool".into()], vec![]).unwrap();

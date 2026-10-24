@@ -886,26 +886,53 @@ evalpipe(union node *n, int flags)
         ++count;
     INT_OFF;
     struct job *job = makejob(count);
-    int input = 0;
+    volatile int input = 0;
+    volatile int output = -1;
+    volatile int next_input = -1;
+    struct jmploc *volatile saved_handler = exception_handler;
+    struct jmploc cleanup;
+    if (setjmp(cleanup.loc)) {
+        exception_handler = saved_handler;
+        if (input != 0)
+            close(input);
+        if (output >= 0)
+            close(output);
+        if (next_input >= 0)
+            close(next_input);
+        for (unsigned index = 0; index < job->nprocs; ++index) {
+            struct procstat *entry = &job->ps[index];
+            if (entry->ps_status == -1
+                && efi_process_cancel_child(entry->ps_pid) != 0)
+                __builtin_trap();
+        }
+        if (job->nprocs)
+            waitforjob(job);
+        else
+            freejob(job);
+        longjmp(exception_handler->loc, 1);
+    }
+    exception_handler = &cleanup;
     for (struct nodelist *entry = n->npipe.cmdlist; entry; entry = entry->next) {
         int descriptors[2] = {-1, -1};
         if (entry->next && pipe(descriptors) < 0)
             ash_msg_and_raise_perror("cannot create shell pipe");
-        int output = entry->next ? descriptors[1] : 1;
-        int pid = efi_ash_spawn_task(entry->n, input, output,
+        next_input = descriptors[0];
+        output = descriptors[1];
+        int pid = efi_ash_spawn_task(entry->n, input, entry->next ? output : 1,
             (flags & EV_TESTED) ? EFI_TASK_TESTED : 0);
         if (input != 0)
             close(input);
-        if (entry->next)
+        input = 0;
+        if (output >= 0)
             close(output);
-        if (pid < 0) {
-            if (entry->next)
-                close(descriptors[0]);
+        output = -1;
+        if (pid < 0)
             ash_msg_and_raise_error("cannot start pipeline task: %d", pid);
-        }
         forkparent(job, entry->n, n->npipe.pipe_backgnd, pid);
-        input = descriptors[0];
+        input = next_input;
+        next_input = -1;
     }
+    exception_handler = saved_handler;
     int status = n->npipe.pipe_backgnd ? 0 : waitforjob(job);
     INT_ON;
     return status;

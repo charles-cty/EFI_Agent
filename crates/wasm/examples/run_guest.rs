@@ -1,3 +1,7 @@
+#[path = "support/lifecycle.rs"]
+mod lifecycle;
+#[global_allocator]
+static ALLOCATOR: lifecycle::CountingAllocator = lifecycle::CountingAllocator;
 use efi_agent_filesystem::namespace::Namespace;
 use efi_agent_wasm::clock::{Clock, ClockError, ClockId};
 use efi_agent_wasm::{Status, World};
@@ -74,6 +78,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     world
         .discover_programs()
         .map_err(|error| format!("Discover workspace programs: {error}"))?;
+    if argv.first().is_some_and(|arg| arg == "--lifecycle") {
+        lifecycle::run(&mut world, &argv[1..])?;
+        return flush(&filesystem);
+    }
     if argv.first().is_some_and(|arg| arg == "--sessions") {
         sessions::run(&mut world, &argv[1..])?;
         return flush(&filesystem);

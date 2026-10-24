@@ -42,27 +42,34 @@ artifacts/environment-final-filesystem-* and environment-final-assets-*.
 The complete 512 MiB WHPX application combination passes in
 artifacts/environment-applications-whpx-idle, including independent saved bytes,
 TCP/DNS/TLS/SSH, concurrent Python, pipelines, descriptors and here-documents.
-The C application sequence passes at 256 MiB; the larger session sequence fails
-when it starts an additional Python process. Use 512 MiB for the full environment.
+After the memory changes below, the complete application combination passes at
+256 MiB in artifacts/memory-applications-whpx-256. Both model API session flows
+pass at 192 MiB, including an additional Python process, clear and saved bytes.
+The 192 MiB cancellation flow preserves an independent background root.
 
-Actual WHPX shell-only RAM checks pass the fixed file/pipeline/session workload
+Before these memory changes, WHPX shell-only RAM checks passed the fixed workload
 at 97 MiB with only ash installed; 96 MiB fails in a pipeline and 64 MiB fails
 the first ash instance. Use 128 MiB for headroom in that installation. With the
 full shipped package installed but no Python execution, 160 MiB disconnects
-and 192 MiB passes. Discovery still reads and validates unused installed
-modules, so unused Python has transient validation costs. Evidence is under
+and 192 MiB passed. Those measurements included validation of unused installed
+modules and must be repeated to establish the new ash minimum. Evidence is under
 artifacts/ash-memory-probe and docs/verification.md.
 
-Isolated native allocation analysis identifies avoidable wasmi custom-section
-retention, geometric linear-memory capacity growth and Engine-owned code
-retention. Ignoring custom sections lowers the real retained Python session
-from 103.73 to 69.04 MiB; compact IR further lowers it to 57.53 MiB. These
-experiments preserve the prebuilt Python bytes and exclude firmware/UI.
-Production configuration is unchanged. See docs/memory-analysis.md and
-artifacts/memory-analysis for evidence and proposed priorities.
+The runtime now ignores custom sections, uses compact indirect dispatch and
+exact linear-memory growth, and reads unused modules only when requested.
+Each file image owns an Engine; weak revision caches share it across active
+instances and release its code on final exit. Explicit byte registrations remain
+snapshots. Eager compilation and the unchanged Python bytes are preserved.
+Native retained Python sessions use about 55.3 MiB; exit/cancel leaves about
+45 KiB of runtime metadata before reap. Repeated Python/curl/SSH and pipeline
+process exits leave about 25 KiB after reap without growth across cycles.
+Pipeline failures close pending endpoints, free serialization buffers and
+cancel/reap partial child trees. Subtree cancellation stops parents first so
+suspended waits cannot reap children mid-cleanup. See docs/memory-analysis.md
+and artifacts/memory-resource-lifecycle for allocation evidence.
 
 Prepared default guests are current. Fresh VM/native packages are under
-artifacts/environment-final-package; hashes are in environment-final-builds.tsv.
+artifacts/memory-optimization-package; hashes are in memory-optimization-builds.tsv.
 The original user workspace and vendor/uefi-shell contents remain untouched.
 Detailed scope, acceptance evidence and remaining port limits are in
 [docs/environment-work.md](docs/environment-work.md),
