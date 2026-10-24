@@ -9,6 +9,24 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Root programs.json now declares unique module sources, shared aliases, libraries
+and licenses. Discovery validates bodies, supported import signatures and command
+exports without translation or execution. Revision caches avoid repeated binary
+reads. Alias publication is transactional; reload removes obsolete names and
+preserves explicit byte registrations. Explicit commands override implicit
+BusyBox aliases, and deleted sources no longer fabricate executable metadata.
+The launcher selects only declared assets, checks workspace conflicts before
+updates, and supports host export or logical firmware installation. Standard
+packaging includes all five prepared ports, Python libraries and linked licenses;
+VM startup retains that installation when staging the selected workspace.
+Host tests, actual FAT pack/extract, native application dispatch, both Clippy
+targets and Release packaging pass. Retained interpreter sessions, non-UTC
+timezones and final combined delivery remain incomplete.
+Both actual 512 MiB Windows WHPX API flows pass logical guest installation,
+application dispatch and independent saved FAT module/license bytes and modes
+in artifacts/installation-final-whpx-responses and
+artifacts/installation-final-whpx-chat_completions.
+
 File-backed command caches now use inode/device identity, size and a provider
 content revision. Namespace revisions change on write, resize and truncate,
 independently of timestamps, and follow hard links and detached open files.

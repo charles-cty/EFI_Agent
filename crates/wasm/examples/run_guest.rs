@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     world.set_filesystem(filesystem.clone())?;
     world
         .discover_programs()
-        .map_err(|error| format!("Discover workspace programs: {error:?}"))?;
+        .map_err(|error| format!("Discover workspace programs: {error}"))?;
     let root = world.spawn(argv, Vec::new())?;
     let deadline = Instant::now() + std::time::Duration::from_secs(60);
     while Instant::now() < deadline {

@@ -6,6 +6,7 @@ extern crate std;
 
 use alloc::{boxed::Box, rc::Rc, string::String, vec::Vec};
 
+pub mod installation;
 pub mod namespace;
 #[cfg(feature = "std")]
 pub mod native;

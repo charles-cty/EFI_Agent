@@ -239,7 +239,7 @@ impl Runtime {
         }
         self.world
             .discover_programs()
-            .map_err(|error| format!("Discover workspace programs: {error:?}"))?;
+            .map_err(|error| format!("Discover workspace programs: {error}"))?;
         self.ensure_program("ash")?;
         if python {
             self.ensure_program("python")?;

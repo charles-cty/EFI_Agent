@@ -9,6 +9,17 @@ use alloc::{
 };
 
 impl World {
+    fn command_module<'a>(&self, name: &'a str) -> &'a str {
+        if Self::ash_applet(name)
+            && !self.programs.contains_key(name)
+            && !self.program_files.contains_key(name)
+        {
+            "ash"
+        } else {
+            name
+        }
+    }
+
     pub(crate) fn refresh_bin(&mut self) -> Result<(), filesystem::FileError> {
         let mut entries = alloc::collections::BTreeMap::new();
         for name in self.programs.keys().chain(self.program_files.keys()) {
@@ -47,10 +58,7 @@ impl World {
             && self.has_program(&args[0])
         {
             let name = args[0].strip_prefix("/bin/").unwrap_or(&args[0]);
-            return Ok((
-                if Self::ash_applet(name) { "ash" } else { name }.into(),
-                args,
-            ));
+            return Ok((self.command_module(name).into(), args));
         }
         let filesystem = self.filesystem.as_ref().map(|filesystem| {
             (filesystem.as_ref() as &dyn core::any::Any)
@@ -68,10 +76,7 @@ impl World {
                 if !Self::ash_applet(name) {
                     args[0] = name.into();
                 }
-                return Ok((
-                    if Self::ash_applet(name) { "ash" } else { name }.into(),
-                    args,
-                ));
+                return Ok((self.command_module(name).into(), args));
             }
             let filesystem = filesystem
                 .as_ref()

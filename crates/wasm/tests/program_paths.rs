@@ -118,7 +118,10 @@ fn installation_rejects_bin_collisions_without_publishing_partial_aliases() {
         Rc::new(Namespace::open(Rc::new(NativeFileSystem(root.clone())), None).unwrap());
     let mut world = World::new();
     world.set_filesystem(namespace.clone()).unwrap();
-    assert_eq!(world.discover_programs(), Err(FileError::Exists));
+    assert_eq!(
+        world.discover_programs().unwrap_err().kind,
+        FileError::Exists
+    );
     assert!(!world.has_program("ash"));
     assert!(!world.has_program("ls"));
     assert_eq!(namespace.metadata("bin/ls").unwrap().size, 14);

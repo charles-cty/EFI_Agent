@@ -846,9 +846,21 @@ The single guest owner/group is uid/gid 1. Symlink mode mutation without
 following the link returns ENOTSUP. Python scandir entries preserve methods,
 bytes paths and fd lifetime, but their private proxy type differs from DirEntry.
 
-Before model code runs, the firmware discovers root workspace `.wasm` files.
-It validates command names, binary headers and the 48 MiB module size bound.
-Discovered names appear as executable entries in `/bin` before compilation.
+Before model code runs, the firmware reads the optional root `programs.json`
+installation manifest and discovers unclaimed root workspace `.wasm` files.
+Version 1 records each module path once, its command names, library paths and
+license paths. Paths must be normalized workspace-relative paths outside runtime
+mounts and private storage. Names, duplicate sources/commands, asset types,
+required assets, the 64 KiB manifest bound and the 48 MiB module bound are checked.
+Module validation checks function bodies, supported import signatures, exported
+memory and the zero-argument/zero-result `_start` function without execution or
+function translation. Import signatures come from the host function registration
+sites. A short-lived validation engine releases its buffers after each image.
+Successful file revisions skip repeated binary validation; changed files must
+validate again. Providers without revisions are reread.
+Only a complete valid installation publishes executable entries in `/bin`.
+Failed publication retains the previous registry. Successful rediscovery removes
+obsolete installation aliases while preserving explicit byte registrations.
 First spawn reads and compiles the module; later spawns reuse it while the file
 identity and content revision remain unchanged. The `qjs` alias
 shares `quickjs.wasm`'s current compiled module. Explicit registrations take
@@ -861,10 +873,31 @@ is merged; command-name collisions or a non-directory `/bin` reject installation
 before aliases are published. Unrelated workspace entries remain visible.
 Links to installed commands select their existing compiled module, including
 compiled-only registrations with no readable binary. Ordinary executable and
-shebang paths retain their invocation path. A persistent installation manifest
-and complete directory-view mount integration remain pending. The installed
+shebang paths retain their invocation path. Explicit installed commands take
+precedence over implicit BusyBox aliases. A deleted file-backed command reports
+its source error rather than fabricated executable metadata. The installed
 CPython startup name is retained to locate its unchanged packaged library,
 including under `-I`.
+
+`efi-agent catalog <prepared-directory>` writes the standard five-port catalog
+after checking prepared binaries, libraries and licenses. `efi-agent install
+<prepared-directory> <workspace>` installs the declared assets with conflict
+checks and preserves other workspace files. An explicit manifest can install
+other supported WASI command modules and aliases through the same path. The
+`--guest` install option stages a firmware directory with logical permissions,
+links and timestamps instead of writing a host-export directory. A module
+name alone does not advertise Node.js or Git.
+
+`scripts/build.ps1` uses the prepared directory selected by `-Guests` (default
+`artifacts/wasm-guests`). It creates a catalog when absent and passes these
+assets to `efi-agent package`. VM and native packages include each module once,
+the Python library, BusyBox/curl/QuickJS/CPython/wolfSSH notices and the linked
+wolfSSL license. Build caches and undeclared files are excluded before size
+accounting. Existing package workspaces are preserved; different same-path
+content rejects packaging before updates. VM launch merges only the package's
+declared installation into its selected workspace and checks conflicts before
+staging. Workspace save then preserves installed files through the same logical
+snapshot and host-conflict checks as user files.
 
 The `efi_process.dupfd(source, minimum)` import returns the lowest free descriptor
 at or above the minimum, or a negative POSIX errno. Ash uses it for saved
@@ -1295,7 +1328,7 @@ passes, including application chains, network/TLS and concurrent processes.
 The full 256 MiB combination fails during second concurrent Python startup.
 The remaining scope is:
 
-- Complete installation manifests and retained interpreter sessions. CPU-time
+- Complete retained interpreter sessions. CPU-time
   clocks are unavailable.
 - Socket options, address queries, listen/accept, peek/waitall and half-shutdown.
 - Reproducible source acquisition and packaging for the existing guest builds.

@@ -142,11 +142,20 @@ impl Disk {
             }
             fs::create_dir_all(tree.join("EFI/AGENT"))?;
             let work = tree.join("work");
+            let packaged = if work.exists() {
+                crate::installation::packaged(&crate::workspace::guest(
+                    &work,
+                    &crate::workspace::Snapshot::new(),
+                )?)?
+            } else {
+                crate::workspace::Snapshot::new()
+            };
             if work.exists() {
                 fs::remove_dir_all(&work)?;
             }
             let baseline = snapshot(&workspace)?;
-            crate::workspace::stage(&baseline, &work)?;
+            let installed = crate::installation::overlay(&baseline, &packaged)?;
+            crate::workspace::stage(&installed, &work)?;
             write_configuration(&tree)?;
             fs::write(tree.join("EFI/AGENT/VM.TXT"), b"serial\n")?;
             let image = directory.join("vm.img");
@@ -337,8 +346,11 @@ pub fn extract(image: &Path, destination: &Path) -> Result<(), Error> {
 
 /// Assemble distinct VM and native packages from one compiled EFI application.
 pub fn package(args: Vec<String>) -> Result<(), Error> {
-    if args.len() != 2 {
-        return Err("Usage: efi-agent package <application.efi> <output-directory>".into());
+    if !(2..=3).contains(&args.len()) {
+        return Err(
+            "Usage: efi-agent package <application.efi> <output-directory> [prepared-directory]"
+                .into(),
+        );
     }
     let efi = Path::new(&args[0]);
     configuration()?;
@@ -348,12 +360,28 @@ pub fn package(args: Vec<String>) -> Result<(), Error> {
         source,
     } = shell_assets()?;
     let output = Path::new(&args[1]);
+    let mut installations = std::collections::BTreeMap::new();
+    if let Some(prepared) = args.get(2) {
+        let assets = crate::installation::assets(Path::new(prepared))?;
+        for name in ["esp", "native-esp"] {
+            let work = output.join(name).join("work");
+            let previous = if work.exists() {
+                crate::workspace::guest(&work, &crate::workspace::Snapshot::new())?
+            } else {
+                crate::workspace::Snapshot::new()
+            };
+            installations.insert(name, crate::installation::overlay(&previous, &assets)?);
+        }
+    }
     for (mode, name) in [("vm", "esp"), ("native", "native-esp")] {
         let tree = output.join(name);
         fs::create_dir_all(tree.join("EFI/BOOT"))?;
         fs::create_dir_all(tree.join("EFI/AGENT"))?;
         fs::create_dir_all(tree.join("EFI/AGENT/DRIVERS"))?;
         fs::create_dir_all(tree.join("EFI/TOOLS"))?;
+        if let Some(installation) = installations.get(name) {
+            crate::installation::stage(installation, &tree.join("work"))?;
+        }
         fs::copy(efi, tree.join("EFI/AGENT/AGENT.EFI"))?;
         fs::write(tree.join("EFI/TOOLS/SHELLX64.EFI"), &shell)?;
         fs::write(tree.join("EFI/TOOLS/SHELL-LICENSE.TXT"), &license)?;

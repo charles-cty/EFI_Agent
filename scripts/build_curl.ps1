@@ -111,3 +111,5 @@ make -C src -j"$jobs" LIBS="$LIBS" curl >> build.log 2>&1
 '@
 & $MsysBash -c $script 'efi-curl-build' $Source $WasiSdk $project $build $Jobs $WolfSsl
 Copy-Item -LiteralPath (Join-Path $build 'src/curl') -Destination (Join-Path $Output 'curl.wasm')
+Copy-Item -LiteralPath (Join-Path $Source 'COPYING') -Destination (Join-Path $Output 'curl.LICENSE')
+Copy-Item -LiteralPath (Join-Path $WolfSsl 'COPYING') -Destination (Join-Path $Output 'wolfssl.COPYING')

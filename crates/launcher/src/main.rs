@@ -1,5 +1,6 @@
 mod boot;
 mod clipboard;
+mod installation;
 mod pack;
 mod paste;
 mod selection;
@@ -19,9 +20,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some("vm") => vm::run(args.collect()),
         Some("pack") => pack::run(args.collect()),
         Some("package") => boot::package(args.collect()),
+        Some("install") => installation::run(args.collect()),
+        Some("catalog") => installation::catalog(args.collect()),
         _ => {
             println!(
-                "EFI Agent\n  vm <qemu> <OVMF_CODE.fd> <OVMF_VARS.fd> <EFI-file-or-ESP-directory-or-image> <workspace> [--memory-mib <MiB>]\n  pack <ESP-directory> <new-disk.img>\n  package <application.efi> <output-directory>"
+                "EFI Agent\n  vm <qemu> <OVMF_CODE.fd> <OVMF_VARS.fd> <EFI-file-or-ESP-directory-or-image> <workspace> [--memory-mib <MiB>]\n  pack <ESP-directory> <new-disk.img>\n  package <application.efi> <output-directory> [prepared-directory]\n  catalog <prepared-directory>\n  install <prepared-directory> <workspace>"
             );
             Ok(())
         }

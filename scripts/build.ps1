@@ -1,5 +1,6 @@
 param(
-    [ValidateSet('release', 'debug')][string]$Profile = 'release'
+    [ValidateSet('release', 'debug')][string]$Profile = 'release',
+    [string]$Guests = 'artifacts/wasm-guests'
 )
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
@@ -31,7 +32,10 @@ cargo.exe build -p efi-agent-uefi --target x86_64-unknown-uefi --target-dir $tar
 cargo.exe build -p efi-agent --target-dir $targetDirectory @profileArgs
 $launcher = Join-Path $targetDirectory "$Profile/efi-agent.exe"
 $efi = Join-Path $targetDirectory "x86_64-unknown-uefi/$Profile/efi-agent-uefi.efi"
-& $launcher package $efi artifacts
+if (-not (Test-Path -LiteralPath (Join-Path $Guests 'programs.json'))) {
+    & $launcher catalog $Guests
+}
+& $launcher package $efi artifacts $Guests
 Write-Output "Profile: $Profile"
 Write-Output "Launcher: $launcher"
 Write-Output 'VM tree: artifacts/esp'

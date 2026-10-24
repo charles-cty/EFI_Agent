@@ -1,3 +1,4 @@
+use crate::installation::HostLinker;
 use crate::network::Connection;
 use crate::{
     Context, MAX_OUTPUT_BYTES, Pid,
@@ -10,7 +11,7 @@ use core::{
     fmt,
     ops::Range,
 };
-use wasmi::{AsContextMut, Caller, Engine, Linker};
+use wasmi::{AsContextMut, Caller, Engine};
 
 const BADF: i32 = io::BADF;
 const FAULT: i32 = 21;
@@ -877,8 +878,8 @@ fn spawn_with_stdio(
     }
 }
 
-pub(crate) fn linker(engine: &Engine) -> Linker<Context> {
-    let mut linker = Linker::new(engine);
+pub(crate) fn linker(engine: &Engine) -> HostLinker {
+    let mut linker = HostLinker::new(engine);
     crate::filesystem_abi::link(&mut linker);
     linker
         .func_wrap("efi_net", "tcp_open", tcp_open)

@@ -179,6 +179,12 @@ fn installed_aliases_reuse_one_current_compilation() {
     world.discover_programs().unwrap();
     let first = world.spawn(vec!["quickjs".into()], vec![]).unwrap();
     let after_load = reads.get();
+    world.discover_programs().unwrap();
+    assert_eq!(
+        reads.get(),
+        after_load,
+        "Unchanged installation is not reread"
+    );
     let alias = world.spawn(vec!["qjs".into()], vec![]).unwrap();
     assert_eq!(reads.get(), after_load);
     write(&namespace, "quickjs.wasm", &module(9));

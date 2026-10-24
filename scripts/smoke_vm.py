@@ -64,6 +64,7 @@ from wasm_c_port_cwd_fixture import c_port_cwd_check, verify_c_port_cwd
 from wasm_executable_freshness_fixture import (
     EXECUTABLE_FRESHNESS_CHECK, executable_image, verify_executable_freshness,
 )
+from wasm_installation_fixture import INSTALLATION_CHECK, verify_installation
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -306,6 +307,7 @@ def run(services):
     parser.add_argument("--c-port-cwd", action="store_true", help="Verify shared C cwd support and real curl, QuickJS and WolfSSH relative paths")
     parser.add_argument("--cwd-probe", type=Path, help="C cwd fixture binary; required with --c-port-cwd")
     parser.add_argument("--executable-freshness", action="store_true", help="Verify live and cached executable images across source mutation")
+    parser.add_argument("--installation", action="store_true", help="Verify manifest-installed commands, libraries and licenses")
     parser.add_argument("--code-timeout", type=float, default=480, help="Maximum seconds for the complete code-tool sequence")
     parser.add_argument("--code-cancel-only", action="store_true", help="Run only code cancellation/isolation checks; requires --code-workspace")
     parser.add_argument("--filesystem-tools", action="store_true", help="Verify nested file-tool writes, mkdir, large writes and finite Python stdin")
@@ -492,7 +494,7 @@ def run(services):
                         args.xargs_applet, args.compression_applets, args.unzip_applet,
                         args.du_applet, args.ln_applet, args.df_applet, args.tar_applet,
                         args.temporary_mount, args.mount_paths, args.character_devices, args.process_files, args.cwd,
-                        args.c_port_cwd, args.executable_freshness))
+                        args.c_port_cwd, args.executable_freshness, args.installation))
     if applet_modes:
         if not args.code_workspace or args.filesystem_tools or args.code_cancel_only:
             parser.error("Applet checks require --code-workspace and exclude other code modes")
@@ -503,7 +505,8 @@ def run(services):
                 parser.error("--c-port-cwd requires --cwd-probe")
             from test_wolfssh import SshPeer
             ssh_peer = services.enter_context(SshPeer('0.0.0.0'))
-        fixture = (EXECUTABLE_FRESHNESS_CHECK if args.executable_freshness else
+        fixture = (INSTALLATION_CHECK if args.installation else
+                   EXECUTABLE_FRESHNESS_CHECK if args.executable_freshness else
                    c_port_cwd_check('10.0.2.2', ssh_peer.port, ssh_peer.pin) if args.c_port_cwd else
                    CWD_CHECK if args.cwd else
                    PROCESS_FILES_CHECK if args.process_files else
@@ -525,7 +528,8 @@ def run(services):
                    REALPATH_CHECK if args.realpath_applet else
                    SHA256_CHECK if args.sha256_applet else
                    BASE64_CHECK if args.base64_applet else TEXT_APPLETS_CHECK)
-        marker = ('EXECUTABLE_FRESHNESS_OK' if args.executable_freshness else
+        marker = ('INSTALLATION_OK' if args.installation else
+                  'EXECUTABLE_FRESHNESS_OK' if args.executable_freshness else
                   'C_PORT_CWD_OK' if args.c_port_cwd else
                   'CWD_ANCHORS_OK' if args.cwd else
                   'PROCESS_FILES_OK' if args.process_files else
@@ -604,9 +608,13 @@ def run(services):
         if args.executable_freshness:
             (tree / 'work/fresh_image.wasm').write_bytes(executable_image(7))
         if args.code_workspace:
-            for name in ("ash.wasm", "python.wasm"):
-                shutil.copyfile(args.code_workspace / name, tree / "work" / name)
-            shutil.copytree(args.code_workspace / "lib", tree / "work/lib")
+            if args.installation:
+                subprocess.run([str(args.launcher.resolve()), 'install', str(args.code_workspace.resolve()),
+                                str((tree / 'work').resolve()), '--guest'], check=True, timeout=120)
+            else:
+                for name in ("ash.wasm", "python.wasm"):
+                    shutil.copyfile(args.code_workspace / name, tree / "work" / name)
+                shutil.copytree(args.code_workspace / "lib", tree / "work/lib")
             if args.c_port_cwd:
                 for name in ('curl', 'quickjs', 'wolfssh'):
                     shutil.copyfile(args.code_workspace / (name + '.wasm'), tree / 'work' / (name + '.wasm'))
@@ -734,6 +742,8 @@ def run(services):
                         verify_cwd(workspace)
                     elif args.executable_freshness:
                         verify_executable_freshness(workspace)
+                    elif args.installation:
+                        verify_installation(workspace, args.code_workspace)
                     elif args.c_port_cwd:
                         verify_c_port_cwd(workspace)
                         assert ssh_peer.errors == [] and ssh_peer.commands == ['nonzero']

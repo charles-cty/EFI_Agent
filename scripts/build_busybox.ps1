@@ -110,6 +110,7 @@ $raw = Join-Path $build 'ash.raw.wasm'
 try {
     & $clang @compile @sources -o $raw
     & $optimizer $raw --asyncify --pass-arg=asyncify-ignore-imports -o (Join-Path $Output 'ash.wasm')
+    Copy-Item -LiteralPath (Join-Path $Source 'LICENSE') -Destination (Join-Path $Output 'ash.LICENSE')
     if ($BuildFixtures) {
         & $clang @compile scripts/fixtures/wasm/busybox_metadata.c guests/busybox/metadata.c guests/lib/cwd.c -o (Join-Path $build 'metadata.wasm')
     }

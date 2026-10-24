@@ -8,6 +8,7 @@ mod dns;
 mod executable;
 pub mod filesystem;
 mod filesystem_abi;
+pub mod installation;
 mod io;
 pub mod network;
 mod process_control;
@@ -34,59 +35,7 @@ pub const MAX_PROCESSES: usize = 32;
 pub const MAX_MEMORY_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_OUTPUT_BYTES: usize = 512 * 1024;
 const QUANTUM: u64 = 50_000;
-const ASH_APPLETS: &[&str] = &[
-    "ash",
-    "sh",
-    "echo",
-    "xargs",
-    "gzip",
-    "gunzip",
-    "zcat",
-    "unzip",
-    "tar",
-    "du",
-    "df",
-    "ln",
-    "cat",
-    "cp",
-    "date",
-    "env",
-    "grep",
-    "head",
-    "ls",
-    "mkdir",
-    "mv",
-    "rm",
-    "rmdir",
-    "touch",
-    "sort",
-    "uniq",
-    "cut",
-    "tr",
-    "sed",
-    "sleep",
-    "yes",
-    "awk",
-    "chmod",
-    "tail",
-    "wc",
-    "tee",
-    "basename",
-    "dirname",
-    "pwd",
-    "printenv",
-    "seq",
-    "true",
-    "false",
-    "find",
-    "od",
-    "hexdump",
-    "base64",
-    "sha256sum",
-    "realpath",
-    "stat",
-    "which",
-];
+use efi_agent_filesystem::installation::ASH_APPLETS;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -263,8 +212,11 @@ struct CompiledFile {
 pub struct World {
     engine: Engine,
     linker: wasmi::Linker<Context>,
+    import_signatures: BTreeMap<(String, String), wasmi::FuncType>,
     programs: BTreeMap<String, Module>,
     program_files: BTreeMap<String, String>,
+    installed_names: BTreeSet<String>,
+    validated_files: BTreeMap<String, installation::Revision>,
     compiled_files: BTreeMap<String, CompiledFile>,
     bin: Rc<RefCell<BTreeMap<String, Option<String>>>>,
     processes: BTreeMap<Pid, Process>,
@@ -304,9 +256,12 @@ impl World {
         let linker = abi::linker(&engine);
         Self {
             engine,
-            linker,
+            linker: linker.linker,
+            import_signatures: linker.signatures,
             programs: BTreeMap::new(),
             program_files: BTreeMap::new(),
+            installed_names: BTreeSet::new(),
+            validated_files: BTreeMap::new(),
             compiled_files: BTreeMap::new(),
             bin: Rc::new(RefCell::new(BTreeMap::new())),
             processes: BTreeMap::new(),
@@ -348,74 +303,6 @@ impl World {
             || self.program_files.contains_key(name)
             || (Self::ash_applet(name)
                 && (self.programs.contains_key("ash") || self.program_files.contains_key("ash")))
-    }
-
-    /// Discover workspace modules without compiling them. Later launches use
-    /// the current file content while live processes retain their loaded image.
-    pub fn discover_programs(&mut self) -> Result<(), filesystem::FileError> {
-        use filesystem::{EntryType, FileError, OpenOptions};
-        let fs = self.filesystem.as_ref().ok_or(FileError::Unsupported)?;
-        let entries = fs.read_directory("")?;
-        let mut pending = BTreeMap::new();
-        for (path, kind) in entries.iter() {
-            if kind != EntryType::File {
-                continue;
-            }
-            let Some(stem) = path.get(..path.len().saturating_sub(5)) else {
-                continue;
-            };
-            if !path
-                .get(stem.len()..)
-                .is_some_and(|suffix| suffix.eq_ignore_ascii_case(".wasm"))
-            {
-                continue;
-            }
-            if stem.is_empty() {
-                return Err(FileError::Invalid);
-            }
-            if self.has_program(stem) {
-                continue;
-            }
-            if fs.metadata(path)?.size > filesystem::MAX_RESIZE_BYTES {
-                return Err(FileError::FileTooLarge);
-            }
-            let mut file = fs.open(
-                path,
-                OpenOptions {
-                    read: true,
-                    write: false,
-                    create: false,
-                    exclusive: false,
-                    truncate: false,
-                    append: false,
-                },
-            )?;
-            let mut header = [0; 8];
-            let mut used = 0;
-            while used < header.len() {
-                let count = file.read(&mut header[used..])?;
-                if count == 0 {
-                    return Err(FileError::Invalid);
-                }
-                used += count;
-            }
-            if header != *b"\0asm\x01\0\0\0" {
-                return Err(FileError::Invalid);
-            }
-            pending.insert(stem.into(), path.into());
-        }
-        let previous = self.program_files.clone();
-        self.program_files.extend(pending);
-        if !self.has_program("qjs")
-            && let Some(path) = self.program_files.get("quickjs").cloned()
-        {
-            self.program_files.insert("qjs".into(), path);
-        }
-        if let Err(error) = self.refresh_bin() {
-            self.program_files = previous;
-            return Err(error);
-        }
-        Ok(())
     }
 
     fn load_program(&mut self, name: &str) -> Result<Module, Error> {
@@ -556,6 +443,7 @@ impl World {
         }
         self.filesystem = Some(filesystem);
         self.compiled_files.clear();
+        self.validated_files.clear();
         Ok(())
     }
 

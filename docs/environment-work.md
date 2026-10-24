@@ -3,6 +3,19 @@
 Status: in progress. The checks below define completion of the environment
 expansion. Initial native/firmware interfaces do not establish full completion.
 
+Installation manifests now declare module sources, shared command aliases,
+libraries and licenses in root programs.json. Discovery validates binaries,
+supported imports and command exports before transactional alias publication.
+Reload removes obsolete aliases and preserves explicit registrations. Standard
+packaging includes the declared assets without build caches or duplicate alias
+images. VM launch merges the packaged installation with the selected workspace,
+and content conflicts reject before staging. Native installation, actual FAT
+pack/extract and saved-asset checks pass. Retained interpreter sessions, non-UTC
+timezones and the final combined delivery gates remain incomplete.
+Both actual 512 MiB WHPX API flows pass manifest-installed applications and
+independent saved FAT assets/modes in artifacts/installation-final-whpx-responses
+and artifacts/installation-final-whpx-chat_completions.
+
 The shared image currently uses upstream ls, find, awk, sed, grep, chmod, cat, head,
 tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true,
 false, od, hexdump, base64, sha256sum and realpath, plus mkdir, rmdir, rm,

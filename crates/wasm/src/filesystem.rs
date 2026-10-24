@@ -193,13 +193,16 @@ impl VirtualFileSystem {
             .cloned()
     }
 
-    fn program_metadata(&self, path: &str) -> Option<Metadata> {
-        let source = self.program(path)?;
-        let mut metadata = source
-            .and_then(|source| self.base.metadata(&source).ok())
-            .unwrap_or_else(|| virtual_metadata(EntryType::File, 0));
+    fn program_metadata(&self, path: &str) -> Result<Option<Metadata>, FileError> {
+        let Some(source) = self.program(path) else {
+            return Ok(None);
+        };
+        let mut metadata = match source {
+            Some(source) => self.base.metadata(&source)?,
+            None => virtual_metadata(EntryType::File, 0),
+        };
         metadata.mode = 0o555;
-        Some(metadata)
+        Ok(Some(metadata))
     }
 
     fn virtual_directory(&self, path: &str) -> bool {
@@ -231,6 +234,9 @@ struct VirtualFile {
 struct ProgramFile(Box<dyn File>);
 
 impl File for ProgramFile {
+    fn content_revision(&mut self) -> Result<Option<u64>, FileError> {
+        self.0.content_revision()
+    }
     fn filesystem_statistics(&self) -> Result<FileSystemStatistics, FileError> {
         self.0.filesystem_statistics()
     }
@@ -610,7 +616,7 @@ impl VirtualFileSystem {
         if let Some(node) = self.process_node(path)? {
             return self.process_metadata(node, true);
         }
-        if let Some(metadata) = self.program_metadata(path) {
+        if let Some(metadata) = self.program_metadata(path)? {
             return Ok(metadata);
         }
         if let Some(path) = self.temporary_path(path) {
@@ -831,7 +837,7 @@ impl VirtualFileSystem {
                     info
                 }
                 None => self
-                    .program_metadata(path)
+                    .program_metadata(path)?
                     .expect("Registered executable has metadata"),
             });
         }

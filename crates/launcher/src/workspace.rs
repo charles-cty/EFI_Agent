@@ -51,7 +51,7 @@ impl From<Metadata> for Attributes {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub contents: Contents,
-    attributes: Attributes,
+    pub(crate) attributes: Attributes,
     hard_link: Option<String>,
 }
 
@@ -152,7 +152,7 @@ fn valid_path(path: &str) -> Result<(), Error> {
     Ok(())
 }
 
-fn validate(tree: &Snapshot) -> Result<(), Error> {
+pub(crate) fn validate(tree: &Snapshot) -> Result<(), Error> {
     if tree.len() > MAX_ENTRIES {
         return Err("Workspace exceeds 4096 entries".into());
     }
@@ -278,6 +278,12 @@ fn load_host_metadata(root: &Path) -> Result<BTreeMap<String, Cached>, Error> {
 }
 
 pub fn host(root: &Path) -> Result<Snapshot, Error> {
+    host_selected(root, None)
+}
+
+/// Read only selected assets and their parents. Build output beside an asset
+/// is excluded before traversal, allocation and workspace-size accounting.
+pub fn host_selected(root: &Path, selected: Option<&BTreeSet<String>>) -> Result<Snapshot, Error> {
     regular_metadata(root)?;
     let cached = load_host_metadata(root)?;
     let provider = NativeFileSystem(root.into());
@@ -290,6 +296,7 @@ pub fn host(root: &Path) -> Result<Snapshot, Error> {
         cached: &BTreeMap<String, Cached>,
         result: &mut Snapshot,
         objects: &mut HostObjects,
+        selected: Option<&BTreeSet<String>>,
     ) -> Result<(), Error> {
         let directory = root.join(prefix);
         for child in fs::read_dir(&directory)? {
@@ -306,6 +313,15 @@ pub fn host(root: &Path) -> Result<Snapshot, Error> {
             } else {
                 format!("{prefix}/{name}")
             };
+            if selected.is_some_and(|paths| {
+                !paths.iter().any(|wanted| {
+                    path == *wanted
+                        || path.starts_with(&format!("{wanted}/"))
+                        || wanted.starts_with(&format!("{path}/"))
+                })
+            }) {
+                continue;
+            }
             valid_path(&path)?;
             let info = regular_metadata(&child.path())?;
             let raw = provider
@@ -365,12 +381,20 @@ pub fn host(root: &Path) -> Result<Snapshot, Error> {
                 },
             );
             if info.is_dir() {
-                walk(root, &path, provider, cached, result, objects)?;
+                walk(root, &path, provider, cached, result, objects, selected)?;
             }
         }
         Ok(())
     }
-    walk(root, "", &provider, &cached, &mut result, &mut objects)?;
+    walk(
+        root,
+        "",
+        &provider,
+        &cached,
+        &mut result,
+        &mut objects,
+        selected,
+    )?;
     group_links(&mut result, objects.groups)?;
     validate(&result)?;
     Ok(result)

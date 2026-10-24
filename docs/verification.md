@@ -1,5 +1,69 @@
 # Verification record
 
+## 2026-10-24: Installation manifests and packaged command assets
+
+Root `programs.json` version 1 declares each module source once with command
+aliases, libraries and licenses. Strict parsing rejects unknown fields,
+unsupported versions, duplicate sources/names, invalid or private paths and
+resource limits. Runtime validation checks complete binary bodies, supported
+host import signatures and command memory/entrypoint exports before publishing
+any aliases. Validation uses a temporary engine with deferred translation and
+does not execute guest code or allocate linear memory. Successful content
+revisions avoid repeated binary reads. First execution compiles the image.
+Reload removes obsolete installation-owned names and retains explicit byte
+registrations. Failure retains the previous registry. Explicit BusyBox-name
+overrides now dispatch to their own module. Missing file-backed sources report
+the real metadata error instead of a fabricated executable file.
+
+Seven manifest integration cases cover reload/removal, failed installation,
+asset paths/types, binary bodies, import signatures, entrypoints, explicit
+overrides and manifest/command/module boundaries. Counting-provider tests check
+that rediscovery does not reread unchanged images. The initial mutation probe
+edited a WAT name custom section instead of a function body; the corrected
+fixture encodes an explicitly invalid function body. An initial test import
+error and Clippy boolean simplification were corrected.
+
+Launcher installation selects declared assets before traversing build output.
+A 49 MiB unselected build file cannot consume workspace capacity. Actual FAT
+pack/extract verifies bytes, permissions and complete logical metadata; repeated
+staging, user-file preservation, missing-license errors and conflict-before-effects
+checks pass. `install --guest` uses logical namespace staging, while ordinary
+installation writes a host export. The firmware fixture uses the guest path
+and independently checks saved module modes and all module/license bytes.
+BusyBox and curl builds now copy their licenses; curl and WolfSSH also copy
+the linked wolfSSL license. The standard five-port catalog includes the unchanged
+CPython binary and its library, qjs/QuickJS shared aliases and one BusyBox image.
+VM launch retains declared packaged assets when replacing the work directory.
+
+Full host tests pass in `artifacts/installation-host-tests.log`. Updated manifest
+and cache checks pass in `artifacts/installation-final-tests.log`. Actual FAT
+installation checks pass in `artifacts/installation-package-tests.log`. Host
+and UEFI Clippy pass in `artifacts/installation-final-clippy.log` and
+`artifacts/installation-uefi-clippy.log`. Release runner/launcher/EFI and both
+package images pass in `artifacts/installation-{runner,launcher,package}.log`.
+PowerShell parser checks pass for the four changed build scripts.
+Python syntax checks pass after replacing an inline cross-shell quoting error
+with a PowerShell here-string passed through `-CommandWithArgs`.
+Native installation verifies real ash, curl, qjs, WolfSSH and Python dispatch,
+all declared aliases, libraries and licenses against independent saved bytes in
+`artifacts/installation-native.log`. All 17 CPython cases, 112 stream cases,
+program-path, process-file and executable-freshness regressions pass in
+`artifacts/installation-regression-*.log`.
+
+Both actual 512 MiB Windows WHPX API flows pass the current basic-command and
+installation tool sequence with logical guest staging. Independent saved FAT
+checks verify all module and license bytes, module modes, the Python startup
+library and the absence of virtual aliases/build caches in saved files. Evidence:
+`artifacts/installation-final-whpx-responses` and
+`artifacts/installation-final-whpx-chat_completions`. The first firmware pass
+used host-export installation; the final pass uses namespace staging and asserts
+0755 source-module modes to cover the firmware metadata path. Existing QEMU
+ignored-interrupt-vector and missing host AppxManifest warnings remain nonfatal.
+
+Retained interpreter sessions, non-UTC timezones and the final combined delivery
+audit remain incomplete. Existing wider application-port limits remain in the
+transparency audit.
+
 ## 2026-10-24: File-backed executable content revisions
 
 Namespace open files now expose a provider-owned content revision, independent

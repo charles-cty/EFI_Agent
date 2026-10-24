@@ -33,3 +33,4 @@ $link = '-Wall', '-Wextra', '-Werror', 'guests/wolfssh/main.c', 'guests/posix/ne
     '-o', (Join-Path $Output 'wolfssh.wasm')
 & $clang @flags @link
 Copy-Item -LiteralPath (Join-Path $Source 'LICENSING') -Destination (Join-Path $Output 'wolfssh.LICENSING')
+Copy-Item -LiteralPath (Join-Path $WolfSsl 'COPYING') -Destination (Join-Path $Output 'wolfssl.COPYING')

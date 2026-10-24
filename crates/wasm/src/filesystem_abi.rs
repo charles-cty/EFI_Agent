@@ -1,6 +1,7 @@
+use crate::installation::HostLinker;
 use alloc::{rc::Rc, string::String};
 use core::cell::{Cell, RefCell};
-use wasmi::{Caller, Linker};
+use wasmi::Caller;
 
 use crate::{
     Context,
@@ -495,7 +496,7 @@ fn open(
     result.err().unwrap_or(0)
 }
 
-pub(crate) fn link(linker: &mut Linker<Context>) {
+pub(crate) fn link(linker: &mut HostLinker) {
     linker
         .func_wrap("wasi_snapshot_preview1", "path_readlink", readlink)
         .expect("Unique import");

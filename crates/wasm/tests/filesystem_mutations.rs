@@ -524,7 +524,10 @@ fn workspace_modules_load_on_demand_and_aliases_follow_current_source() {
     world.step();
     assert_eq!(world.status(first).unwrap(), &Status::Exited(0));
     fs::write(workspace.0.join("quickjs.wasm"), b"changed on disk").unwrap();
-    world.discover_programs().unwrap();
+    assert_eq!(
+        world.discover_programs().unwrap_err().kind,
+        efi_agent_wasm::filesystem::FileError::Invalid
+    );
     assert!(world.spawn(vec!["/bin/qjs".into()], vec![]).is_err());
     fs::write(workspace.0.join("quickjs.wasm"), &module).unwrap();
     let alias = world.spawn(vec!["/bin/qjs".into()], vec![]).unwrap();
@@ -532,8 +535,8 @@ fn workspace_modules_load_on_demand_and_aliases_follow_current_source() {
     assert_eq!(world.status(alias).unwrap(), &Status::Exited(0));
     fs::write(workspace.0.join("bad.wasm"), b"invalid").unwrap();
     assert_eq!(
-        world.discover_programs(),
-        Err(efi_agent_wasm::filesystem::FileError::Invalid)
+        world.discover_programs().unwrap_err().kind,
+        efi_agent_wasm::filesystem::FileError::Invalid
     );
     assert!(!world.has_program("bad"));
 }
