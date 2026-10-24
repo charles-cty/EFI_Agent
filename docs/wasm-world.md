@@ -58,7 +58,7 @@ fuel exhaustion and round-robin scheduling.
 The shared BusyBox image includes upstream basename, dirname, pwd, env,
 printenv, seq, yes, true and false in addition to the upstream stream,
 regex/editor and sleep applets. Shell builtins and functions retain their
-normal precedence; /bin-prefixed names select registered external applets.
+normal precedence; installed external applets appear in `/bin` and use PATH lookup.
 Pwd enables its upstream -L/-P parser locally. Env supports clearing/unsetting
 variables, NUL output and cooperative execution with explicit environments.
 Seq retains upstream floating-point formatting and sequence semantics.
@@ -117,7 +117,8 @@ background roots remain active. Original root IDs survive parent adoption.
 The model prompt describes an Alpine Linux-style BusyBox ash environment and
 states its actual WASM limits. POSIX shell syntax is available. Bash-only
 syntax, a Linux kernel, `apk` and arbitrary Linux binaries are unavailable.
-External commands still require registered WASM programs.
+External commands use PATH, executable WASM files and executable scripts with
+absolute shebang interpreters. Installed commands appear in `/bin`.
 
 ```text
 /wasm load PATH
@@ -383,7 +384,7 @@ The startup adapter patches the process hooks used by upstream `subprocess.py`
 and `os.system`. It uses ordinary WASI open/read/write on the internal
 `.efi-process` control endpoint to spawn fresh instances, map descriptors and
 wait cooperatively. That endpoint is process-local and cannot be inherited.
-Application code uses standard Python APIs. `shell=True` selects registered `ash`; argument
+Application code uses standard Python APIs. `shell=True` selects `/bin/sh`; argument
 lists with `shell=False` preserve individual words. Standard return codes,
 `CalledProcessError`, binary capture, text encoding/error policies, environment
 overrides, pipes, file redirections and `pass_fds` are supported. Python capture
@@ -399,10 +400,12 @@ result = subprocess.run("echo hello", shell=True, capture_output=True, text=True
 print(result.stdout, end="")
 ```
 
-Executables must be registered. The backend maps `/bin/sh` to `ash`, and accepts
-registry names with `/bin/`, `/usr/bin/` or `./` prefixes. Filesystem PATH
-execution and a distinct custom `argv[0]` are unavailable. `cwd`, pre-exec
-callbacks, sessions/groups, credentials and per-child umask changes raise `ENOTSUP`.
+The backend resolves bare commands through the child's PATH (default `/bin`),
+and accepts absolute and relative executable paths. Files require the owner's
+execute bit and must contain a WASM module or an absolute-interpreter shebang.
+The runtime does not append `.wasm` to command names. `cwd` and per-child umask
+are supported. A distinct custom `argv[0]`, pre-exec callbacks, sessions/groups
+and credentials raise `ENOTSUP`.
 Ordinary children inherit the current directory and process umask. `os.chdir`
 and `os.umask` update that state through the private startup adapter. Current
 directory tracking is still path based and does not follow ancestor rename.
@@ -486,9 +489,10 @@ Error helpers use noinline boundaries rather than C noreturn promises, since
 Asyncify must return through those helpers while unwinding. Explicit temporary
 return values keep that unwind path defined. The completed terminal program
 bridge in `guests/busybox/exec.c` sends argv and the shell's explicit environment
-to a new registered instance, waits/reaps it and exits with its status. Spawn
-failures return mapped WASI-libc errno values to ash. The registry currently
-selects programs by argv[0]; filesystem PATH resolution remains pending.
+to a fresh instance, waits/reaps it and exits with its status. Spawn
+failures return mapped WASI-libc errno values to ash. Upstream ash searches PATH,
+checks executable modes and passes the selected path to the runtime. Internal
+shell tasks use `/bin/ash`, independently of user PATH.
 Ordinary external commands now call `efi_ash_run` and wait/reap without leaving
 the parent shell. The exec builtin exits after the fresh child finishes. Neither
 path replaces instance memory. Shell nodes use the separate task snapshot path.
@@ -496,10 +500,18 @@ path replaces instance memory. Shell nodes use the separate task snapshot path.
 `efi_process.program_exists(NAME, LENGTH)` queries the live registry, yields to
 the dispatcher and returns 1 or 0 without creating a process. Length excludes
 NUL. Invalid UTF-8, embedded NUL or empty names return EINVAL; invalid memory
-returns EFAULT and names over 64 KiB return E2BIG. Ash checks builtins and
-functions before this query. Registered commands use exact names independently
-of filesystem PATH. `command` can bypass a shell function. This registry dispatch
-does not replace the pending filesystem PATH implementation.
+returns EFAULT and names over 64 KiB return E2BIG. This import remains an exact
+registry query; ash and Python no longer use it to bypass filesystem lookup.
+Ash retains upstream builtin/function precedence and command hashing.
+`command` can bypass a shell function; `command -v`, `type` and upstream `which`
+discover installed commands through `/bin`.
+
+Runtime executable lookup also serves Python subprocess and env. Shebangs
+require a newline within the first 4096 bytes and an absolute interpreter path.
+The optional remainder is one interpreter argument. At most four script
+interpreter transitions may precede the final executable; loops return ELOOP.
+Malformed executable formats return ENOEXEC; denied modes return EACCES.
+Expanded arguments and the environment retain the combined 64 KiB bound.
 
 The shell sends only exported and command-local variables to the child. Local
 assignments override exports; repeated assignments use the last value. The
@@ -618,8 +630,8 @@ parents, existing entries, non-directory components and capability violations
 return distinct errors. The model `write` tool creates missing parents.
 Rename/removal, timestamps and symlinks use the shared persistent namespace
 on native and firmware targets. Normal Python imports, py_compile and compileall
-can write bytecode caches; `-B` retains its standard meaning. Filesystem PATH
-and complete working-directory state remain pending.
+can write bytecode caches; `-B` retains its standard meaning. Anchored current
+directory state and general mount/link traversal remain pending.
 Finite input and captured output use WASI UNKNOWN stream type. They are not
 terminals. Unchanged CPython `python -` executes redirected scripts and empty
 stdin without starting a REPL.
@@ -641,10 +653,17 @@ bytes paths and fd lifetime, but their private proxy type differs from DirEntry.
 
 Before model code runs, the firmware discovers root workspace `.wasm` files.
 It validates command names, binary headers and the 48 MiB module size bound.
-Discovered names participate in ash's program lookup before compilation. First
-spawn reads and compiles the module; later spawns reuse it. The `qjs` alias
+Discovered names appear as executable entries in `/bin` before compilation.
+First spawn reads and compiles the module; later spawns reuse it. The `qjs` alias
 shares `quickjs.wasm`'s compiled module. Explicit registrations take precedence.
-Filesystem PATH entries and a persistent installation manifest remain pending.
+File-backed `/bin` entries expose symlink metadata and the underlying WASM bytes;
+compiled-only host registrations expose executable metadata but cannot be read
+as files. Installed entries are read-only. An existing workspace `/bin` directory
+is merged; command-name collisions or a non-directory `/bin` reject installation
+before aliases are published. Unrelated workspace entries remain visible.
+A persistent installation manifest and general mount-boundary traversal remain
+pending. The installed CPython startup name is retained to locate its unchanged
+packaged library, including under `-I`.
 
 The `efi_process.dupfd(source, minimum)` import returns the lowest free descriptor
 at or above the minimum, or a negative POSIX errno. Ash uses it for saved
@@ -1078,7 +1097,7 @@ The remaining scope is:
 - Complete shared mounts, anchored cwd tracking and CPU-time clocks.
 - Socket options, address queries, listen/accept, peek/waitall and half-shutdown.
 - Reproducible source acquisition and packaging for the existing guest builds.
-- BusyBox ash remaining builtins and filesystem PATH lookup.
+- BusyBox remaining applets/builtins and complete executable mount traversal.
 - Complete shell task failure cleanup and nonlocal-jump resource verification.
 - Further SSH operations beyond the pinned-host-key/password exec client.
 - Remaining curl protocols and transport operations beyond the verified HTTP/TLS client.

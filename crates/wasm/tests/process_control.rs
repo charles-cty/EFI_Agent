@@ -6,6 +6,12 @@ use std::rc::Rc;
 
 struct Unused;
 impl FileSystem for Unused {
+    fn symlink_metadata(&self, path: &str) -> Result<Metadata, FileError> {
+        if path == "bin" {
+            return Err(FileError::NotFound);
+        }
+        self.metadata(path)
+    }
     fn open(&self, _: &str, _: OpenOptions) -> Result<Box<dyn File>, FileError> {
         panic!("Virtual endpoint must not open host files")
     }
@@ -91,6 +97,12 @@ fn directory_snapshot_rejects_bad_fds_types_and_missing_rights_before_enumeratio
 fn directory_snapshot_encodes_utf8_bytes_and_releases_private_descriptors() {
     struct Names;
     impl FileSystem for Names {
+        fn symlink_metadata(&self, path: &str) -> Result<Metadata, FileError> {
+            if path == "bin" {
+                return Err(FileError::NotFound);
+            }
+            self.metadata(path)
+        }
         fn open(&self, _: &str, _: OpenOptions) -> Result<Box<dyn File>, FileError> {
             panic!("Snapshot does not open files")
         }

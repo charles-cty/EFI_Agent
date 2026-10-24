@@ -5,6 +5,7 @@ extern crate alloc;
 mod abi;
 pub mod clock;
 mod dns;
+mod executable;
 pub mod filesystem;
 mod filesystem_abi;
 mod io;
@@ -33,6 +34,49 @@ pub const MAX_PROCESSES: usize = 32;
 pub const MAX_MEMORY_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_OUTPUT_BYTES: usize = 512 * 1024;
 const QUANTUM: u64 = 50_000;
+const ASH_APPLETS: &[&str] = &[
+    "ash",
+    "sh",
+    "cat",
+    "cp",
+    "date",
+    "env",
+    "grep",
+    "head",
+    "ls",
+    "mkdir",
+    "mv",
+    "rm",
+    "rmdir",
+    "touch",
+    "sort",
+    "uniq",
+    "cut",
+    "tr",
+    "sed",
+    "sleep",
+    "yes",
+    "awk",
+    "chmod",
+    "tail",
+    "wc",
+    "tee",
+    "basename",
+    "dirname",
+    "pwd",
+    "printenv",
+    "seq",
+    "true",
+    "false",
+    "find",
+    "od",
+    "hexdump",
+    "base64",
+    "sha256sum",
+    "realpath",
+    "stat",
+    "which",
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -69,6 +113,7 @@ pub enum Error {
     UnknownProgram(String),
     ProcessLimit,
     InvalidArguments,
+    InvalidExecutable,
     ArgumentsTooLarge,
     BadDescriptor,
     InvalidModule(wasmi::Error),
@@ -83,6 +128,7 @@ impl fmt::Display for Error {
             Self::UnknownProgram(name) => write!(f, "Unknown WASM program: {name}"),
             Self::ProcessLimit => f.write_str("WASM process limit reached"),
             Self::InvalidArguments => f.write_str("Invalid WASM arguments"),
+            Self::InvalidExecutable => f.write_str("Invalid executable format"),
             Self::ArgumentsTooLarge => f.write_str("WASM arguments and environment exceed 64 KiB"),
             Self::BadDescriptor => f.write_str("Invalid WASM descriptor"),
             Self::InvalidModule(error) => write!(f, "WASM module: {error}"),
@@ -108,6 +154,12 @@ impl Error {
             Self::BadDescriptor => -9,
             Self::InvalidArguments => -22,
             Self::ArgumentsTooLarge => -7,
+            Self::ProgramFile(
+                filesystem::FileError::Access | filesystem::FileError::IsDirectory,
+            ) => -13,
+            Self::ProgramFile(filesystem::FileError::NotFound) => -2,
+            Self::ProgramFile(filesystem::FileError::NotDirectory) => -20,
+            Self::ProgramFile(filesystem::FileError::Loop) => -40,
             Self::InvalidModule(error)
                 if matches!(
                     error.kind(),
@@ -196,6 +248,7 @@ pub struct World {
     programs: BTreeMap<String, Module>,
     program_files: BTreeMap<String, String>,
     compiled_files: BTreeMap<String, Module>,
+    bin: Rc<RefCell<BTreeMap<String, Option<String>>>>,
     processes: BTreeMap<Pid, Process>,
     ready: VecDeque<Pid>,
     next_pid: Pid,
@@ -211,48 +264,7 @@ impl World {
     /// ash image while retaining argv[0], so the guest can select the applet.
     fn ash_applet(name: &str) -> bool {
         let name = name.strip_prefix("/bin/").unwrap_or(name);
-        matches!(
-            name,
-            "ash"
-                | "cat"
-                | "cp"
-                | "date"
-                | "env"
-                | "grep"
-                | "head"
-                | "ls"
-                | "mkdir"
-                | "mv"
-                | "rm"
-                | "rmdir"
-                | "touch"
-                | "sort"
-                | "uniq"
-                | "cut"
-                | "tr"
-                | "sed"
-                | "sleep"
-                | "yes"
-                | "awk"
-                | "chmod"
-                | "tail"
-                | "wc"
-                | "tee"
-                | "basename"
-                | "dirname"
-                | "pwd"
-                | "printenv"
-                | "seq"
-                | "true"
-                | "false"
-                | "find"
-                | "od"
-                | "hexdump"
-                | "base64"
-                | "sha256sum"
-                | "realpath"
-                | "stat"
-        )
+        ASH_APPLETS.contains(&name)
     }
 
     pub fn new() -> Self {
@@ -277,6 +289,7 @@ impl World {
             programs: BTreeMap::new(),
             program_files: BTreeMap::new(),
             compiled_files: BTreeMap::new(),
+            bin: Rc::new(RefCell::new(BTreeMap::new())),
             processes: BTreeMap::new(),
             ready: VecDeque::new(),
             next_pid: 1,
@@ -293,7 +306,15 @@ impl World {
             return Err(Error::InvalidArguments);
         }
         let module = Module::new(&self.engine, wasm)?;
-        self.programs.insert(name.into(), module);
+        let previous = self.programs.insert(name.into(), module);
+        if let Err(error) = self.refresh_bin() {
+            if let Some(previous) = previous {
+                self.programs.insert(name.into(), previous);
+            } else {
+                self.programs.remove(name);
+            }
+            return Err(Error::ProgramFile(error));
+        }
         Ok(())
     }
 
@@ -359,11 +380,16 @@ impl World {
             }
             pending.insert(stem.into(), path.into());
         }
+        let previous = self.program_files.clone();
         self.program_files.extend(pending);
         if !self.has_program("qjs")
             && let Some(path) = self.program_files.get("quickjs").cloned()
         {
             self.program_files.insert("qjs".into(), path);
+        }
+        if let Err(error) = self.refresh_bin() {
+            self.program_files = previous;
+            return Err(error);
         }
         Ok(())
     }
@@ -418,7 +444,15 @@ impl World {
             self.compiled_files.insert(path, module.clone());
             module
         };
-        self.programs.insert(name.into(), module);
+        let previous = self.programs.insert(name.into(), module);
+        if let Err(error) = self.refresh_bin() {
+            if let Some(previous) = previous {
+                self.programs.insert(name.into(), previous);
+            } else {
+                self.programs.remove(name);
+            }
+            return Err(Error::ProgramFile(error));
+        }
         Ok(())
     }
 
@@ -465,7 +499,10 @@ impl World {
             self.processes.is_empty(),
             "Cannot replace a live world's filesystem"
         );
-        self.filesystem = Some(filesystem::VirtualFileSystem::new(filesystem));
+        self.filesystem = Some(filesystem::VirtualFileSystem::with_programs(
+            filesystem,
+            self.bin.clone(),
+        ));
     }
 
     pub fn spawn(&mut self, args: Vec<String>, stdin: Vec<u8>) -> Result<Pid, Error> {
@@ -499,7 +536,7 @@ impl World {
         descriptor_map: Option<Vec<(u32, u32)>>,
         settings: SpawnSettings,
     ) -> Result<Pid, Error> {
-        let name = args.first().ok_or(Error::InvalidArguments)?;
+        args.first().ok_or(Error::InvalidArguments)?;
         let environment = environment.unwrap_or_else(|| {
             self.processes[&parent]
                 .execution()
@@ -523,16 +560,31 @@ impl World {
         if self.processes.len() >= MAX_PROCESSES {
             return Err(Error::ProcessLimit);
         }
-        let module_name = if Self::ash_applet(name) {
-            "ash"
-        } else {
-            name.strip_prefix("/bin/").unwrap_or(name)
-        };
-        self.load_program(module_name)?;
+        let cwd = settings.cwd.clone().unwrap_or_else(|| {
+            if parent == 0 {
+                String::from("/")
+            } else {
+                self.processes[&parent].execution().store.data().cwd.clone()
+            }
+        });
+        if !cwd.starts_with('/') || cwd.contains('\0') {
+            return Err(Error::InvalidArguments);
+        }
+        let (module_name, args) = self.resolve_command(args, &environment, &cwd, parent == 0)?;
+        if args
+            .iter()
+            .chain(&environment)
+            .map(|entry| entry.len() + 1)
+            .sum::<usize>()
+            > 64 * 1024
+        {
+            return Err(Error::ArgumentsTooLarge);
+        }
+        self.load_program(&module_name)?;
         let module = self
             .programs
-            .get(module_name)
-            .ok_or_else(|| Error::UnknownProgram(name.clone()))?;
+            .get(&module_name)
+            .ok_or_else(|| Error::UnknownProgram(module_name.clone()))?;
         let pid = self.next_pid;
         let next_pid = pid
             .checked_add(1)
@@ -552,16 +604,6 @@ impl World {
                 context.stderr.clone(),
             )
         };
-        let cwd = settings.cwd.unwrap_or_else(|| {
-            if parent == 0 {
-                String::from("/")
-            } else {
-                self.processes[&parent].execution().store.data().cwd.clone()
-            }
-        });
-        if !cwd.starts_with('/') || cwd.contains('\0') {
-            return Err(Error::InvalidArguments);
-        }
         let cwd = cwd.trim_matches('/').to_string();
         let mut descriptors = if parent == 0 {
             BTreeMap::from([

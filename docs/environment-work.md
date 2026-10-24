@@ -13,8 +13,8 @@ timestamps and custom/terse formats. Filesystem mode (`stat -f`) remains
 disabled until the namespace exposes capacity statistics.
 Date currently supports UTC; other TZ values fail explicitly and timezone
 support remains pending.
-Firmware monotonic waits now use a reported hardware-counter rate. The mount,
-PATH, packaging and persistent-session gates remain incomplete.
+Firmware monotonic waits now use a reported hardware-counter rate. General mount
+traversal, packaging and persistent-session gates remain incomplete.
 Python's standard `os.remove`, `os.unlink` and `os.rmdir` now use the same
 namespace mutation providers as WASI and BusyBox. File and directory deletion
 therefore persists through the workspace namespace; focused WHPX application
@@ -27,6 +27,18 @@ The full CPython suite passes 17 cases. Windows Release packaging and the
 explicit subprocess cwd/umask behavior and independent saved FAT checks.
 The same WHPX sequence also verifies automatic import cache creation/reuse,
 py_compile, compileall and `-B` suppression with independent saved FAT checks.
+
+Executable discovery now publishes installed commands and shared BusyBox aliases
+in `/bin`, including upstream `which` and the `sh` alias. Upstream ash PATH
+lookup retains builtin/function precedence and checks owner execute permission.
+Runtime subprocess and env dispatch support PATH, explicit executable WASM paths
+and bounded absolute-interpreter shebangs. Native Release and 512 MiB
+WHPX/Responses checks pass PATH ordering, empty components, explicit child cwd,
+nonexecutable-file skipping, Python shebang options and independent saved script
+bytes/modes in `artifacts/program-paths-whpx-20261024`. Installation rejects
+workspace command collisions before publishing aliases and preserves unrelated
+workspace `/bin` entries. Persistent installation manifests, general mount/link
+traversal, the remaining command inventory and retained sessions remain pending.
 
 ## Required commands
 

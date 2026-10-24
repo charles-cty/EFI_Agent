@@ -50,6 +50,10 @@ int efi_ash_run(char *const arguments[], char *const environment[])
         case -7: errno = E2BIG; break;
         case -8: errno = ENOEXEC; break;
         case -9: errno = EBADF; break;
+        case -12: errno = ENOMEM; break;
+        case -13: errno = EACCES; break;
+        case -20: errno = ENOTDIR; break;
+        case -40: errno = ELOOP; break;
         case -11: errno = EAGAIN; break;
         case -14: errno = EFAULT; break;
         case -22: errno = EINVAL; break;
@@ -69,8 +73,19 @@ int efi_ash_run(char *const arguments[], char *const environment[])
 
 int efi_ash_exec(const char *path, char *const arguments[], char *const environment[])
 {
-    (void)path;
-    int status = efi_ash_run(arguments, environment);
+    unsigned count = 0;
+    while (arguments[count])
+        ++count;
+    char **resolved = malloc((count + 1) * sizeof(*resolved));
+    if (!resolved) {
+        errno = ENOMEM;
+        return -1;
+    }
+    for (unsigned index = 0; index <= count; ++index)
+        resolved[index] = arguments[index];
+    resolved[0] = (char *)path;
+    int status = efi_ash_run(resolved, environment);
+    free(resolved);
     if (status < 0) {
         return -1;
     }

@@ -19,7 +19,8 @@ def _request(operation, *words, payload=b''):
     if result < 0:
         errors = {2: errno.ENOENT, 7: errno.E2BIG, 8: errno.ENOEXEC,
                   9: errno.EBADF, 10: errno.ECHILD, 11: errno.EAGAIN,
-                  12: errno.ENOMEM, 14: errno.EFAULT, 22: errno.EINVAL, 24: errno.EMFILE,
+                  12: errno.ENOMEM, 13: errno.EACCES, 20: errno.ENOTDIR,
+                  40: errno.ELOOP, 14: errno.EFAULT, 22: errno.EINVAL, 24: errno.EMFILE,
                   36: errno.ENAMETOOLONG, 44: errno.ENOENT,
                   54: errno.ENOTDIR, 58: errno.ELOOP}
         error = errors[-result]
@@ -69,15 +70,6 @@ def _waitstatus_to_exitcode(status):
     return -(status & 127) if status & 127 else (status >> 8) & 255
 
 
-def _registry_name(name):
-    name = os.fsdecode(name)
-    for prefix in ('/usr/bin/', '/bin/', './'):
-        if name.startswith(prefix):
-            name = name[len(prefix):]
-            break
-    return 'ash' if name == 'sh' else name
-
-
 def _pack(values):
     result = bytearray()
     for value in values:
@@ -111,20 +103,15 @@ def _fork_exec(args, executables, close_fds, keep, cwd, env,
     if not argv:
         raise ValueError('args must name an executable')
     _pack(argv)
-    program = None
-    for candidate in executables:
-        name = _registry_name(candidate)
-        encoded = os.fsencode(name)
-        if not encoded or b'\0' in encoded:
-            raise ValueError('Invalid executable name')
-        if _request(8, payload=encoded)[0]:
-            program = name
-            break
-    if program is None:
-        raise FileNotFoundError(errno.ENOENT, 'Executable is not registered', argv[0])
-    if _registry_name(argv[0]) != program:
+    encoded = os.fsencode(argv[0])
+    if not encoded or b'\0' in encoded:
+        raise ValueError('Invalid executable name')
+    # Upstream Popen supplies PATH candidates. The runtime resolves the name
+    # against the explicit child environment and cwd in one operation.
+    if not any(candidate == encoded or
+               b'/' not in encoded and candidate.endswith(b'/' + encoded)
+               for candidate in executables):
         _unsupported()
-    argv[0] = program
     arguments = _pack(argv)
     environment = _pack(env if env is not None else
                         [os.fsencode(key) + b'=' + os.fsencode(value) for key, value in os.environ.items()])

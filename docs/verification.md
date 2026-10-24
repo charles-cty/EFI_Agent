@@ -1,5 +1,64 @@
 # Verification record
 
+## 2026-10-24: Executable PATH, installed commands and shebangs
+
+Upstream ash now searches executable filesystem entries with its normal
+builtin/function precedence and hashing. The shared image includes upstream
+which, and installed commands expose read-only `/bin` entries with shared image
+bytes, metadata and file-backed symlink targets. Unrelated workspace `/bin`
+files remain visible. Installation checks name collisions before publishing
+aliases; a deterministic namespace test verifies rejection and retry without
+losing the workspace entry.
+
+Runtime subprocess/env resolution checks child PATH and cwd, owner execute bits,
+explicit WASM filenames and bounded absolute-interpreter shebangs. Tests use two
+different executable outputs to distinguish PATH order and skip a denied first
+candidate. They cover empty PATH components, temporary assignments, builtin and
+function precedence, exec, which -a, Python subprocess environments/cwd,
+`#!/bin/python -I`, malformed images, interpreter loops and permission errors.
+An additional Rust test checks real WASM execution, denied modes after module
+compilation and symlink-parent `..` semantics.
+
+Windows Release native integration passes the PATH fixture and independent
+saved script bytes/modes. All 17 existing CPython integration cases pass with
+the unchanged prebuilt interpreter. Native basic applets, all 10 descriptor,
+20 math and 26 here-document cases pass. All native workspace tests and host/UEFI
+Clippy pass with warnings denied. Windows Release EFI/launcher packaging passes.
+
+Actual QEMU/OVMF with Windows WHPX, qemu64,+rdrand, 512 MiB and Responses passes
+the focused shell/Python code-tool flow and upstream basic/find regressions.
+The independent FAT reader verifies script contents, the persisted denied
+execute mode and the final result in `artifacts/program-paths-whpx-20261024`.
+This run uses the HTTP fixture. The complete networking/TLS application
+combination was not rerun. General mount-boundary/link traversal, persistent
+installation manifests, remaining applets and retained sessions remain pending.
+Compiled-only host registrations expose executable metadata but have no readable
+source image. Installed modules retain the existing compile-on-first-use cache.
+
+Issues corrected or bypassed during this task:
+
+- Packaging required API settings; process-local fixture values supplied them.
+  The interpreter binary and standard library remain unchanged. Retaining the
+  installed `python` startup name fixed `-I` library discovery.
+- Early test expectations assumed command-v returned 1 for a missing command
+  and an unexported PATH affected a child which process. They now check ash's
+  status 127 and pass command-local PATH explicitly.
+- The first which build called a nonexistent flush helper. It now uses the
+  existing upstream flush-and-exit helper. Existing upstream string-offset
+  compiler warnings remain visible; they did not block the WASM build.
+- An incorrect uv dependency request for the standard-library py_compile module
+  was replaced by an ordinary uv Python syntax check. PowerShell text sent to
+  Bash was rerun through pwsh.exe with a Windows-local directory.
+- Endpoint/provider fixtures initially rejected the new installation-time /bin
+  inspection. They now allow that inspection while retaining execution-time
+  no-effect assertions. A missing descriptor fixture at the guest-output path
+  was resolved by using its existing wasm-fixtures path.
+- An earlier broader WHPX attempt stopped after its clock check and was
+  interrupted; its remaining QEMU process was terminated. No passing evidence
+  or root cause is claimed for that attempt. The focused run above passed.
+- Git commands inspecting the dirty submodule stalled. Explicit file staging
+  and ignored submodule inspection preserve vendor and user workspace changes.
+
 ## 2026-10-22: Mounted namespace and logical workspace persistence
 
 Firmware and the native runner now mount the persistent namespace. Model file

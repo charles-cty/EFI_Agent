@@ -4,6 +4,7 @@ use core::cell::RefCell;
 pub use efi_agent_filesystem::*;
 
 type TempFiles = BTreeMap<String, Rc<RefCell<Vec<u8>>>>;
+type Programs = Rc<RefCell<BTreeMap<String, Option<String>>>>;
 
 /// Files and directories that exist in every guest without being persisted in
 /// the workspace. The workspace remains the backing store for ordinary paths.
@@ -12,17 +13,59 @@ pub struct VirtualFileSystem {
     tmp: Rc<RefCell<TempFiles>>,
     mount: String,
     identity: usize,
+    programs: Programs,
 }
 
 impl VirtualFileSystem {
     pub fn new(base: Rc<dyn FileSystem>) -> Rc<Self> {
+        Self::with_programs(base, Rc::new(RefCell::new(BTreeMap::new())))
+    }
+
+    pub(crate) fn with_programs(base: Rc<dyn FileSystem>, programs: Programs) -> Rc<Self> {
         let identity = base.identity();
         Rc::new(Self {
             base,
             tmp: Rc::new(RefCell::new(BTreeMap::new())),
             mount: String::new(),
             identity,
+            programs,
         })
+    }
+
+    pub(crate) fn validate_programs(
+        &self,
+        programs: &BTreeMap<String, Option<String>>,
+    ) -> Result<(), FileError> {
+        match self.base.symlink_metadata("bin") {
+            Err(FileError::NotFound) => return Ok(()),
+            Ok(info) if info.kind == EntryType::Directory => {}
+            Ok(_) => return Err(FileError::Exists),
+            Err(error) => return Err(error),
+        }
+        for name in programs.keys() {
+            match self.base.symlink_metadata(&format!("bin/{name}")) {
+                Err(FileError::NotFound) => {}
+                Ok(_) => return Err(FileError::Exists),
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
+    fn program(&self, path: &str) -> Option<Option<String>> {
+        self.programs
+            .borrow()
+            .get(path.strip_prefix("bin/")?)
+            .cloned()
+    }
+
+    fn program_metadata(&self, path: &str) -> Option<Metadata> {
+        let source = self.program(path)?;
+        let mut metadata = source
+            .and_then(|source| self.base.metadata(&source).ok())
+            .unwrap_or_else(|| Metadata::new(EntryType::File, 0));
+        metadata.mode = 0o555;
+        Some(metadata)
     }
 
     fn virtual_directory(path: &str) -> bool {
@@ -43,6 +86,31 @@ struct VirtualFile {
     offset: usize,
     zero: bool,
     discard: bool,
+}
+
+struct ProgramFile(Box<dyn File>);
+
+impl File for ProgramFile {
+    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, FileError> {
+        self.0.read(buffer)
+    }
+    fn write(&mut self, _buffer: &[u8]) -> Result<usize, FileError> {
+        Err(FileError::ReadOnly)
+    }
+    fn seek(&mut self, offset: i64, whence: u32) -> Result<u64, FileError> {
+        self.0.seek(offset, whence)
+    }
+    fn metadata(&mut self) -> Result<Metadata, FileError> {
+        let mut info = self.0.metadata()?;
+        info.mode = 0o555;
+        Ok(info)
+    }
+    fn flush(&mut self) -> Result<(), FileError> {
+        self.0.flush()
+    }
+    fn resize(&mut self, _size: u64) -> Result<(), FileError> {
+        Err(FileError::ReadOnly)
+    }
 }
 
 impl File for VirtualFile {
@@ -181,6 +249,15 @@ impl FileSystem for VirtualFileSystem {
     fn open(&self, path: &str, options: OpenOptions) -> Result<Box<dyn File>, FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
+        if let Some(source) = self.program(path) {
+            if options.write || options.create || options.truncate || options.append {
+                return Err(FileError::ReadOnly);
+            }
+            return Ok(Box::new(ProgramFile(
+                self.base
+                    .open(&source.ok_or(FileError::Unsupported)?, options)?,
+            )));
+        }
         if let Some(name) = path.strip_prefix("tmp/") {
             if name.is_empty() || name.contains('/') {
                 return Err(FileError::NotFound);
@@ -234,6 +311,9 @@ impl FileSystem for VirtualFileSystem {
     fn metadata(&self, path: &str) -> Result<Metadata, FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
+        if let Some(metadata) = self.program_metadata(path) {
+            return Ok(metadata);
+        }
         if let Some(name) = path.strip_prefix("tmp/") {
             let data = self
                 .tmp
@@ -252,7 +332,13 @@ impl FileSystem for VirtualFileSystem {
     fn read_directory(&self, path: &str) -> Result<DirectoryEntries, FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
-        let mut entries = if path.is_empty() || !Self::virtual_directory(path) {
+        let mut entries = if path == "bin" {
+            match self.base.read_directory(path) {
+                Ok(entries) => entries,
+                Err(FileError::NotFound) => DirectoryEntries::new(),
+                Err(error) => return Err(error),
+            }
+        } else if path.is_empty() || !Self::virtual_directory(path) {
             self.base.read_directory(path)?
         } else {
             DirectoryEntries::new()
@@ -264,7 +350,18 @@ impl FileSystem for VirtualFileSystem {
                 }
             }
         } else if Self::virtual_directory(path) {
-            if path == "tmp" {
+            if path == "bin" {
+                for (name, source) in self.programs.borrow().iter() {
+                    entries.push(
+                        name.clone(),
+                        if source.is_some() {
+                            EntryType::Symlink
+                        } else {
+                            EntryType::File
+                        },
+                    )?;
+                }
+            } else if path == "tmp" {
                 for name in self.tmp.borrow().keys() {
                     entries.push(name.clone(), EntryType::File)?;
                 }
@@ -282,7 +379,11 @@ impl FileSystem for VirtualFileSystem {
     fn create_directory(&self, path: &str) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
-        if Self::virtual_directory(path) || path.starts_with("dev/") || path.starts_with("proc/") {
+        if Self::virtual_directory(path)
+            || self.program(path).is_some()
+            || path.starts_with("dev/")
+            || path.starts_with("proc/")
+        {
             return Err(FileError::ReadOnly);
         }
         self.base.create_directory(path)
@@ -308,7 +409,11 @@ impl FileSystem for VirtualFileSystem {
             files.insert(destination.into(), data);
             return Ok(());
         }
-        if Self::virtual_entry(source).is_some() || Self::virtual_entry(destination).is_some() {
+        if Self::virtual_entry(source).is_some()
+            || Self::virtual_entry(destination).is_some()
+            || self.program(source).is_some()
+            || self.program(destination).is_some()
+        {
             return Err(FileError::ReadOnly);
         }
         self.base.rename(source, destination)
@@ -325,7 +430,7 @@ impl FileSystem for VirtualFileSystem {
                 .map(|_| ())
                 .ok_or(FileError::NotFound);
         }
-        if Self::virtual_entry(path).is_some() {
+        if Self::virtual_entry(path).is_some() || self.program(path).is_some() {
             return Err(FileError::ReadOnly);
         }
         self.base.unlink(path)
@@ -343,7 +448,7 @@ impl FileSystem for VirtualFileSystem {
     fn symlink(&self, target: &str, path: &str) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
-        if Self::virtual_entry(path).is_some() {
+        if Self::virtual_entry(path).is_some() || self.program(path).is_some() {
             return Err(FileError::ReadOnly);
         }
         self.base.symlink(target, path)
@@ -351,12 +456,29 @@ impl FileSystem for VirtualFileSystem {
 
     fn read_link(&self, path: &str) -> Result<String, FileError> {
         let path = self.mounted(path);
+        if let Some(source) = self.program(&path) {
+            return source
+                .map(|source| format!("/{source}"))
+                .ok_or(FileError::Invalid);
+        }
         self.base.read_link(&path)
     }
 
     fn symlink_metadata(&self, path: &str) -> Result<Metadata, FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
+        if let Some(source) = self.program(path) {
+            return Ok(match source {
+                Some(source) => {
+                    let mut info = Metadata::new(EntryType::Symlink, (source.len() + 1) as u64);
+                    info.mode = 0o777;
+                    info
+                }
+                None => self
+                    .program_metadata(path)
+                    .expect("Registered executable has metadata"),
+            });
+        }
         if let Some(kind) = Self::virtual_entry(path) {
             return Ok(Metadata::new(kind, 0));
         }
@@ -372,7 +494,7 @@ impl FileSystem for VirtualFileSystem {
     ) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
-        if Self::virtual_entry(path).is_some() {
+        if Self::virtual_entry(path).is_some() || self.program(path).is_some() {
             return Err(FileError::ReadOnly);
         }
         self.base.set_times(path, follow, access, modify)
@@ -381,7 +503,7 @@ impl FileSystem for VirtualFileSystem {
     fn set_mode(&self, path: &str, mode: u16) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
-        if Self::virtual_entry(path).is_some() {
+        if Self::virtual_entry(path).is_some() || self.program(path).is_some() {
             return Err(FileError::ReadOnly);
         }
         self.base.set_mode(path, mode)
@@ -433,7 +555,11 @@ impl FileSystem for VirtualFileSystem {
             files.insert(destination.into(), data);
             return Ok(());
         }
-        if Self::virtual_entry(&source).is_some() || Self::virtual_entry(&destination).is_some() {
+        if Self::virtual_entry(&source).is_some()
+            || Self::virtual_entry(&destination).is_some()
+            || self.program(&source).is_some()
+            || other.program(&destination).is_some()
+        {
             return Err(FileError::ReadOnly);
         }
         self.base
@@ -475,6 +601,7 @@ impl FileSystem for VirtualFileSystem {
                 tmp: self.tmp.clone(),
                 mount: path.into(),
                 identity: self.identity,
+                programs: self.programs.clone(),
             })));
         }
         self.base.directory_view(path)

@@ -121,7 +121,7 @@ static int spawn_error(int32_t result)
 
 static int spawn_shell(const char *command, int pipe_end, int target)
 {
-    const char *arguments[] = {"ash", "-c", command};
+    const char *arguments[] = {"/bin/ash", "-c", command};
     uint32_t environment_count = 0;
     while (environ && environ[environment_count])
         ++environment_count;

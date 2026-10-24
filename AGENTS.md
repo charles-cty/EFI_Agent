@@ -9,6 +9,20 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Installed commands and shared BusyBox aliases now appear in executable `/bin`
+entries, including upstream which and the sh alias. Ash uses upstream PATH
+lookup with builtin/function precedence and owner execute checks. Runtime
+subprocess/env lookup supports PATH, explicit WASM paths and bounded absolute
+shebangs. Child cwd participates in lookup; installed Python keeps its startup
+name for unchanged library discovery under -I. Native Release and actual
+512 MiB WHPX/Responses pass PATH ordering, empty components, shell precedence,
+shebang options/errors and independent saved FAT script bytes/modes in
+artifacts/program-paths-whpx-20261024. Workspace /bin entries remain visible;
+command collisions reject installation before aliases are published. All WASM
+tests, host/UEFI Clippy and native basic/descriptor/math/heredoc regressions pass.
+The existing 17 CPython integration cases pass. General mount/link traversal,
+persistent manifests, remaining applets and retained sessions remain incomplete.
+
 Upstream BusyBox stat now builds into the shared image with file metadata,
 custom/terse formats, link-following control and the fixed `agent` uid/gid
 names. Filesystem-stat mode is disabled pending namespace capacity reporting.

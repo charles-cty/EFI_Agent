@@ -6,6 +6,10 @@ use std::{cell::RefCell, rc::Rc};
 
 struct Untouched;
 impl FileSystem for Untouched {
+    fn symlink_metadata(&self, path: &str) -> Result<Metadata, FileError> {
+        assert_eq!(path, "bin", "Only command installation may inspect /bin");
+        Err(FileError::NotFound)
+    }
     fn open(&self, _: &str, _: OpenOptions) -> Result<Box<dyn File>, FileError> {
         panic!("Denied CLI operation must not open a file")
     }
@@ -60,6 +64,12 @@ fn unavailable_wasi_socket_operations_validate_arguments_and_preserve_outputs() 
 
 struct NonLinks(RefCell<Vec<String>>);
 impl FileSystem for NonLinks {
+    fn symlink_metadata(&self, path: &str) -> Result<Metadata, FileError> {
+        if path == "bin" {
+            return Err(FileError::NotFound);
+        }
+        self.metadata(path)
+    }
     fn open(&self, _: &str, _: OpenOptions) -> Result<Box<dyn File>, FileError> {
         panic!("readlink must not open files")
     }

@@ -36,6 +36,7 @@ from test_busybox_sha256 import verify_sha256
 from wasm_realpath_fixture import REALPATH_CHECK
 from test_busybox_realpath import verify_realpath
 from wasm_stat_fixture import STAT_CHECK
+from wasm_program_paths_fixture import PROGRAM_PATHS_CHECK
 from test_busybox_stat import verify_stat
 
 from cryptography import x509
@@ -286,6 +287,7 @@ def main():
     parser.add_argument("--stat-applet", action="store_true", help="Run upstream basic and stat applet WHPX checks")
     parser.add_argument("--ls-applet", action="store_true", help="Run upstream basic and ls applet WHPX checks")
     parser.add_argument("--find-applet", action="store_true", help="Run upstream basic and find applet WHPX checks")
+    parser.add_argument("--program-paths", action="store_true", help="Verify guest PATH and shebang dispatch through WHPX")
     args = parser.parse_args()
     if args.code_cancel_only and not args.code_workspace:
         parser.error("--code-cancel-only requires --code-workspace")
@@ -444,19 +446,21 @@ def main():
         Provider.code_expected.append('UPSTREAM_DATE_OK')
     applet_modes = sum((args.text_applets, args.base64_applet, args.sha256_applet,
                         args.realpath_applet, args.stat_applet, args.ls_applet,
-                        args.find_applet))
+                        args.find_applet, args.program_paths))
     if applet_modes:
         if not args.code_workspace or args.filesystem_tools or args.code_cancel_only:
             parser.error("Applet checks require --code-workspace and exclude other code modes")
         if applet_modes != 1:
             parser.error("Select one applet check mode")
-        fixture = (None if args.find_applet else
+        fixture = (PROGRAM_PATHS_CHECK if args.program_paths else
+                   None if args.find_applet else
                    LS_CHECK if args.ls_applet else
                    STAT_CHECK if args.stat_applet else
                    REALPATH_CHECK if args.realpath_applet else
                    SHA256_CHECK if args.sha256_applet else
                    BASE64_CHECK if args.base64_applet else TEXT_APPLETS_CHECK)
-        marker = ('UPSTREAM_BASIC_APPLETS_OK' if args.find_applet else
+        marker = ('PROGRAM_PATHS_OK' if args.program_paths else
+                  'UPSTREAM_BASIC_APPLETS_OK' if args.find_applet else
                   'UPSTREAM_LS_OK' if args.ls_applet else
                   'UPSTREAM_STAT_OK' if args.stat_applet else
                   'UPSTREAM_REALPATH_OK' if args.realpath_applet else
@@ -509,6 +513,9 @@ def main():
                 shutil.copyfile(args.code_workspace / name, tree / "work" / name)
             shutil.copytree(args.code_workspace / "lib", tree / "work/lib")
             (tree / "work/background-loop.sh").write_bytes(b"while :; do :; done\n")
+        if args.program_paths:
+            (tree / "work/bin").mkdir()
+            (tree / "work/bin/workspace-entry").write_bytes(b'workspace command data')
         if args.driver:
             (tree / "EFI/AGENT/DRIVERS").mkdir()
             (tree / "EFI/AGENT/DRIVERS/Probe.efi").write_bytes(args.driver.read_bytes())
@@ -572,7 +579,7 @@ def main():
                 wait("Conversation cleared")
             if (args.text_applets or args.base64_applet or args.sha256_applet
                     or args.realpath_applet or args.stat_applet or args.ls_applet
-                    or args.find_applet):
+                    or args.find_applet or args.program_paths):
                 send("Exercise code tools")
                 wait("CODE_TOOLS_VERIFIED", args.code_timeout)
                 send("/exit")
@@ -595,6 +602,10 @@ def main():
                     assert workspace.read('find-tree/empty') == b''
                     assert workspace.read('find-tree/skip/deep/c.bin') == b'gamma'
                     assert workspace.entries['find-tree/link']['target'] == 'a.txt'
+                    if args.program_paths:
+                        assert workspace.read('program-paths-result') == b'PROGRAM_PATHS_OK\n'
+                        assert workspace.entries['path-one/pick']['mode'] == 0o600
+                        assert workspace.read('path-two/pick') == b'#!/bin/ash\nprintf path-two\n'
                     if args.ls_applet:
                         assert workspace.read('ls-result') == (
                             b'alpha\ndangling\ndir-link\nlarge\nlink\nspace name\nsub\n\xe5\x90\x8d\n'

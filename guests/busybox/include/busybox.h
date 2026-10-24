@@ -69,6 +69,11 @@ typedef signed char smallint;
 typedef unsigned char smalluint;
 
 extern const char bb_PATH_root_path[];
+#define BB_PATH_ROOT_PATH "PATH=/bin"
+#define bb_default_root_path (bb_PATH_root_path + 5)
+int file_is_executable(const char *name);
+char *find_executable(const char *filename, char **path);
+int executable_exists(const char *filename);
 extern const char bb_msg_memory_exhausted[];
 extern const char bb_msg_requires_arg[];
 extern const char bb_msg_write_error[];

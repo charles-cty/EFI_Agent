@@ -55,6 +55,7 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $Source 'coreutils/realpath.c'),
     (Join-Path $build 'stat.c'),
     (Join-Path $Source 'findutils/find.c'),
+    (Join-Path $build 'which.c'), (Join-Path $build 'executable.c'),
     (Join-Path $Source 'libbb/replace.c'),
     (Join-Path $build 'ls.c'), (Join-Path $Source 'libbb/human_readable.c'),
     (Join-Path $Source 'libbb/auto_string.c'), (Join-Path $Source 'libbb/printable_string.c'),

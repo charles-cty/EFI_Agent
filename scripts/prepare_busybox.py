@@ -28,7 +28,7 @@ ENABLED = {
     "SORT", "FEATURE_SORT_BIG", "UNIQ", "CUT", "FEATURE_CUT_REGEX",
     "TR", "FEATURE_TR_CLASSES", "FEATURE_TR_EQUIV",
     "OD", "HEXDUMP", "BASE64", "SHA256SUM", "FEATURE_MD5_SHA1_SUM_CHECK", "REALPATH",
-    "STAT", "FEATURE_STAT_FORMAT",
+    "STAT", "FEATURE_STAT_FORMAT", "WHICH",
     "FIND", "FEATURE_FIND_PRINT0", "FEATURE_FIND_MTIME", "FEATURE_FIND_ATIME",
     "FEATURE_FIND_CTIME", "FEATURE_FIND_MMIN", "FEATURE_FIND_AMIN",
     "FEATURE_FIND_CMIN", "FEATURE_FIND_PERM", "FEATURE_FIND_TYPE",
@@ -473,6 +473,16 @@ def main():
 \tif (open_errors)
 \t\treturn 2;''')
     (args.output / "grep.c").write_text(grep, encoding="utf-8")
+    executable = (args.source / "libbb/executable.c").read_text(encoding="utf-8")
+    executable = executable[:executable.index("#if ENABLE_FEATURE_PREFER_APPLETS")]
+    # WASI access(X_OK) has no execute-right bit. Use the enforced guest owner mode.
+    executable = replace_once(executable,
+        "return (!access(name, X_OK) && !stat(name, &s) && S_ISREG(s.st_mode));",
+        "return (!stat(name, &s) && (s.st_mode & S_IXUSR) && S_ISREG(s.st_mode));")
+    (args.output / "executable.c").write_text(executable, encoding="utf-8")
+    which = (args.source / "debianutils/which.c").read_text(encoding="utf-8")
+    which = replace_once(which, "return status;", "fflush_stdout_and_exit(status);")
+    (args.output / "which.c").write_text(which, encoding="utf-8")
     ash = (args.source / "shell/ash.c").read_text(encoding="utf-8")
     printf = (args.source / "coreutils/printf.c").read_text(encoding="utf-8")
     # Successful stdio output can change errno. Keep numeric conversion
@@ -551,7 +561,23 @@ openhere(union node *redir)
     end = ash.index("\tcase CMDBUILTIN:", start)
     ash = ash[:start] + '''\tdefault: {
         char **environment = listvars(VEXPORT, VUNSET, varlist.list, NULL);
+        char *original_name = argv[0];
+        char *resolved_name = NULL;
+        if (!strchr(original_name, '/')) {
+            const char *search_path = path;
+            int index = cmdentry.u.index;
+            while (padvance(&search_path, original_name) >= 0) {
+                if (index-- == 0 && pathopt == NULL) {
+                    resolved_name = strchr(stackblock(), '/')
+                        ? xstrdup(stackblock()) : xasprintf("./%s", (char *)stackblock());
+                    argv[0] = resolved_name;
+                    break;
+                }
+            }
+        }
         int command_status = efi_ash_run(argv, environment);
+        argv[0] = original_name;
+        free(resolved_name);
         if (command_status < 0) {
             command_status = errno == ENOENT ? 127 : 126;
             ash_msg("%s: %s", argv[0], strerror(errno));
@@ -560,17 +586,10 @@ openhere(union node *redir)
         break;
     }
 ''' + ash[end:]
-    # Builtins and functions retain upstream precedence. The registry query is
-    # live and uncached, so loading a program after a shell starts is visible.
-    marker = "\t/* We have to search path. */"
-    if ash.count(marker) != 1:
-        raise ValueError("Upstream ash command lookup marker changed")
-    ash = ash.replace(marker, '''    if (efi_process_program_exists(name, strlen(name)) == 1) {
-        entry->cmdtype = CMDNORMAL;
-        entry->u.index = -1;
-        return;
-    }
-''' + marker)
+    # Keep upstream PATH lookup and hashing. The filesystem exposes installed
+    # command entries, and execution uses the selected PATH component above.
+    ash = replace_once(ash, "if (!S_ISREG(statb.st_mode))",
+                       "if (!S_ISREG(statb.st_mode) || !(statb.st_mode & S_IXUSR))")
     # The process ABI requires unique environment names. Compare names rather
     # than NAME=value strings, and discard earlier command-local assignments.
     marker = "if (strcmp(lp1->text, vp->var_text) == 0)"

@@ -320,7 +320,7 @@ int efi_ash_spawn_task(union node *node, uint32_t input, uint32_t output, unsign
     snprintf(size, sizeof size, "%zu", codec.cursor);
     char fd_text[16];
     snprintf(fd_text, sizeof fd_text, "%u", task_fd);
-    const char *arguments[] = {"ash", "--efi-task", size, fd_text};
+    const char *arguments[] = {"/bin/ash", "--efi-task", size, fd_text};
     char scratch[128];
     int32_t argument_size = efi_process_pack_argv(arguments, 4, scratch, sizeof scratch);
     int32_t pid = argument_size < 0 ? argument_size
