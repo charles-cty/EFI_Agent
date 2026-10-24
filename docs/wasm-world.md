@@ -143,8 +143,12 @@ it and lstat inspects it, subject to trailing-directory requirements. Opening
 the root directory retains mounted entries. Non-root directory capabilities
 retain their anchor and reject absolute links and upward escapes. Python's
 private metadata and child-cwd adapters preserve link/parent components.
-Mount collisions, some reverse workspace directory-fd mutations and
-process-information support remain incomplete.
+Workspace directory views retain the virtual routing layer over their inode
+anchor. Rename and hard-link operations work in both directions between those
+views and the root, including after directory rename. Routing uses each view's
+scope, so local tmp/dev/proc/bin names remain ordinary directories. Cross-device
+mutations still fail before effects. Mount collisions and process-information
+support remain incomplete.
 
 Ln uses upstream option parsing, hard/symbolic link creation, destination
 directory handling, backups and verbose output. Force and backup operations

@@ -149,9 +149,16 @@ components instead of folding them lexically. Links to installed commands reuse
 the compiled module, including compiled-only registrations. Native Release and
 both actual 512 MiB WHPX model API flows pass with independent saved FAT bytes,
 modes and link targets in artifacts/mount-walk-whpx-responses and
-artifacts/mount-walk-whpx-chat_completions. Mount collision policy and some
-mutations from anchored workspace directory fds to the virtual root still need
-completion, together with devices, process information, manifests and sessions.
+artifacts/mount-walk-whpx-chat_completions.
+Workspace directory fds now retain that routing layer over their inode anchors.
+Rename and hard-link mutations work in both directions with the virtual root,
+including after directory rename. Local tmp/dev/proc/bin names remain ordinary
+directories and real cross-device operations fail before effects. Native
+regressions and both actual 512 MiB WHPX model API flows pass, including
+independent saved FAT hard-link groups and bytes in
+artifacts/anchored-mount-whpx-responses and
+artifacts/anchored-mount-whpx-chat_completions. Mount collision policy, devices,
+process information, manifests and sessions still need completion.
 
 ## Delivery requirements
 

@@ -33,13 +33,20 @@ fn special_statistics(device: u32) -> FileSystemStatistics {
 }
 type Programs = Rc<RefCell<BTreeMap<String, Option<String>>>>;
 
+#[derive(Clone, PartialEq, Eq)]
+enum Scope {
+    Root,
+    Workspace,
+    Mount(String),
+}
+
 /// Files and directories that exist in every guest without being persisted in
 /// the workspace. The workspace remains the backing store for ordinary paths.
 #[derive(Clone)]
 pub struct VirtualFileSystem {
     base: Rc<dyn FileSystem>,
     tmp: Rc<namespace::Namespace>,
-    mount: String,
+    scope: Scope,
     identity: usize,
     programs: Programs,
 }
@@ -65,7 +72,7 @@ impl VirtualFileSystem {
                 3,
                 None,
             )),
-            mount: String::new(),
+            scope: Scope::Root,
             identity,
             programs,
         })
@@ -92,6 +99,9 @@ impl VirtualFileSystem {
     }
 
     fn program(&self, path: &str) -> Option<Option<String>> {
+        if self.scope == Scope::Workspace {
+            return None;
+        }
         self.programs
             .borrow()
             .get(path.strip_prefix("bin/")?)
@@ -107,11 +117,14 @@ impl VirtualFileSystem {
         Some(metadata)
     }
 
-    fn virtual_directory(path: &str) -> bool {
-        matches!(path, "dev" | "tmp" | "proc" | "bin")
+    fn virtual_directory(&self, path: &str) -> bool {
+        self.scope != Scope::Workspace && matches!(path, "dev" | "tmp" | "proc" | "bin")
     }
 
-    fn virtual_entry(path: &str) -> Option<EntryType> {
+    fn virtual_entry(&self, path: &str) -> Option<EntryType> {
+        if self.scope == Scope::Workspace {
+            return None;
+        }
         match path {
             "dev/null" | "dev/zero" | "proc/self" | "proc/uptime" => Some(EntryType::File),
             "dev" | "tmp" | "proc" | "bin" => Some(EntryType::Directory),
@@ -379,10 +392,10 @@ impl VirtualFileSystem {
                     .open(&source.ok_or(FileError::Unsupported)?, options)?,
             )));
         }
-        if let Some(path) = Self::temporary_path(path) {
+        if let Some(path) = self.temporary_path(path) {
             return self.tmp.open(path, options);
         }
-        if let Some(kind) = Self::virtual_entry(path) {
+        if let Some(kind) = self.virtual_entry(path) {
             if kind == EntryType::Directory {
                 return Err(FileError::IsDirectory);
             }
@@ -414,10 +427,10 @@ impl VirtualFileSystem {
         if let Some(metadata) = self.program_metadata(path) {
             return Ok(metadata);
         }
-        if let Some(path) = Self::temporary_path(path) {
+        if let Some(path) = self.temporary_path(path) {
             return self.tmp.metadata(path);
         }
-        if let Some(kind) = Self::virtual_entry(path) {
+        if let Some(kind) = self.virtual_entry(path) {
             let mut metadata = virtual_metadata(kind, 0);
             metadata.device = match path.split('/').next() {
                 Some("dev") => 2,
@@ -433,7 +446,7 @@ impl VirtualFileSystem {
     fn read_directory_raw(&self, path: &str) -> Result<DirectoryEntries, FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
-        if let Some(path) = Self::temporary_path(path) {
+        if let Some(path) = self.temporary_path(path) {
             return self.tmp.read_directory(path);
         }
         let mut entries = if path == "bin" {
@@ -442,18 +455,18 @@ impl VirtualFileSystem {
                 Err(FileError::NotFound) => DirectoryEntries::new(),
                 Err(error) => return Err(error),
             }
-        } else if path.is_empty() || !Self::virtual_directory(path) {
+        } else if path.is_empty() || !self.virtual_directory(path) {
             self.base.read_directory(path)?
         } else {
             DirectoryEntries::new()
         };
-        if path.is_empty() {
+        if path.is_empty() && self.scope == Scope::Root {
             for name in ["bin", "dev", "proc", "tmp"] {
                 if !entries.iter().any(|(entry, _)| entry == name) {
                     entries.push(name.into(), EntryType::Directory)?;
                 }
             }
-        } else if Self::virtual_directory(path) {
+        } else if self.virtual_directory(path) {
             if path == "bin" {
                 for (name, source) in self.programs.borrow().iter() {
                     entries.push(
@@ -479,13 +492,13 @@ impl VirtualFileSystem {
     fn create_directory_raw(&self, path: &str) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
-        if let Some(path) = Self::temporary_path(path) {
+        if let Some(path) = self.temporary_path(path) {
             return self.tmp.create_directory(path);
         }
-        if Self::virtual_directory(path)
+        if self.virtual_directory(path)
             || self.program(path).is_some()
-            || path.starts_with("dev/")
-            || path.starts_with("proc/")
+            || (self.scope != Scope::Workspace
+                && (path.starts_with("dev/") || path.starts_with("proc/")))
         {
             return Err(FileError::ReadOnly);
         }
@@ -495,10 +508,10 @@ impl VirtualFileSystem {
     fn unlink_raw(&self, path: &str) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
-        if let Some(path) = Self::temporary_path(path) {
+        if let Some(path) = self.temporary_path(path) {
             return self.tmp.unlink(path);
         }
-        if Self::virtual_entry(path).is_some() || self.program(path).is_some() {
+        if self.virtual_entry(path).is_some() || self.program(path).is_some() {
             return Err(FileError::ReadOnly);
         }
         self.base.unlink(path)
@@ -507,10 +520,10 @@ impl VirtualFileSystem {
     fn remove_directory_raw(&self, path: &str) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
-        if let Some(path) = Self::temporary_path(path) {
+        if let Some(path) = self.temporary_path(path) {
             return self.tmp.remove_directory(path);
         }
-        if Self::virtual_directory(path) {
+        if self.virtual_directory(path) {
             return Err(FileError::ReadOnly);
         }
         self.base.remove_directory(path)
@@ -519,10 +532,10 @@ impl VirtualFileSystem {
     fn symlink_raw(&self, target: &str, path: &str) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
-        if let Some(path) = Self::temporary_path(path) {
+        if let Some(path) = self.temporary_path(path) {
             return self.tmp.symlink(target, path);
         }
-        if Self::virtual_entry(path).is_some() || self.program(path).is_some() {
+        if self.virtual_entry(path).is_some() || self.program(path).is_some() {
             return Err(FileError::ReadOnly);
         }
         self.base.symlink(target, path)
@@ -530,7 +543,7 @@ impl VirtualFileSystem {
 
     fn read_link_raw(&self, path: &str) -> Result<String, FileError> {
         let path = self.mounted(path);
-        if let Some(path) = Self::temporary_path(&path) {
+        if let Some(path) = self.temporary_path(&path) {
             return self.tmp.read_link(path);
         }
         if let Some(source) = self.program(&path) {
@@ -552,25 +565,28 @@ impl VirtualFileSystem {
         let other_virtual = (other as &dyn core::any::Any).downcast_ref::<Self>();
         let destination =
             other_virtual.map_or_else(|| destination.into(), |other| other.mounted(destination));
-        if let Some(source) = Self::temporary_path(&source) {
+        if let Some(source) = self.temporary_path(&source) {
             return match other_virtual {
                 Some(other) => self.tmp.hard_link_to(
                     source,
                     other.tmp.as_ref(),
-                    Self::temporary_path(&destination).ok_or(FileError::CrossDevice)?,
+                    other
+                        .temporary_path(&destination)
+                        .ok_or(FileError::CrossDevice)?,
                     follow,
                 ),
                 None => self.tmp.hard_link_to(source, other, &destination, follow),
             };
         }
-        let special = |path: &str| matches!(path.split('/').next(), Some("dev" | "tmp" | "proc"));
-        if special(&source) || special(&destination) {
+        if self.special_mount(&source)
+            || other_virtual.is_some_and(|other| other.special_mount(&destination))
+        {
             return Err(FileError::CrossDevice);
         }
         if self.program(&source).is_some()
             || other_virtual.is_some_and(|other| other.program(&destination).is_some())
-            || Self::virtual_directory(&source)
-            || Self::virtual_directory(&destination)
+            || self.virtual_directory(&source)
+            || other_virtual.is_some_and(|other| other.virtual_directory(&destination))
         {
             return Err(FileError::ReadOnly);
         }
@@ -585,7 +601,7 @@ impl VirtualFileSystem {
     fn symlink_metadata_raw(&self, path: &str) -> Result<Metadata, FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
-        if let Some(path) = Self::temporary_path(path) {
+        if let Some(path) = self.temporary_path(path) {
             return self.tmp.symlink_metadata(path);
         }
         if let Some(source) = self.program(path) {
@@ -600,13 +616,10 @@ impl VirtualFileSystem {
                     .expect("Registered executable has metadata"),
             });
         }
-        if Self::virtual_entry(path).is_some() {
-            let relative = if self.mount.is_empty() {
-                path
-            } else {
-                path.strip_prefix(&self.mount)
-                    .unwrap()
-                    .trim_start_matches('/')
+        if self.virtual_entry(path).is_some() {
+            let relative = match &self.scope {
+                Scope::Root | Scope::Workspace => path,
+                Scope::Mount(mount) => path.strip_prefix(mount).unwrap().trim_start_matches('/'),
             };
             return self.metadata_raw(relative);
         }
@@ -622,10 +635,10 @@ impl VirtualFileSystem {
     ) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
-        if let Some(path) = Self::temporary_path(path) {
+        if let Some(path) = self.temporary_path(path) {
             return self.tmp.set_times(path, follow, access, modify);
         }
-        if Self::virtual_entry(path).is_some() || self.program(path).is_some() {
+        if self.virtual_entry(path).is_some() || self.program(path).is_some() {
             return Err(FileError::ReadOnly);
         }
         self.base.set_times(path, follow, access, modify)
@@ -634,17 +647,17 @@ impl VirtualFileSystem {
     fn set_mode_raw(&self, path: &str, mode: u16) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
-        if let Some(path) = Self::temporary_path(path) {
+        if let Some(path) = self.temporary_path(path) {
             return self.tmp.set_mode(path, mode);
         }
-        if Self::virtual_entry(path).is_some() || self.program(path).is_some() {
+        if self.virtual_entry(path).is_some() || self.program(path).is_some() {
             return Err(FileError::ReadOnly);
         }
         self.base.set_mode(path, mode)
     }
 
     fn capacity_raw(&self) -> Result<Capacity, FileError> {
-        if self.mount == "tmp" {
+        if matches!(&self.scope, Scope::Mount(mount) if mount == "tmp") {
             self.tmp.capacity()
         } else {
             self.base.capacity()
@@ -653,11 +666,14 @@ impl VirtualFileSystem {
 
     fn filesystem_statistics_raw(&self, path: &str) -> Result<FileSystemStatistics, FileError> {
         self.metadata_raw(path)?;
+        if self.scope == Scope::Workspace {
+            return self.base.filesystem_statistics(path);
+        }
         let path = self.mounted(path);
         match path.split('/').next() {
             Some("tmp") => self
                 .tmp
-                .filesystem_statistics(Self::temporary_path(&path).unwrap()),
+                .filesystem_statistics(self.temporary_path(&path).unwrap()),
             Some("dev") => Ok(special_statistics(2)),
             Some("proc") => Ok(special_statistics(4)),
             _ => self.base.filesystem_statistics(""),
@@ -666,6 +682,9 @@ impl VirtualFileSystem {
 
     fn mounts_raw(&self) -> Result<Vec<Mount>, FileError> {
         let mut mounts = self.base.mounts()?;
+        if self.scope == Scope::Workspace {
+            return Ok(mounts);
+        }
         for (source, path, kind, read_only) in [
             ("devfs", "/dev", "devfs", true),
             ("tmpfs", "/tmp", "tmpfs", false),
@@ -691,12 +710,13 @@ impl VirtualFileSystem {
         other: &dyn FileSystem,
         destination: &str,
     ) -> Result<(), FileError> {
-        if let Some(source) = Self::temporary_path(&self.mounted(source)) {
+        if let Some(source) = self.temporary_path(&self.mounted(source)) {
             return match (other as &dyn core::any::Any).downcast_ref::<Self>() {
                 Some(other) => self.tmp.rename_to(
                     source,
                     other.tmp.as_ref(),
-                    Self::temporary_path(&other.mounted(destination))
+                    other
+                        .temporary_path(&other.mounted(destination))
                         .ok_or(FileError::CrossDevice)?,
                 ),
                 None => self.tmp.rename_to(source, other, destination),
@@ -704,7 +724,7 @@ impl VirtualFileSystem {
         }
         let Some(other) = (other as &dyn core::any::Any).downcast_ref::<Self>() else {
             let source = self.mounted(source);
-            if Self::virtual_directory(source.split('/').next().unwrap_or("")) {
+            if self.virtual_directory(source.split('/').next().unwrap_or("")) {
                 return Err(FileError::CrossDevice);
             }
             return self.base.rename_to(&source, other, destination);
@@ -714,11 +734,11 @@ impl VirtualFileSystem {
         }
         let source = self.mounted(source);
         let destination = other.mounted(destination);
-        if Self::temporary_path(&destination).is_some() {
+        if other.temporary_path(&destination).is_some() {
             return Err(FileError::CrossDevice);
         }
-        if Self::virtual_entry(&source).is_some()
-            || Self::virtual_entry(&destination).is_some()
+        if self.virtual_entry(&source).is_some()
+            || other.virtual_entry(&destination).is_some()
             || self.program(&source).is_some()
             || other.program(&destination).is_some()
         {
@@ -729,12 +749,12 @@ impl VirtualFileSystem {
     }
 
     fn directory_view_raw(&self, path: &str) -> Result<Option<Rc<dyn FileSystem>>, FileError> {
-        if path.is_empty() && self.mount.is_empty() {
+        if path.is_empty() {
             return Ok(Some(Rc::new(self.clone())));
         }
         let path = self.mounted(path);
         let path = path.as_str();
-        if let Some(path) = Self::temporary_path(path) {
+        if let Some(path) = self.temporary_path(path) {
             let view = self
                 .tmp
                 .directory_view(path)?
@@ -746,26 +766,37 @@ impl VirtualFileSystem {
             return Ok(Some(Rc::new(Self {
                 base: self.base.clone(),
                 tmp: Rc::new(namespace),
-                mount: "tmp".into(),
+                scope: Scope::Mount("tmp".into()),
                 identity: self.identity,
                 programs: self.programs.clone(),
             })));
         }
-        if Self::virtual_directory(path) {
+        if self.virtual_directory(path) {
             return Ok(Some(Rc::new(VirtualFileSystem {
                 base: self.base.clone(),
                 tmp: self.tmp.clone(),
-                mount: path.into(),
+                scope: Scope::Mount(path.into()),
                 identity: self.identity,
                 programs: self.programs.clone(),
             })));
         }
-        self.base.directory_view(path)
+        Ok(self.base.directory_view(path)?.map(|base| {
+            Rc::new(Self {
+                base,
+                tmp: self.tmp.clone(),
+                scope: Scope::Workspace,
+                identity: self.identity,
+                programs: self.programs.clone(),
+            }) as Rc<dyn FileSystem>
+        }))
     }
 }
 
 impl VirtualFileSystem {
-    fn temporary_path(path: &str) -> Option<&str> {
+    fn temporary_path<'a>(&self, path: &'a str) -> Option<&'a str> {
+        if self.scope == Scope::Workspace {
+            return None;
+        }
         if path == "tmp" {
             Some("")
         } else {
@@ -787,13 +818,16 @@ impl VirtualFileSystem {
     }
 
     fn mounted(&self, path: &str) -> String {
-        if self.mount.is_empty() {
-            path.into()
-        } else if path.is_empty() {
-            self.mount.clone()
-        } else {
-            format!("{}/{}", self.mount, path)
+        match &self.scope {
+            Scope::Root | Scope::Workspace => path.into(),
+            Scope::Mount(mount) if path.is_empty() => mount.clone(),
+            Scope::Mount(mount) => format!("{mount}/{path}"),
         }
+    }
+
+    fn special_mount(&self, path: &str) -> bool {
+        self.scope != Scope::Workspace
+            && matches!(path.split('/').next(), Some("dev" | "tmp" | "proc"))
     }
 }
 

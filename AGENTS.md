@@ -19,9 +19,15 @@ registration. Native Python/ash and both actual 512 MiB WHPX model API flows
 pass with independent saved FAT bytes, modes and link targets in
 artifacts/mount-walk-whpx-responses and
 artifacts/mount-walk-whpx-chat_completions. Host workspace tests, host/UEFI
-Clippy, formatting, native regressions and Release packaging pass. Mount
-collisions, some reverse workspace directory-fd mutations, complete dev/proc,
-anchored cwd tracking, manifests and retained sessions remain incomplete.
+Clippy, formatting, native regressions and Release packaging pass.
+Workspace directory views also retain the routing layer over inode anchors.
+Rename/hard-link operations work in both directions with the virtual root
+after directory rename; local tmp/dev/proc/bin names remain ordinary
+directories and actual cross-device operations fail before effects. Native
+regressions and both actual 512 MiB WHPX model API flows pass with independent
+saved FAT hard-link groups and bytes in artifacts/anchored-mount-whpx-responses
+and artifacts/anchored-mount-whpx-chat_completions. Mount collisions, complete
+dev/proc, anchored cwd tracking, manifests and retained sessions remain incomplete.
 
 The shared /tmp mount now reuses the inode namespace over bounded memory
 objects, with ephemeral metadata commits, nested directories, relative links,

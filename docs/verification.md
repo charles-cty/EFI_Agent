@@ -1,5 +1,51 @@
 # Verification record
 
+## 2026-10-24: Bidirectional anchored workspace mutations
+
+Workspace directory views now retain the virtual filesystem routing layer over
+their inode anchor. Explicit root, workspace and mount scopes keep ordinary
+tmp/dev/proc/bin names inside directory capabilities separate from global
+mounts. Rename and hard-link destinations use the destination view's scope.
+An open renamed directory supports mutations to and from the virtual root;
+real workspace/tmp operations still reject EXDEV before effects. Nested empty
+views contain only dot entries. Scoped absolute links remain outside capability
+bounds.
+
+The six mount tests, ten filesystem mutation tests and four executable-path
+tests pass in `artifacts/anchored-mount-paths.log`. The final empty-view listing
+assertion passes in `artifacts/anchored-mount-final-paths.log`. Native Release
+Python/ash checks exercise both directions after directory rename, ordinary
+local mount names and actual cross-device rejection. Independent saved-state
+checks verify the resulting seven-name hard-link group and binary bytes in
+`artifacts/anchored-mount-native-mount_paths.log`.
+
+The full host workspace suite, host/UEFI Clippy, formatting and Release
+packaging pass in `artifacts/anchored-mount-rust-tests.log`,
+`artifacts/anchored-mount-final-clippy-host.log`,
+`artifacts/anchored-mount-clippy-uefi.log`,
+`artifacts/anchored-mount-format.log` and
+`artifacts/anchored-mount-package.log`.
+
+Check corrections: an initial command selected a nonexistent test target;
+the tests are in filesystem_mutations, which passed. The added empty-view
+assertion initially called as_str on an existing str reference, selecting an
+unstable standard-library method. Removing that redundant call preserves the
+assertion on stable Rust.
+
+Native regressions pass temporary storage, tar, unzip, hard links, copy/move,
+all 17 CPython cases, permission/C wrappers and all 112 stream cases in
+`artifacts/anchored-mount-native-*`.
+Both actual 512 MiB WHPX/OVMF model API flows pass the extended file/code-tool
+sequence. Independent saved FAT inspection verifies all seven hard-link names
+share their inode and binary bytes, plus the preceding mount-path invariants.
+Evidence: `artifacts/anchored-mount-whpx-responses` and
+`artifacts/anchored-mount-whpx-chat_completions`, with completed host logs beside
+them. QEMU's interrupt-vector and unrelated Windows Appx warnings persist
+without preventing completion. The full networking/application combination
+was not rerun for this change.
+Mount collisions, complete device/process files, anchored cwd tracking,
+installation manifests, retained sessions and final delivery remain incomplete.
+
 ## 2026-10-24: Cross-mount path traversal
 
 The virtual root now walks path components before provider dispatch. Absolute

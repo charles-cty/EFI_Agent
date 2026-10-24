@@ -109,6 +109,30 @@ MOUNT_PATHS_CHECK = dedent(r'''
     run('rm -rf /tmp/renamed-dir /tmp/absolute /tmp/relative /tmp/root /tmp/new /tmp/data /tmp/ash')
     for index in range(1, 41, 2):
         os.unlink(name(index))
+
+    os.mkdir('mount-fds')
+    with open('mount-fds/source', 'wb') as output:
+        output.write(b'anchored directory mutation\x00\xff\n')
+    fd = os.open('mount-fds', os.O_RDONLY | os.O_DIRECTORY)
+    os.rename('mount-fds', 'mount-fds-renamed')
+    os.rename('source', 'mount-work/from-fd', src_dir_fd=fd)
+    os.link('mount-work/from-fd', 'returned', dst_dir_fd=fd)
+    os.link('returned', 'mount-work/linked-fd', src_dir_fd=fd)
+    os.rename('mount-work/from-fd', 'renamed', dst_dir_fd=fd)
+    assert os.stat('returned', dir_fd=fd).st_nlink == 3
+    for name in ['tmp', 'dev', 'proc', 'bin']:
+        os.mkdir(name, dir_fd=fd)
+        os.mkdir(name + '/child', dir_fd=fd)
+        os.link('returned', name + '/linked', src_dir_fd=fd, dst_dir_fd=fd)
+        linked = os.open(name + '/linked', os.O_RDONLY, dir_fd=fd)
+        assert os.read(linked, 64) == b'anchored directory mutation\x00\xff\n'
+        os.close(linked)
+        assert os.statvfs('mount-fds-renamed/' + name).f_fsid == 0
+    fails(lambda: os.rename('returned', '/tmp/from-workspace-fd', src_dir_fd=fd), errno.EXDEV)
+    fails(lambda: os.link('returned', '/tmp/from-workspace-fd', src_dir_fd=fd), errno.EXDEV)
+    assert not os.path.exists('/tmp/from-workspace-fd')
+    os.close(fd)
+    print('PASS bidirectional anchored workspace mutations and ordinary local mount names', flush=True)
     with open('mount-paths-result', 'wb') as output:
         output.write(b'MOUNT_PATHS_OK\n')
     print('MOUNT_PATHS_OK', flush=True)
@@ -121,4 +145,10 @@ def verify_mount_paths(workspace):
     assert workspace.read('mount-work/copied') == b'temporary\x00\xff\n'
     assert workspace.entries['mount-work/data']['mode'] == 0o600
     assert workspace.entries['mount-work/absolute']['target'] == '/tmp/mount-dir'
+    assert workspace.read('mount-work/linked-fd') == b'anchored directory mutation\x00\xff\n'
+    group = workspace.entries['mount-work/linked-fd']['inode']
+    for name in ['returned', 'renamed', 'tmp/linked', 'dev/linked', 'proc/linked', 'bin/linked']:
+        path = 'mount-fds-renamed/' + name
+        assert workspace.read(path) == b'anchored directory mutation\x00\xff\n'
+        assert workspace.entries[path]['inode'] == group
     assert not any(name == 'tmp' or name.startswith('tmp/') for name in workspace.entries)

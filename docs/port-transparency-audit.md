@@ -90,9 +90,11 @@ including link/parent ordering, a shared 40-link limit and entry mutation
 policy. Python metadata and child cwd preserve these components. Root directory
 fds retain mounts; non-root directory fds remain bounded after rename. Native
 and both actual 512 MiB WHPX model API flows include independent saved FAT
-bytes, modes and link targets. Mount collision policy,
-some reverse workspace directory-fd mutations and complete devices/process
-information remain incomplete.
+bytes, modes and link targets. Anchored workspace views also retain the routing
+layer: rename/hard-link operations work in both directions with the root after
+directory rename, while local tmp/dev/proc/bin names remain ordinary directories.
+Mount collision policy and complete devices/process information remain
+incomplete.
 
 The 2026-10-22 filesystem expansion connects directory creation to native and
 firmware providers, and rename to the native provider. File writes now use

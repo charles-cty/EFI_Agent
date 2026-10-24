@@ -197,6 +197,74 @@ fn directory_views_retain_bounds_when_global_links_leave_their_mount() {
 }
 
 #[test]
+fn workspace_directory_views_route_mutations_both_ways_without_local_mounts() {
+    let work = Workspace::new();
+    let filesystem = work.filesystem();
+    filesystem.create_directory("directory").unwrap();
+    for name in ["tmp", "dev", "proc", "bin"] {
+        filesystem
+            .create_directory(&format!("directory/{name}"))
+            .unwrap();
+    }
+    let view = filesystem.directory_view("directory").unwrap().unwrap();
+    filesystem.rename("directory", "renamed").unwrap();
+    text::write(view.as_ref(), "original", "source").unwrap();
+    view.rename_to("original", filesystem.as_ref(), "from-view")
+        .unwrap();
+    assert_eq!(read(filesystem.as_ref(), "from-view").unwrap(), "source");
+    filesystem
+        .rename_to("from-view", view.as_ref(), "returned")
+        .unwrap();
+    view.hard_link_to("returned", filesystem.as_ref(), "linked-root", true)
+        .unwrap();
+    filesystem
+        .hard_link_to("linked-root", view.as_ref(), "linked-view", true)
+        .unwrap();
+    assert_eq!(
+        view.metadata("returned").unwrap().inode,
+        filesystem.metadata("linked-root").unwrap().inode
+    );
+    assert_eq!(view.metadata("linked-view").unwrap().links, 3);
+    for name in ["tmp", "dev", "proc", "bin"] {
+        view.create_directory(&format!("{name}/child")).unwrap();
+        filesystem
+            .hard_link_to(
+                "linked-root",
+                view.as_ref(),
+                &format!("{name}/linked"),
+                true,
+            )
+            .unwrap();
+        assert_eq!(
+            read(view.as_ref(), &format!("{name}/linked")).unwrap(),
+            "source"
+        );
+        assert_eq!(view.filesystem_statistics(name).unwrap().id, 0);
+    }
+    view.create_directory("empty").unwrap();
+    let empty = view.directory_view("empty").unwrap().unwrap();
+    let listing = empty.read_directory("").unwrap();
+    let mut names: Vec<_> = listing.iter().map(|(name, _)| name).collect();
+    names.sort();
+    assert_eq!(names, [".", ".."]);
+    assert_eq!(
+        view.rename_to("returned", filesystem.as_ref(), "tmp/cross"),
+        Err(FileError::CrossDevice)
+    );
+    assert_eq!(
+        view.hard_link_to("returned", filesystem.as_ref(), "tmp/cross", true),
+        Err(FileError::CrossDevice)
+    );
+    assert_eq!(read(view.as_ref(), "returned").unwrap(), "source");
+    assert_eq!(
+        filesystem.metadata("tmp/cross").err(),
+        Some(FileError::NotFound)
+    );
+    view.symlink("/linked-root", "absolute").unwrap();
+    assert_eq!(view.metadata("absolute").err(), Some(FileError::NotCapable));
+}
+
+#[test]
 fn link_limit_is_shared_across_mounts_and_preserves_trailing_directory_requirements() {
     let work = Workspace::new();
     let filesystem = work.filesystem();

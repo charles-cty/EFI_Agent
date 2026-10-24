@@ -1,5 +1,5 @@
 //! Resolve links across runtime mounts before dispatching provider operations.
-use super::{EntryType, FileError, VirtualFileSystem};
+use super::{EntryType, FileError, Scope, VirtualFileSystem};
 use alloc::{collections::VecDeque, format, string::String, vec, vec::Vec};
 
 pub(super) const MAX_PATH: usize = 4096;
@@ -111,7 +111,7 @@ impl VirtualFileSystem {
                     directory_required = true;
                 }
                 if target.starts_with('/') {
-                    if !self.mount.is_empty() {
+                    if self.scope != Scope::Root {
                         return Err(FileError::NotCapable);
                     }
                     stack.truncate(1);
