@@ -9,6 +9,20 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+The virtual root resolves absolute/relative links across runtime mounts before
+provider dispatch, with link-before-parent ordering, shared 40-link and expanded
+4096-byte limits, final-entry mutation policy and searchable ancestor checks.
+Root directory fds retain mounts; non-root directory capabilities stay bounded
+after rename. Python metadata and child cwd preserve link/parent components.
+Links to installed commands reuse compiled modules, verified with a compiled-only
+registration. Native Python/ash and both actual 512 MiB WHPX model API flows
+pass with independent saved FAT bytes, modes and link targets in
+artifacts/mount-walk-whpx-responses and
+artifacts/mount-walk-whpx-chat_completions. Host workspace tests, host/UEFI
+Clippy, formatting, native regressions and Release packaging pass. Mount
+collisions, some reverse workspace directory-fd mutations, complete dev/proc,
+anchored cwd tracking, manifests and retained sessions remain incomplete.
+
 The shared /tmp mount now reuses the inode namespace over bounded memory
 objects, with ephemeral metadata commits, nested directories, relative links,
 hard links, permissions/times and directory anchors retained through rename.

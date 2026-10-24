@@ -136,8 +136,22 @@ and ash verify tempfile cleanup, child cwd, cross-device mv fallback and archive
 extraction. Both actual 512 MiB WHPX model APIs pass with independent saved FAT
 bytes/metadata and temporary mount exclusion in
 artifacts/tmp-inodes-whpx-responses and artifacts/tmp-inodes-whpx-chat_completions.
-General absolute/cross-mount symlink traversal, mount collisions, device/process
-files and retained sessions still need their delivery gates.
+Mount collisions, complete directory-view routing, device/process files and
+retained sessions still need their delivery gates.
+
+The virtual root now resolves absolute and relative links across runtime mounts
+before provider dispatch. Link/parent ordering, stat/lstat policy, mutations,
+directory enumeration, capacity and executable lookup use the same walk. A root
+directory descriptor retains mounts; non-root directory capabilities retain
+their bounds after rename. One 40-link budget covers all mounts; expanded paths
+accept the exact 4096-byte limit. Python metadata and child cwd retain link/parent
+components instead of folding them lexically. Links to installed commands reuse
+the compiled module, including compiled-only registrations. Native Release and
+both actual 512 MiB WHPX model API flows pass with independent saved FAT bytes,
+modes and link targets in artifacts/mount-walk-whpx-responses and
+artifacts/mount-walk-whpx-chat_completions. Mount collision policy and some
+mutations from anchored workspace directory fds to the virtual root still need
+completion, together with devices, process information, manifests and sessions.
 
 ## Delivery requirements
 

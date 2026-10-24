@@ -20,7 +20,8 @@ def install(request):
         if os.path.isabs(path):
             return path, 3
         if dir_fd is None:
-            return os.path.abspath(path), 3
+            cwd = os.getcwdb() if isinstance(path, bytes) else os.getcwd()
+            return os.path.join(cwd, path), 3
         return path, operator.index(dir_fd)
 
     def metadata(operation, fd, flags=1, mode=0, path=None):
@@ -277,7 +278,7 @@ def install(request):
                     raise
             else:
                 self._anchor = None
-                self._base = os.path.abspath(os.fspath(path))
+                self._base, _ = at_path(path, None)
                 self._iterator = original_scandir(path)
 
         def __iter__(self):

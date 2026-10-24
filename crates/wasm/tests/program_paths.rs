@@ -131,6 +131,27 @@ fn installation_rejects_bin_collisions_without_publishing_partial_aliases() {
 }
 
 #[test]
+fn symlinks_to_installed_commands_reuse_compiled_only_modules() {
+    let namespace = Rc::new(Namespace::temporary(65536, 32, 7, None));
+    namespace.symlink("/bin/custom", "linked").unwrap();
+    namespace.create_directory("tools").unwrap();
+    namespace.symlink("../linked", "tools/relative").unwrap();
+    let module = wat::parse_str(
+        r#"(module
+            (import "wasi_snapshot_preview1" "proc_exit" (func $exit (param i32)))
+            (memory (export "memory") 1)
+            (func (export "_start") (call $exit (i32.const 23))))"#,
+    )
+    .unwrap();
+    let mut world = World::new();
+    world.set_filesystem(namespace);
+    world.register("custom", &module).unwrap();
+    for name in ["/linked", "/tools/relative", "/tools/../linked"] {
+        finish(&mut world, name, 23);
+    }
+}
+
+#[test]
 fn bin_prefix_resolves_registered_modules_and_multicall_commands_only() {
     let module = wat::parse_str(
         r#"(module

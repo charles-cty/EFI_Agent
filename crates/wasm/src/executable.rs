@@ -161,8 +161,11 @@ impl World {
             let Some(filesystem) = &self.filesystem else {
                 continue;
             };
-            let info = match filesystem.metadata(&candidate) {
-                Ok(info) => info,
+            let virtual_root = (filesystem.as_ref() as &dyn core::any::Any)
+                .downcast_ref::<filesystem::VirtualFileSystem>()
+                .expect("World installs the virtual root filesystem");
+            let (resolved, info) = match virtual_root.executable_path(&candidate) {
+                Ok(resolved) => resolved,
                 Err(filesystem::FileError::NotFound | filesystem::FileError::NotDirectory) => {
                     continue;
                 }
@@ -175,6 +178,11 @@ impl World {
             if info.kind != filesystem::EntryType::File || info.mode & 0o100 == 0 {
                 denied = true;
                 continue;
+            }
+            if let Some(command) = resolved.strip_prefix("bin/")
+                && self.bin.borrow().contains_key(command)
+            {
+                return Ok(resolved);
             }
             return Ok(candidate);
         }

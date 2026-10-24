@@ -24,6 +24,7 @@ impl FileSystem for AllocationFiles {
         info.allocated = match path {
             "" => {
                 info.kind = EntryType::Directory;
+                info.mode = 0o755;
                 Some(0)
             }
             "big" => Some((1 << 40) + 513),

@@ -10,6 +10,9 @@ fn virtual_metadata(kind: EntryType, size: u64) -> Metadata {
     metadata
 }
 
+mod walk;
+use walk::Follow;
+
 pub const TEMP_CAPACITY: u64 = 32 * 1024 * 1024;
 
 fn special_statistics(device: u32) -> FileSystemStatistics {
@@ -32,6 +35,7 @@ type Programs = Rc<RefCell<BTreeMap<String, Option<String>>>>;
 
 /// Files and directories that exist in every guest without being persisted in
 /// the workspace. The workspace remains the backing store for ordinary paths.
+#[derive(Clone)]
 pub struct VirtualFileSystem {
     base: Rc<dyn FileSystem>,
     tmp: Rc<namespace::Namespace>,
@@ -41,6 +45,12 @@ pub struct VirtualFileSystem {
 }
 
 impl VirtualFileSystem {
+    pub(crate) fn executable_path(&self, path: &str) -> Result<(String, Metadata), FileError> {
+        let resolved = self.walk(path, Follow::Final, false)?;
+        let metadata = self.metadata_raw(&resolved)?;
+        Ok((resolved, metadata))
+    }
+
     pub fn new(base: Rc<dyn FileSystem>) -> Rc<Self> {
         Self::with_programs(base, Rc::new(RefCell::new(BTreeMap::new())))
     }
@@ -205,6 +215,159 @@ impl File for VirtualFile {
 
 impl FileSystem for VirtualFileSystem {
     fn open(&self, path: &str, options: OpenOptions) -> Result<Box<dyn File>, FileError> {
+        let follow = if options.create && options.exclusive {
+            Follow::Parent
+        } else {
+            Follow::Final
+        };
+        self.open_raw(&self.walk(path, follow, options.create)?, options)
+    }
+
+    fn metadata(&self, path: &str) -> Result<Metadata, FileError> {
+        self.metadata_raw(&self.walk(path, Follow::Final, false)?)
+    }
+
+    fn symlink_metadata(&self, path: &str) -> Result<Metadata, FileError> {
+        self.symlink_metadata_raw(&self.walk(path, Follow::Inspect, false)?)
+    }
+
+    fn read_directory(&self, path: &str) -> Result<DirectoryEntries, FileError> {
+        self.read_directory_raw(&self.walk(path, Follow::Final, false)?)
+    }
+
+    fn create_directory(&self, path: &str) -> Result<(), FileError> {
+        self.create_directory_raw(&self.walk(path, Follow::Parent, true)?)
+    }
+
+    fn unlink(&self, path: &str) -> Result<(), FileError> {
+        self.unlink_raw(&self.walk(path, Follow::Parent, false)?)
+    }
+
+    fn remove_directory(&self, path: &str) -> Result<(), FileError> {
+        self.remove_directory_raw(&self.walk(path, Follow::Parent, false)?)
+    }
+
+    fn rename(&self, source: &str, destination: &str) -> Result<(), FileError> {
+        self.rename_to(source, self, destination)
+    }
+
+    fn rename_to(
+        &self,
+        source: &str,
+        other: &dyn FileSystem,
+        destination: &str,
+    ) -> Result<(), FileError> {
+        let source = self.walk(source, Follow::Parent, false)?;
+        let destination = match (other as &dyn core::any::Any).downcast_ref::<Self>() {
+            Some(other) => other.walk(destination, Follow::Parent, true)?,
+            None => destination.into(),
+        };
+        self.rename_to_raw(&source, other, &destination)
+    }
+
+    fn symlink(&self, target: &str, path: &str) -> Result<(), FileError> {
+        self.symlink_raw(target, &self.walk(path, Follow::Parent, true)?)
+    }
+
+    fn read_link(&self, path: &str) -> Result<String, FileError> {
+        self.read_link_raw(&self.walk(path, Follow::Inspect, false)?)
+    }
+
+    fn hard_link(&self, source: &str, destination: &str, follow: bool) -> Result<(), FileError> {
+        self.hard_link_to(source, self, destination, follow)
+    }
+
+    fn hard_link_to(
+        &self,
+        source: &str,
+        other: &dyn FileSystem,
+        destination: &str,
+        follow: bool,
+    ) -> Result<(), FileError> {
+        let source = self.walk(
+            source,
+            if follow {
+                Follow::Final
+            } else {
+                Follow::Inspect
+            },
+            false,
+        )?;
+        let destination = match (other as &dyn core::any::Any).downcast_ref::<Self>() {
+            Some(other) => other.walk(destination, Follow::Parent, true)?,
+            None => destination.into(),
+        };
+        self.hard_link_to_raw(&source, other, &destination, follow)
+    }
+
+    fn set_mode(&self, path: &str, mode: u16) -> Result<(), FileError> {
+        self.set_mode_raw(&self.walk(path, Follow::Final, false)?, mode)
+    }
+
+    fn set_times(
+        &self,
+        path: &str,
+        follow: bool,
+        access: TimeUpdate,
+        modify: TimeUpdate,
+    ) -> Result<(), FileError> {
+        self.set_times_raw(
+            &self.walk(
+                path,
+                if follow {
+                    Follow::Final
+                } else {
+                    Follow::Inspect
+                },
+                false,
+            )?,
+            follow,
+            access,
+            modify,
+        )
+    }
+
+    fn directory_view(&self, path: &str) -> Result<Option<Rc<dyn FileSystem>>, FileError> {
+        self.directory_view_raw(&self.walk(path, Follow::Final, false)?)
+    }
+
+    fn resolve_path(&self, base: &str, path: &str) -> Result<String, FileError> {
+        if path.is_empty() {
+            return Err(FileError::NotFound);
+        }
+        if path.starts_with('/') || path.contains(['\\', '\0']) {
+            return Err(FileError::NotCapable);
+        }
+        let path = if base.is_empty() {
+            path.into()
+        } else {
+            format!("{base}/{path}")
+        };
+        if path.len() > walk::MAX_PATH {
+            return Err(FileError::ResourceLimit);
+        }
+        Ok(path)
+    }
+
+    fn capacity(&self) -> Result<Capacity, FileError> {
+        self.capacity_raw()
+    }
+
+    fn filesystem_statistics(&self, path: &str) -> Result<FileSystemStatistics, FileError> {
+        self.filesystem_statistics_raw(&self.walk(path, Follow::Final, false)?)
+    }
+
+    fn mounts(&self) -> Result<Vec<Mount>, FileError> {
+        self.mounts_raw()
+    }
+
+    fn identity(&self) -> usize {
+        self.identity_raw()
+    }
+}
+
+impl VirtualFileSystem {
+    fn open_raw(&self, path: &str, options: OpenOptions) -> Result<Box<dyn File>, FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
         if let Some(source) = self.program(path) {
@@ -245,7 +408,7 @@ impl FileSystem for VirtualFileSystem {
         self.base.open(path, options)
     }
 
-    fn metadata(&self, path: &str) -> Result<Metadata, FileError> {
+    fn metadata_raw(&self, path: &str) -> Result<Metadata, FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
         if let Some(metadata) = self.program_metadata(path) {
@@ -267,7 +430,7 @@ impl FileSystem for VirtualFileSystem {
         self.base.metadata(path)
     }
 
-    fn read_directory(&self, path: &str) -> Result<DirectoryEntries, FileError> {
+    fn read_directory_raw(&self, path: &str) -> Result<DirectoryEntries, FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
         if let Some(path) = Self::temporary_path(path) {
@@ -313,7 +476,7 @@ impl FileSystem for VirtualFileSystem {
         Ok(entries)
     }
 
-    fn create_directory(&self, path: &str) -> Result<(), FileError> {
+    fn create_directory_raw(&self, path: &str) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
         if let Some(path) = Self::temporary_path(path) {
@@ -329,30 +492,7 @@ impl FileSystem for VirtualFileSystem {
         self.base.create_directory(path)
     }
 
-    fn rename(&self, source: &str, destination: &str) -> Result<(), FileError> {
-        let source = self.mounted(source);
-        let destination = self.mounted(destination);
-        let source = source.as_str();
-        let destination = destination.as_str();
-        match (
-            Self::temporary_path(source),
-            Self::temporary_path(destination),
-        ) {
-            (Some(source), Some(destination)) => return self.tmp.rename(source, destination),
-            (Some(_), None) | (None, Some(_)) => return Err(FileError::CrossDevice),
-            (None, None) => {}
-        }
-        if Self::virtual_entry(source).is_some()
-            || Self::virtual_entry(destination).is_some()
-            || self.program(source).is_some()
-            || self.program(destination).is_some()
-        {
-            return Err(FileError::ReadOnly);
-        }
-        self.base.rename(source, destination)
-    }
-
-    fn unlink(&self, path: &str) -> Result<(), FileError> {
+    fn unlink_raw(&self, path: &str) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
         if let Some(path) = Self::temporary_path(path) {
@@ -364,7 +504,7 @@ impl FileSystem for VirtualFileSystem {
         self.base.unlink(path)
     }
 
-    fn remove_directory(&self, path: &str) -> Result<(), FileError> {
+    fn remove_directory_raw(&self, path: &str) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
         if let Some(path) = Self::temporary_path(path) {
@@ -376,7 +516,7 @@ impl FileSystem for VirtualFileSystem {
         self.base.remove_directory(path)
     }
 
-    fn symlink(&self, target: &str, path: &str) -> Result<(), FileError> {
+    fn symlink_raw(&self, target: &str, path: &str) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
         if let Some(path) = Self::temporary_path(path) {
@@ -388,7 +528,7 @@ impl FileSystem for VirtualFileSystem {
         self.base.symlink(target, path)
     }
 
-    fn read_link(&self, path: &str) -> Result<String, FileError> {
+    fn read_link_raw(&self, path: &str) -> Result<String, FileError> {
         let path = self.mounted(path);
         if let Some(path) = Self::temporary_path(&path) {
             return self.tmp.read_link(path);
@@ -401,11 +541,7 @@ impl FileSystem for VirtualFileSystem {
         self.base.read_link(&path)
     }
 
-    fn hard_link(&self, source: &str, destination: &str, follow: bool) -> Result<(), FileError> {
-        self.hard_link_to(source, self, destination, follow)
-    }
-
-    fn hard_link_to(
+    fn hard_link_to_raw(
         &self,
         source: &str,
         other: &dyn FileSystem,
@@ -446,7 +582,7 @@ impl FileSystem for VirtualFileSystem {
         )
     }
 
-    fn symlink_metadata(&self, path: &str) -> Result<Metadata, FileError> {
+    fn symlink_metadata_raw(&self, path: &str) -> Result<Metadata, FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
         if let Some(path) = Self::temporary_path(path) {
@@ -472,12 +608,12 @@ impl FileSystem for VirtualFileSystem {
                     .unwrap()
                     .trim_start_matches('/')
             };
-            return self.metadata(relative);
+            return self.metadata_raw(relative);
         }
         self.base.symlink_metadata(path)
     }
 
-    fn set_times(
+    fn set_times_raw(
         &self,
         path: &str,
         follow: bool,
@@ -495,7 +631,7 @@ impl FileSystem for VirtualFileSystem {
         self.base.set_times(path, follow, access, modify)
     }
 
-    fn set_mode(&self, path: &str, mode: u16) -> Result<(), FileError> {
+    fn set_mode_raw(&self, path: &str, mode: u16) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
         if let Some(path) = Self::temporary_path(path) {
@@ -507,7 +643,7 @@ impl FileSystem for VirtualFileSystem {
         self.base.set_mode(path, mode)
     }
 
-    fn capacity(&self) -> Result<Capacity, FileError> {
+    fn capacity_raw(&self) -> Result<Capacity, FileError> {
         if self.mount == "tmp" {
             self.tmp.capacity()
         } else {
@@ -515,8 +651,8 @@ impl FileSystem for VirtualFileSystem {
         }
     }
 
-    fn filesystem_statistics(&self, path: &str) -> Result<FileSystemStatistics, FileError> {
-        self.metadata(path)?;
+    fn filesystem_statistics_raw(&self, path: &str) -> Result<FileSystemStatistics, FileError> {
+        self.metadata_raw(path)?;
         let path = self.mounted(path);
         match path.split('/').next() {
             Some("tmp") => self
@@ -528,7 +664,7 @@ impl FileSystem for VirtualFileSystem {
         }
     }
 
-    fn mounts(&self) -> Result<Vec<Mount>, FileError> {
+    fn mounts_raw(&self) -> Result<Vec<Mount>, FileError> {
         let mut mounts = self.base.mounts()?;
         for (source, path, kind, read_only) in [
             ("devfs", "/dev", "devfs", true),
@@ -545,11 +681,11 @@ impl FileSystem for VirtualFileSystem {
         Ok(mounts)
     }
 
-    fn identity(&self) -> usize {
+    fn identity_raw(&self) -> usize {
         self.identity
     }
 
-    fn rename_to(
+    fn rename_to_raw(
         &self,
         source: &str,
         other: &dyn FileSystem,
@@ -592,54 +728,10 @@ impl FileSystem for VirtualFileSystem {
             .rename_to(&source, other.base.as_ref(), &destination)
     }
 
-    fn resolve_path(&self, base: &str, path: &str) -> Result<String, FileError> {
-        if self.mount == "tmp" {
-            return self.tmp.resolve_path(base, path);
+    fn directory_view_raw(&self, path: &str) -> Result<Option<Rc<dyn FileSystem>>, FileError> {
+        if path.is_empty() && self.mount.is_empty() {
+            return Ok(Some(Rc::new(self.clone())));
         }
-        if self.mount.is_empty() {
-            if let Some(base) = Self::temporary_path(base) {
-                return self
-                    .tmp
-                    .resolve_path(base, path)
-                    .map(|path| format!("tmp/{path}"));
-            }
-            if base.is_empty()
-                && let Some(path) = Self::temporary_path(path)
-            {
-                return self
-                    .tmp
-                    .resolve_path("", if path.is_empty() { "." } else { path })
-                    .map(|path| format!("tmp/{path}"));
-            }
-        }
-        let virtual_path = !self.mount.is_empty()
-            || Self::virtual_directory(base.split('/').next().unwrap_or(""))
-            || Self::virtual_directory(path.split('/').next().unwrap_or(""));
-        if !virtual_path {
-            return self.base.resolve_path(base, path);
-        }
-        if path.is_empty() {
-            return Err(FileError::NotFound);
-        }
-        if path.starts_with('/') || path.contains(['\\', '\0']) {
-            return Err(FileError::NotCapable);
-        }
-        let result = if base.is_empty() {
-            String::from(path)
-        } else {
-            format!("{base}/{path}")
-        };
-        if result.split('/').any(|part| part == "..") {
-            return Err(FileError::NotCapable);
-        }
-        Ok(result
-            .split('/')
-            .filter(|part| !part.is_empty() && *part != ".")
-            .collect::<Vec<_>>()
-            .join("/"))
-    }
-
-    fn directory_view(&self, path: &str) -> Result<Option<Rc<dyn FileSystem>>, FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
         if let Some(path) = Self::temporary_path(path) {

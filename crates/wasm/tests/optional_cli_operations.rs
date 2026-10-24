@@ -4,17 +4,29 @@ use efi_agent_wasm::{
 };
 use std::{cell::RefCell, rc::Rc};
 
-struct Untouched;
-impl FileSystem for Untouched {
+struct UnsupportedMutations;
+impl FileSystem for UnsupportedMutations {
     fn symlink_metadata(&self, path: &str) -> Result<Metadata, FileError> {
-        assert_eq!(path, "bin", "Only command installation may inspect /bin");
-        Err(FileError::NotFound)
+        if path == "bin" {
+            return Err(FileError::NotFound);
+        }
+        self.metadata(path)
     }
     fn open(&self, _: &str, _: OpenOptions) -> Result<Box<dyn File>, FileError> {
         panic!("Denied CLI operation must not open a file")
     }
-    fn metadata(&self, _: &str) -> Result<Metadata, FileError> {
-        panic!("Denied CLI operation must not inspect a file")
+    fn metadata(&self, path: &str) -> Result<Metadata, FileError> {
+        match path {
+            "" => Ok(Metadata::new(
+                efi_agent_wasm::filesystem::EntryType::Directory,
+                0,
+            )),
+            "new.txt" => Ok(Metadata::new(
+                efi_agent_wasm::filesystem::EntryType::File,
+                0,
+            )),
+            other => panic!("Unexpected provider lookup: {other}"),
+        }
     }
     fn read_directory(&self, _: &str) -> Result<DirectoryEntries, FileError> {
         panic!("Denied CLI operation must not enumerate files")
@@ -28,9 +40,14 @@ impl FileSystem for Links {
         panic!("path_link must not open regular files")
     }
     fn metadata(&self, path: &str) -> Result<Metadata, FileError> {
-        if path == "dir" {
+        if path.is_empty() || path == "dir" {
             Ok(Metadata::new(
                 efi_agent_wasm::filesystem::EntryType::Directory,
+                0,
+            ))
+        } else if path == "source" || path == "dir/source" {
+            Ok(Metadata::new(
+                efi_agent_wasm::filesystem::EntryType::File,
                 0,
             ))
         } else {
@@ -194,8 +211,8 @@ impl FileSystem for NonLinks {
     fn metadata(&self, path: &str) -> Result<Metadata, FileError> {
         self.0.borrow_mut().push(path.into());
         match path {
-            "file" | "dir" => Ok(Metadata::new(
-                if path == "dir" {
+            "" | "file" | "dir" => Ok(Metadata::new(
+                if path.is_empty() || path == "dir" {
                     efi_agent_wasm::filesystem::EntryType::Directory
                 } else {
                     efi_agent_wasm::filesystem::EntryType::File
@@ -246,9 +263,14 @@ fn readlink_distinguishes_nonlinks_missing_paths_and_validation_without_output_c
         world.step();
     }
     assert_eq!(world.status(pid).unwrap(), &Status::Exited(0));
-    assert_eq!(
-        *provider.0.borrow(),
-        ["file", "dir", "missing", "dir", "dir"]
+    let inspected = provider.0.borrow();
+    for path in ["file", "dir", "missing"] {
+        assert!(inspected.iter().any(|entry| entry == path));
+    }
+    assert!(
+        inspected
+            .iter()
+            .all(|path| ["", "file", "dir", "missing"].contains(&path.as_str()))
     );
 }
 
@@ -295,7 +317,7 @@ fn unavailable_cli_mutations_and_accept_fail_without_provider_effects_or_output_
         (if (i32.ne (call $accept (i32.load (i32.const 0)) (i32.const 0) (i32.const 65533)) (i32.const 21)) (then unreachable))
         (if (i32.ne (i32.load (i32.const 65532)) (i32.const 71731)) (then unreachable))))"#).unwrap();
     let mut world = World::new();
-    world.set_filesystem(Rc::new(Untouched));
+    world.set_filesystem(Rc::new(UnsupportedMutations));
     world.register("optional", &module).unwrap();
     let pid = world.spawn(vec!["optional".into()], vec![]).unwrap();
     for _ in 0..100 {

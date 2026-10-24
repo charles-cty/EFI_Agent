@@ -1,5 +1,65 @@
 # Verification record
 
+## 2026-10-24: Cross-mount path traversal
+
+The virtual root now walks path components before provider dispatch. Absolute
+and relative links can cross workspace, temporary and executable mounts.
+Parent components are evaluated after preceding links. Metadata lookup,
+directory enumeration, capacity, mutation and module lookup share this walk;
+operations that change directory entries preserve the final link. Exclusive
+creation rejects an existing dangling link. One 40-link limit covers all
+mounts. Expanded paths accept 4096 bytes and reject 4097 bytes. Missing,
+non-directory and non-searchable ancestors fail before later parent components
+can remove them. A root directory descriptor retains the virtual mounts.
+Anchored non-root directory descriptors retain their capability bounds after
+rename; absolute links and upward escapes fail there.
+
+Python startup adapters now join relative metadata and child-cwd paths without
+lexically removing link/parent components. The interpreter and standard library
+remain unchanged. Links to installed commands select the existing compiled
+module. A compiled-only command with no readable binary independently verifies
+this behavior, including a relative two-link chain.
+
+Five mount tests and four executable-path tests pass in
+`artifacts/mount-walk-final-paths.log`. Native Release Python/ash checks verify
+cross-mount bytes, modes, statvfs identity, scandir, subprocess cwd, dangling
+creation, rename/unlink policy, cross-device failures, directory anchors,
+installed-command links and 40/41 links. Independent namespace inspection
+checks saved bytes, modes, absolute link targets and temporary exclusion in
+`artifacts/mount-walk-final-native.log`.
+
+The full host workspace tests, host/UEFI Clippy and format checks pass in
+`artifacts/mount-walk-final-rust-tests.log`,
+`artifacts/mount-walk-final-clippy-host.log`,
+`artifacts/mount-walk-final-clippy-uefi.log` and
+`artifacts/mount-walk-final-format.log`. Native regressions cover temporary
+storage, tar, unzip, hard links, copy/move, df, all 17 CPython cases, permissions
+and all 112 stream cases in `artifacts/mount-walk-regression-*`. The actual
+BusyBox large-count statfs case passes in
+`artifacts/mount-walk-statistics.log`.
+
+Test corrections: the text helper deliberately rejects parent components
+before effects, so direct filesystem reads verify link/parent ordering. BusyBox
+dispatch uses the invoked basename; the executable-link fixture now uses ash.
+Synthetic providers now supply searchable parent-directory metadata while
+retaining their mutation-error, rights and memory assertions. A former fixture
+panic crossed a non-unwinding host boundary and aborted the Windows test
+process; the corrected providers pass the full suite. A patch with stale
+formatting context was reapplied against the current source.
+
+Actual 512 MiB WHPX/OVMF passes both Responses and Chat Completions, including
+the preceding basic applet and file/code-tool sequence. Independent saved FAT
+inspection verifies bytes, mode, absolute link targets and temporary exclusion.
+Evidence: `artifacts/mount-walk-whpx-responses` and
+`artifacts/mount-walk-whpx-chat_completions`, with completed host logs beside
+them. Final Release packaging passes in
+`artifacts/mount-walk-final-package.log`. QEMU reports interrupt-vector and
+unrelated Windows Appx-manifest warnings; both runs complete successfully.
+The full networking/application combination was not rerun for this change.
+Mount collisions, device and process files, opposite-direction workspace
+directory-fd mutations, anchored cwd tracking, installation manifests and
+retained sessions remain incomplete.
+
 ## 2026-10-24: Inode-backed shared temporary storage
 
 The runtime /tmp provider now uses the common namespace with a bounded memory

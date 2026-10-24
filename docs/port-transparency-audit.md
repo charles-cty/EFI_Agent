@@ -84,8 +84,15 @@ The temporary mount now reuses the inode namespace over bounded memory storage.
 Native Python/ash checks cover nested directories, relative symlinks, hard links,
 permissions, timestamps, retained directory fds, tempfile cleanup and cross-device
 move fallback. Both 512 MiB WHPX model API flows verify this subset with
-independent saved FAT bytes/metadata and temporary mount exclusion. Absolute
-and cross-mount link traversal remains incomplete.
+independent saved FAT bytes/metadata and temporary mount exclusion.
+The global root now resolves absolute/relative links across runtime mounts,
+including link/parent ordering, a shared 40-link limit and entry mutation
+policy. Python metadata and child cwd preserve these components. Root directory
+fds retain mounts; non-root directory fds remain bounded after rename. Native
+and both actual 512 MiB WHPX model API flows include independent saved FAT
+bytes, modes and link targets. Mount collision policy,
+some reverse workspace directory-fd mutations and complete devices/process
+information remain incomplete.
 
 The 2026-10-22 filesystem expansion connects directory creation to native and
 firmware providers, and rename to the native provider. File writes now use

@@ -16,7 +16,7 @@ impl FileSystem for Unused {
         panic!("Virtual endpoint must not open host files")
     }
     fn metadata(&self, path: &str) -> Result<Metadata, FileError> {
-        if path == "dir" {
+        if path.is_empty() || path == "dir" {
             return Ok(Metadata::new(
                 efi_agent_wasm::filesystem::EntryType::Directory,
                 0,
@@ -107,7 +107,7 @@ fn directory_snapshot_encodes_utf8_bytes_and_releases_private_descriptors() {
             panic!("Snapshot does not open files")
         }
         fn metadata(&self, path: &str) -> Result<Metadata, FileError> {
-            assert_eq!(path, "dir");
+            assert!(path.is_empty() || path == "dir");
             Ok(Metadata::new(
                 efi_agent_wasm::filesystem::EntryType::Directory,
                 0,

@@ -140,7 +140,7 @@ def _fork_exec(args, executables, close_fds, keep, cwd, env,
                         arguments + environment)[0]
     if cwd is None:
         cwd = os.getcwd()
-    cwd = os.fsencode(os.path.normpath(os.path.join(os.getcwd(), os.fsdecode(cwd))))
+    cwd = os.fsencode(os.path.join(os.getcwd(), os.fsdecode(cwd)))
     if b'\0' in cwd:
         raise ValueError('embedded null byte')
     payload = struct.pack('<' + 'I' * len(mappings), *mappings) + arguments + environment + cwd

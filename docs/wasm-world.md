@@ -134,9 +134,17 @@ Writes return normal short writes at the quota boundary; resize fails without
 changing data. Detached open files and replaced open targets retain their
 charge until the last close. Standard tempfile cleanup, child cwd and temporary
 archive destinations pass native and both actual 512 MiB WHPX model API flows,
-with independent saved bytes/metadata and temporary mount exclusion. General
-absolute and cross-mount link traversal, mount collisions and process-information support
-remain incomplete.
+with independent saved bytes/metadata and temporary mount exclusion.
+The virtual root resolves absolute and relative links across mounts before
+dispatching provider operations. It follows links before parent components,
+checks searchable directory ancestors and applies one 40-link budget. Expanded
+paths accept 4096 bytes. Entry mutations preserve the final link; stat follows
+it and lstat inspects it, subject to trailing-directory requirements. Opening
+the root directory retains mounted entries. Non-root directory capabilities
+retain their anchor and reject absolute links and upward escapes. Python's
+private metadata and child-cwd adapters preserve link/parent components.
+Mount collisions, some reverse workspace directory-fd mutations and
+process-information support remain incomplete.
 
 Ln uses upstream option parsing, hard/symbolic link creation, destination
 directory handling, backups and verbose output. Force and backup operations
@@ -760,9 +768,12 @@ compiled-only host registrations expose executable metadata but cannot be read
 as files. Installed entries are read-only. An existing workspace `/bin` directory
 is merged; command-name collisions or a non-directory `/bin` reject installation
 before aliases are published. Unrelated workspace entries remain visible.
-A persistent installation manifest and general mount-boundary traversal remain
-pending. The installed CPython startup name is retained to locate its unchanged
-packaged library, including under `-I`.
+Links to installed commands select their existing compiled module, including
+compiled-only registrations with no readable binary. Ordinary executable and
+shebang paths retain their invocation path. A persistent installation manifest
+and complete directory-view mount integration remain pending. The installed
+CPython startup name is retained to locate its unchanged packaged library,
+including under `-I`.
 
 The `efi_process.dupfd(source, minimum)` import returns the lowest free descriptor
 at or above the minimum, or a negative POSIX errno. Ash uses it for saved
