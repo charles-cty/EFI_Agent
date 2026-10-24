@@ -210,6 +210,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
         shutil.copyfile(args.ash_exec, tree / "work/ash_exec.wasm")
     if args.ash:
         shutil.copyfile(args.ash, tree / "work/ash.wasm")
+        shutil.copytree(args.ash.parent / "share", tree / "work/share", dirs_exist_ok=True)
     if args.ash_child:
         shutil.copyfile(args.ash_child, tree / "work/ash_child.wasm")
     if args.ash_heredocs:
@@ -367,7 +368,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
             connection.settimeout(0.1)
             ready = False
 
-            def wait(marker, complete_line=False):
+            def wait(marker, complete_line=False, panel_pid=None):
                 nonlocal ready
                 deadline = time.monotonic() + args.command_timeout
                 opening = None
@@ -385,14 +386,28 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                     except socket.timeout:
                         pass
                     text = "\n".join(screen.display)
+                    input_empty = all(first == end for _, first, end in latest_view.get("input_rows", []))
+                    if marker == "Ready":
+                        if input_empty and screen.display[-1].lstrip().startswith(("Ready", "Conversation cleared")):
+                            return text
+                        continue
+                    # Do not send mouse/scroll input while the command is being
+                    # entered: those events can move its editor cursor.
+                    if not input_empty:
+                        continue
                     if "Cancelled (exit code" in marker or marker == "exit code 130)":
                         # Do not interleave a mouse escape sequence with Esc cancellation.
                         if marker in text:
                             return text
                         continue
+                    # A control reply can appear below an older collapsed panel.
+                    # Accept its specific response before opening historical output.
+                    if marker.startswith(("Reaped ", "Loaded ", "Cancelled ", "Conversation cleared")) and marker in text:
+                        return text
                     if not args.output_panel_test:
                         latest_panel = next(((row, line) for row, line in reversed(list(enumerate(screen.display, 1)))
-                                             if "WASM:" in line and ("[+]" in line or "[-]" in line)), None)
+                                             if "WASM:" in line and ("[+]" in line or "[-]" in line)
+                                             and (panel_pid is None or re.search(rf'PID {panel_pid}:', line))), None)
                         collapsed = latest_panel if latest_panel and "[+]" in latest_panel[1] else None
                         if collapsed is not None:
                             row, line = collapsed
@@ -407,7 +422,11 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                             opening = None
                             scrolling = True
                             continue
-                        if latest_view.get("offset", 0) != latest_view.get("max_offset", 0):
+                        if panel_pid is not None and latest_panel is None:
+                            if latest_view.get("offset", 0):
+                                connection.sendall(b"\x1b[A" * 20)
+                            continue
+                        if panel_pid is None and latest_view.get("offset", 0) != latest_view.get("max_offset", 0):
                             if not scrolling:
                                 connection.sendall(b"\x1b[B" * 40)
                                 scrolling = True
@@ -421,9 +440,11 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                 raise TimeoutError(f"Missing {marker}:\n{text}")
 
             def send(text, marker, complete_line=False):
+                wait("Ready")
                 print(f"RUN {text[:120]}", flush=True)
                 connection.sendall(text.encode() + b"\r")
                 visible = wait(marker, complete_line)
+                wait("Ready")
                 if text.startswith('/wasm reap '):
                     pid = int(text.split()[-1])
                     if f'Reaped {pid}:' in visible:
@@ -938,11 +959,14 @@ print('UEFI_CPYTHON_SHELL_OK')
                 # and beta waits for alpha's file before writing its own.
                 alpha = "import subprocess;subprocess.run('printf alpha>python-alpha.txt;while [ ! -f python-beta.txt ];do :;done',shell=True,check=True);print('UEFI_PYTHON_ALPHA_OK')"
                 beta = "import subprocess;subprocess.run('while [ ! -f python-alpha.txt ];do :;done;printf beta>python-beta.txt',shell=True,check=True);print('UEFI_PYTHON_BETA_OK')"
-                send(f"/wasm start python -c exec(bytes.fromhex('{alpha.encode().hex()}').decode())",
-                     ": Running")
+                send('/clear', 'Conversation cleared')
+                started = send(f"/wasm start python -c exec(bytes.fromhex('{alpha.encode().hex()}').decode())",
+                               ": Running")
+                alpha_root = re.search(r'PID (\d+): Running', started)
+                assert alpha_root, started
                 send(f"/wasm run python -c exec(bytes.fromhex('{beta.encode().hex()}').decode())",
                      "UEFI_PYTHON_BETA_OK", complete_line=True)
-                wait("UEFI_PYTHON_ALPHA_OK", complete_line=True)
+                wait("UEFI_PYTHON_ALPHA_OK", complete_line=True, panel_pid=int(alpha_root[1]))
             if args.ash_math:
                 for name, _, _, _, status in math_cases():
                     send("/clear", "Conversation cleared")

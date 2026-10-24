@@ -46,7 +46,8 @@ truncate invalidate the revision even when timestamps are restored; hard links
 share it. Metadata changes and reads preserve it. New launches use current code,
 while live Stores retain their original image. A provider without content
 revisions requires a fresh read and compilation. Explicit byte registrations
-are snapshots. Manifest installation remains incomplete.
+are snapshots. Persistent manifests validate modules, shared aliases, libraries
+and licenses before publication and packaging.
 
 `namespace::read_snapshot` reads the committed logical tree without recovery
 writes or garbage collection. It exposes validated backing paths to host
@@ -126,7 +127,7 @@ changes fail. Copy timestamp preservation retains upstream whole-second
 precision. Explicit hard links and automatic hard-link preservation use shared
 namespace inodes. Reflinks remain disabled; special node creation returns errors.
 Workspace-to-/tmp copy and /tmp-to-workspace mv fallback have native integration
-coverage. General mount traversal still requires its delivery gates.
+coverage. Native and both WHPX API checks verify general mount traversal.
 
 Du uses upstream traversal, depth limits, totals, symlink policy and inode
 deduplication. Native and firmware providers report allocated file data bytes;
@@ -135,8 +136,8 @@ BusyBox stat wrappers and Python stat/fstat/scandir expose those values as
 journals and have no separately allocated data blocks. Directory link counts
 include subdirectories. Unknown provider allocation returns ENOTSUP. Explicit
 du units use upstream ceiling behavior; directory read/close errors fail.
-Hard-linked files count once by default; -l counts each name. General mount
-accounting remains incomplete.
+Hard-linked files count once by default; -l counts each name. Mount capacity
+and allocation use the same measured providers as df and statvfs.
 
 Df uses upstream parsing, mount selection, unit formatting, percentages and
 inode output. Its mount table comes from the runtime inventory. Workspace
@@ -239,7 +240,7 @@ count. Renaming onto the same inode preserves both names. Removing one name
 retains the inode; last-name deletion retains open handles until their last
 close. Symlink hard links retain the target string and resolve relative to
 the directory entry used. Directory hard links fail with EPERM. Cross-mount
-links remain unavailable while the mount layer is incomplete.
+hard links fail with EXDEV before effects.
 Launcher snapshots group host files by physical device/inode identity, retain
 logical hard-link groups through FAT staging, and recreate physical host hard
 links on save. Conflict checks include changes in those groups. Snapshot bytes
@@ -664,7 +665,7 @@ has fixture and real ash syntax-error verification. Maximum-depth/resource
 verification remains pending. Jumping to a returned C function is invalid.
 Signal-mask aliases do not supply asynchronous POSIX signals.
 
-## Full objective and pending work
+## BusyBox build and task execution
 
 The real BusyBox ash translation unit now links into an Asyncify WASM module:
 
@@ -675,12 +676,11 @@ uv.exe run scripts/smoke_ash.py --runner target/debug/examples/run_guest.exe --d
 uv.exe run scripts/smoke_ash_exec.py --runner target/debug/examples/run_guest.exe --directory artifacts/wasm-fixtures
 ```
 
-`prepare_busybox.py` generates the initial ash feature configuration and
-copies the upstream source/license to the output directory. The initial
-configuration enables aliases, getopts, command, internal glob, echo and NOFORK. The full
-applet set and arithmetic/builtin configurations still need integration.
-The port header declares the WASI and BusyBox utility boundaries. Several
-declared utilities remain unimplemented. Real ash echo, quoted expansion,
+`prepare_busybox.py` generates the shared applet/ash feature configuration and
+stages upstream translation units. The build includes all 48 required applets,
+aliases, getopts, command, internal glob, echo, 64-bit arithmetic and NOFORK.
+The port header declares the WASI and BusyBox utility boundaries. Real ash
+echo, quoted expansion,
 functions, loops, conditions, exit status and syntax errors pass in host wasmi.
 Real ash echo and concurrent QuickJS shell capture pass in QEMU/OVMF.
 File operations and redirections now use the provider described below.
@@ -748,7 +748,7 @@ functions, aliases, shell options, $0 and positionals, getopts cursor, $$,
 previous exit status and $!. Asynchronous signal delivery and terminal job
 control are unavailable. Task instances have new process PIDs and separate
 memories, while the shell's $$ value follows subshell semantics. Exit traps
-are not inherited. Filesystem working-directory state remains pending.
+are not inherited. Tasks inherit the runtime's cwd anchor and process umask.
 
 Pipelines start every stage with selected standard descriptors before waiting
 for completion. The parent closes unused pipe endpoints. Job waiting polls
@@ -758,7 +758,9 @@ trailing-newline removal and field splitting. It clears errexit in the child,
 matching this upstream ash configuration. Tested conditions preserve EV_TESTED.
 Background tasks support $! and wait. User descriptors cross task boundaries
 through explicit maps, and large here-documents use the bounded binary snapshot.
-Full failure cleanup and background stdin isolation remain pending.
+Conversation tool requests stop/reap unfinished descendants. Private session
+framing stays separate from command stdin; explicit slash-command background
+roots remain independent.
 
 The build extracts the upstream `shell_builtin_read` implementation with its
 license header. WASI read and poll supply cooperative input; upstream code
@@ -838,7 +840,7 @@ return distinct errors. The model `write` tool creates missing parents.
 Rename/removal, timestamps and symlinks use the shared persistent namespace
 on native and firmware targets. Normal Python imports, py_compile and compileall
 can write bytecode caches; `-B` retains its standard meaning. Anchored current
-directory state and general mount/link traversal remain pending.
+directory state and general mount/link traversal use retained inode anchors.
 Finite input and captured output use WASI UNKNOWN stream type. They are not
 terminals. Unchanged CPython `python -` executes redirected scripts and empty
 stdin without starting a REPL.

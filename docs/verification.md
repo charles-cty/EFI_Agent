@@ -1,5 +1,52 @@
 # Verification record
 
+## 2026-10-24: Environment delivery acceptance
+
+The complete current 512 MiB Windows WHPX application combination passes in
+artifacts/environment-applications-whpx-idle with the default prepared guests.
+It verifies TCP4 transfer/EOF/cancellation, DNS and POSIX sockets, TLS 1.2/1.3
+and certificate failures, curl and WolfSSH, held network peers with independent
+progress, QuickJS/Python-to-ash application chains, concurrent Python roots,
+binary pipes, process environments, descriptor maps, directories/files, random,
+nonlocal jumps, arithmetic/error recovery, large binary tasks and heredocs,
+read timeouts and printf boundaries. Independent saved FAT readers verify
+payloads, names and application outputs. The peer record confirms the full
+196613-byte upload and graceful close, 131089-byte response, child progress,
+cancelled connection closure and nonblocking/asynchronous/POSIX EOF.
+
+Both 512 MiB API formats pass the expanded filesystem/date tool sequence in
+artifacts/environment-final-filesystem-{responses,chat_completions}, and the
+installation/asset sequence in artifacts/environment-final-assets-{responses,chat_completions}.
+The asset verifier compares every declared library file and license byte.
+Retained-session lifecycle and default tool flows pass both APIs as recorded
+below. Current native evidence covers all 21 BusyBox suites, 17 CPython cases,
+sessions, cwd, mount paths and process files. Full host tests also exercise
+interrupted metadata updates, deferred reclamation, eight-MiB writes, late
+invalid iovecs before effects, FAT save/reload/restage and host conflicts.
+The acceptance matrix is in docs/environment-work.md.
+
+The release EFI and launcher, default prepared guests and fresh VM/native
+packages are current. Package evidence is artifacts/environment-final-package.log;
+images and trees are in artifacts/environment-final-package. SHA256 build
+identities are recorded in artifacts/environment-final-builds.tsv. The prebuilt
+CPython interpreter and 537 upstream library files match the original archive.
+Formatting, both Clippy targets and whitespace checks pass. No user workspace
+or vendor/uefi-shell source was changed.
+
+The final driver waits for an empty editor and an idle footer before the next
+command; /clear's idle footer is Conversation cleared. It avoids mouse events
+while entering text, accepts specific control replies before opening older
+panels, and selects concurrent output by actual root PID. The first readiness
+retry incorrectly required Ready after /clear and failed in
+artifacts/environment-applications-whpx-ready. The corrected full run passes.
+Earlier malformed serial/ANSI failures remain recorded; this successful run
+does not prove that the intermittent transport byte loss is eliminated.
+
+The focused 256 MiB C application sequence passes; the larger retained-session
+sequence fails on an additional Python child with ENOMEM. Use 512 MiB for the
+complete environment. Optional port limits remain in the transparency audit;
+they are not claims of a general Linux kernel or complete POSIX implementation.
+
 ## 2026-10-24: BusyBox timezone engine and independent date checks
 
 The shared BusyBox image now links upstream musl 1.2.5 timezone rules rather
@@ -61,11 +108,11 @@ received a successful reap response but waited on an older collapsed panel.
 The harness now accepts specific control replies before opening old output.
 The next retry in artifacts/environment-applications-whpx-complete reached
 concurrent Python but its terminal shows concatenated/mutated input commands.
-The driver now waits for an empty editor and the Ready footer between commands,
+The driver now waits for an empty editor and an idle footer between commands,
 and sends no disclosure mouse events while text is being entered. Concurrent
-root output selection uses the actual root PID. These changes still require
-the final full WHPX application run; the earlier serial byte-loss diagnosis
-remains unproven.
+root output selection uses the actual root PID. The corrected complete run
+passes in artifacts/environment-applications-whpx-idle; the earlier serial
+byte-loss diagnosis remains unproven.
 
 ## 2026-10-24: C cwd metadata correction
 

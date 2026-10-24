@@ -9,528 +9,48 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
-Standard C stat/lstat/fstatat now use explicit directory descriptors before
-libc can normalize the private cwd route. This restores find . traversal and
-tar creation from . without changing explicit /proc/self/cwd symlink metadata.
-Native C/applications and tar regressions pass, including actual link/parent
-ordering and renamed/deleted cwd. Both 512 MiB WHPX APIs pass the C application
-sequence and independent saved FAT checks in artifacts/cwd-stat-whpx-final-*
-with refreshed BusyBox, curl, QuickJS and WolfSSH binaries.
-The WHPX application harness now uses logical workspace paths and independent
-saved namespace readers, and reaps initial ABI roots before concurrent tests.
-Actual Windows packets show RST for the bound refusal peer; the harness now
-expects connection reset (WASI errno 15), distinct from refusal (14).
-Serial rendering now skips unchanged idle frames;
-actual WHPX output/disclosure/background cancellation checks pass. The earlier
-malformed serial frame remains recorded and is not proven resolved. Final
-combined delivery remains incomplete.
+The shared persistent namespace now supports mutations, permissions, hard and
+symbolic links, anchored cwd, actual capacity and allocation, and recoverable
+FAT save/reload. Shell, Python, model files and module lookup use the same tree.
+Virtual /bin, /dev, /tmp and read-only /proc provide installed executables,
+actual devices/process information and bounded shared temporary inodes.
 
-BusyBox now links upstream musl timezone rules with validated TZif buffers and
-packaged IANA 2026e data. Native checks pass 96 independent historical/future
-oracles, all 598 packaged TZif files, a version-1 fixture and 17 malformed
-inputs. Both 512 MiB WHPX APIs pass the expanded filesystem/date sequence and
-independently compare all declared library and license bytes after save in
+All 48 required commands use upstream BusyBox applets in one shared WASM image.
+PATH lookup, explicit executable paths, shebangs and manifest-installed aliases
+agree across ash, env/xargs and Python subprocess. BusyBox date now uses upstream
+musl timezone rules with validated TZif buffers and packaged IANA 2026e data.
+C stat/lstat/fstatat preserve retained cwd and original link/parent components.
+
+Each conversation retains one ash and one Python interpreter. Source/completion
+frames use a private bounded channel separate from finite empty command stdin.
+Variables, globals, environment and cwd persist. Exit/trap/cancel report resets;
+clear resets both sessions. Unfinished descendants are reaped without disturbing
+independent roots. Each tool call has one readable collapsed disclosure.
+
+CPython remains the unchanged prebuilt 3.14.7 WASI SDK 24 binary. All 537 upstream
+library files match the distribution bytes; private site startup adapters supply
+process and filesystem integration. Dynamic extensions, native threads, Python
+socket creation, subprocess timeouts/signals and process credentials/groups
+remain unsupported. BusyBox timezone support does not change Python's time module.
+
+All 21 current native BusyBox suites, 17 CPython cases, session/cwd/mount/proc
+regressions, host tests, both Clippy targets and formatting pass. Both 512 MiB
+Windows WHPX APIs pass expanded filesystem/date tools and installation, including
+independent saved FAT comparison of every declared library and license. Evidence:
 artifacts/environment-final-filesystem-* and environment-final-assets-*.
-All 21 current native BusyBox suites and Python/session/cwd/mount/proc
-regressions pass. Prebuilt CPython and all 537 upstream library files remain
-byte-identical. The 256 MiB C application sequence passes, but the full session
-sequence fails when it starts an additional Python process. Use 512 MiB for
-the complete environment. Final full application verification is still running.
+The complete 512 MiB WHPX application combination passes in
+artifacts/environment-applications-whpx-idle, including independent saved bytes,
+TCP/DNS/TLS/SSH, concurrent Python, pipelines, descriptors and here-documents.
+The C application sequence passes at 256 MiB; the larger session sequence fails
+when it starts an additional Python process. Use 512 MiB for the full environment.
 
-Conversation-owned live ash/Python tool sessions now retain variables, globals,
-environment, cwd anchors, shell functions/aliases/options/status and user fds.
-Bounded private frames are separate from finite command stdin and output. The
-channel cannot be duplicated, overwritten, renumbered or inherited. Private
-process-control descriptors now have the same C ABI protections. Python ordinary
-exceptions retain state; exit, fatal shell errors and cancellation report resets.
-Top-level shell return preserves its status without poisoning the next request.
-Clear resets both sessions and preserves unrelated slash-command roots. Each
-call stops/reaps unfinished descendants. Native sessions, standard Python,
-streams, PATH/proc regressions, host tests and Clippy pass. Both actual 512 MiB
-Windows WHPX APIs pass latest session lifecycle and independent saved FAT checks
-in artifacts/sessions-final-whpx-responses and
-artifacts/sessions-final-whpx-chat_completions. The final combined environment
-audit remains incomplete.
-
-Root programs.json now declares unique module sources, shared aliases, libraries
-and licenses. Discovery validates bodies, supported import signatures and command
-exports without translation or execution. Revision caches avoid repeated binary
-reads. Alias publication is transactional; reload removes obsolete names and
-preserves explicit byte registrations. Explicit commands override implicit
-BusyBox aliases, and deleted sources no longer fabricate executable metadata.
-The launcher selects only declared assets, checks workspace conflicts before
-updates, and supports host export or logical firmware installation. Standard
-packaging includes all five prepared ports, Python libraries and linked licenses;
-VM startup retains that installation when staging the selected workspace.
-Host tests, actual FAT pack/extract, native application dispatch, both Clippy
-targets and Release packaging pass. The final combined delivery remains
-incomplete.
-Both actual 512 MiB Windows WHPX API flows pass logical guest installation,
-application dispatch and independent saved FAT module/license bytes and modes
-in artifacts/installation-final-whpx-responses and
-artifacts/installation-final-whpx-chat_completions.
-
-File-backed command caches now use inode/device identity, size and a provider
-content revision. Namespace revisions change on write, resize and truncate,
-independently of timestamps, and follow hard links and detached open files.
-Unchanged installed aliases share compiled code without rereading the image.
-New launches read changed files; live Stores retain their original image.
-Providers without content revisions are read at each launch. Explicit byte
-registrations remain snapshots and replace their former file association.
-Full host tests, both Clippy targets, Release packaging and real Python
-same-size/same-time mutation and saved-byte checks pass. Manifest installation
-and retained interpreter sessions remain incomplete. Both actual 512 MiB Windows
-WHPX API flows pass live old-image, file mutation and independent saved FAT
-checks in artifacts/executable-revision-whpx-responses and
-artifacts/executable-revision-whpx-chat_completions.
-
-BusyBox, curl, QuickJS and WolfSSH now share guests/lib/cwd.c. Its constructor
-initializes libc routing; chdir/getcwd retain runtime directory identity and
-physical-path semantics. All ports explicitly retain the original libc chdir
-symbol to avoid an invalid wasm-ld call when main has no chdir reference.
-Native C buffer/long-path/detached-cwd checks, actual application-relative files,
-independent SSH authentication and saved namespace bytes pass. Python/ash,
-permissions, streams, curl HTTP/TLS/DNS, WolfSSH and QuickJS regressions pass.
-Both actual 512 MiB Windows WHPX API flows pass C/application cwd checks and
-independent saved FAT bytes in artifacts/c-port-cwd-whpx-responses and
-artifacts/c-port-cwd-whpx-chat_completions.
-Complete application staging exposed the old 48 MiB boot-tree limit. Packaging
-now accepts 64 MiB boot trees and selects a 64/128 MiB ESP with reserved space;
-the logical workspace remains limited to 48 MiB. All 23 launcher tests,
-including exact FAT capacity boundaries and extraction bytes, and Clippy pass.
-
-Process cwd now owns a directory anchor; child inheritance preserves identity
-through ancestor rename/unlink and old-name reuse. Proc cwd magic links route
-through that anchor, with actual-parent navigation and runtime mounts. Ordinary
-directory fds retain their bounds. Python and BusyBox initialize libc's cached
-cwd routing; standard getcwd queries return physical paths and ENOENT after
-unlink. Sized C snapshots preserve allocation/buffer semantics and long paths.
-The internal caller cwd prefix consumes no user path/link budget. Weak registry
-references release cwd ancestry at termination before reap. Full host tests,
-host/UEFI Clippy, native cwd integration and Release packaging pass. Both actual
-512 MiB Windows WHPX API flows and independent saved FAT checks pass in
-artifacts/cwd-anchor-release-whpx-responses and
-artifacts/cwd-anchor-release-whpx-chat_completions. Installation
-manifests, retained sessions and final delivery remain incomplete.
-
-Directory views now expose their current physical path from the inode graph.
-Namespace and mounted views follow ancestor renames and reject path queries
-for removed or replaced directory inodes, including when an old name is reused.
-Ordinary directory-fd capability bounds remain unchanged. This is a prerequisite
-for the runtime cwd routing described above.
-The host-only parent-directory operation follows actual inode parents and retains
-the last parent of a removed directory until its last live reference closes.
-Detached ancestry is absent from snapshots and journals. Parent views restore
-virtual root routing across workspace and temporary mount boundaries. Runtime
-cwd now uses these operations.
-Full host tests, interruption recovery, host/UEFI Clippy, formatting, Release
-packaging, all 17 CPython cases and native mount/process-file regressions pass.
-Both 512 MiB WHPX APIs pass current namespace/process-file regression and
-independent saved FAT checks in artifacts/cwd-parent-whpx-responses and
-artifacts/cwd-parent-whpx-chat_completions.
-
-Process files now expose actual PID/parent/dispatcher state, startup cmdline and
-environment, cwd/exe links, fd links and mounts. Proc self views bind per process,
-including inherited directory views. Descriptor tables publish weak references;
-introspection retains no endpoints or Stores. Zombie records release startup
-vectors/descriptors before reap removes their names. Device fd/stdin/stdout/stderr
-aliases duplicate existing descriptions with shared cursors/status and no
-truncation. Directory aliases route through inode anchors after rename, with
-one 40-link budget across routing boundaries. Runtime uptime measures monotonic
-elapsed time and scheduler idle time, with explicit clock failures. Path/fd
-stream metadata agree. Native integration, independent saved-state checks, full
-host tests, host/UEFI Clippy, formatting and Release packaging pass. Counting
-allocation checks cover large argv/environment vectors and all terminal paths.
-Both actual 512 MiB WHPX model API flows and independent saved FAT checks pass
-in artifacts/procfs-release-whpx-responses and
-artifacts/procfs-release-whpx-chat_completions. The later cwd change above adds
-anchored tracking; manifests, retained sessions and final delivery remain.
-
-Null/zero/random/urandom now expose character metadata, distinct inodes and
-fixed 0666 modes. Discard writes, seek, explicit sync/truncate failures,
-shared descriptor flags and non-terminal unchanged Python stdin pass native
-integration. Random reads share the configured cryptographic provider and
-stage at most 64 KiB without publishing failed results. WASI fdstat uses UNKNOWN
-to avoid libc's character-device-as-terminal assumption; filestat retains the
-character type. Upstream BusyBox mount lookup omits its Linux UBI character
-device special case, fixing df device and cross-mount link capacity selection.
-Host tests, host/UEFI Clippy, formatting, native regressions and Release packaging
-pass. Both actual 512 MiB WHPX model API flows and independent saved FAT checks
-pass in artifacts/character-devices-whpx-responses-final and
-artifacts/character-devices-whpx-chat_completions-final. Descriptor aliases,
-actual process files, anchored cwd tracking, manifests and sessions remain.
-
-Mount initialization now rejects existing workspace dev/tmp/proc entries,
-including empty directories and dangling links, before publishing a root.
-Real bin directories remain merged; non-directory bin entries and installed
-command conflicts report their path. Failed replacement preserves the old root
-and temporary bytes. Firmware model file tools and module loaders now share
-the guest mounted root, and unknown dev/proc paths cannot reach backing storage.
-Five Rust layout tests and ten native conflict cases pass with independent
-saved-state checks. Both actual 512 MiB WHPX model API flows verify model
-write/edit/read in /tmp, shell/Python access, loading a temporary WASM module,
-saved source bytes, temporary exclusion and existing mount/link invariants in
-artifacts/mount-layout-whpx-responses and
-artifacts/mount-layout-whpx-chat_completions. Host tests, host/UEFI Clippy,
-formatting, native regressions and Release packaging pass. Complete dev/proc,
-anchored cwd tracking, installation manifests and retained sessions remain.
-
-The virtual root resolves absolute/relative links across runtime mounts before
-provider dispatch, with link-before-parent ordering, shared 40-link and expanded
-4096-byte limits, final-entry mutation policy and searchable ancestor checks.
-Root directory fds retain mounts; non-root directory capabilities stay bounded
-after rename. Python metadata and child cwd preserve link/parent components.
-Links to installed commands reuse compiled modules, verified with a compiled-only
-registration. Native Python/ash and both actual 512 MiB WHPX model API flows
-pass with independent saved FAT bytes, modes and link targets in
-artifacts/mount-walk-whpx-responses and
-artifacts/mount-walk-whpx-chat_completions. Host workspace tests, host/UEFI
-Clippy, formatting, native regressions and Release packaging pass.
-Workspace directory views also retain the routing layer over inode anchors.
-Rename/hard-link operations work in both directions with the virtual root
-after directory rename; local tmp/dev/proc/bin names remain ordinary
-directories and actual cross-device operations fail before effects. Native
-regressions and both actual 512 MiB WHPX model API flows pass with independent
-saved FAT hard-link groups and bytes in artifacts/anchored-mount-whpx-responses
-and artifacts/anchored-mount-whpx-chat_completions. Complete dev/proc, anchored
-cwd tracking, manifests and retained sessions remain incomplete.
-
-The shared /tmp mount now reuses the inode namespace over bounded memory
-objects, with ephemeral metadata commits, nested directories, relative links,
-hard links, permissions/times and directory anchors retained through rename.
-The 32 MiB data and 4096 non-root inode/name quotas include detached open
-objects. Full directory listings retain their ordinary-name limit in addition
-to dot entries. The private process endpoint only intercepts the workspace
-preopen. Native integration verifies standard tempfile cleanup, renamed
-directory-fd operations, child cwd, cross-device mv fallback, archive extraction
-and an ordinary temporary file named like the private endpoint. Exact quota,
-last-close and structured sparse-write models pass. Both actual 512 MiB WHPX
-model API flows pass with independent saved FAT bytes/metadata and temporary
-mount exclusion in artifacts/tmp-inodes-whpx-responses and
-artifacts/tmp-inodes-whpx-chat_completions. Host tests, host/UEFI Clippy,
-formatting, Release packaging and native command/Python/permission/stream
-regressions pass. Absolute/cross-mount link
-traversal, collision policy, device/process files, installation manifests and
-retained sessions remain incomplete.
-
-Upstream BusyBox tar now builds into the shared image with create/list/extract,
-GNU long names/links, PAX names, filters, strip-components and cooperative gzip
-streams. Explicit fd maps support closed standard fds and empty environments.
-Extraction anchors unlink and hard links as well as creation and metadata;
-directory modes/times are restored after children. Staged fixes check PAX
-lengths before pointer movement, read skipped data to detect truncation and
-propagate metadata, close and output errors. Native integration, independent
-saved archive/namespace checks and both actual 512 MiB WHPX model API flows
-pass in artifacts/tar-native-final.log, artifacts/tar-whpx-responses and
-artifacts/tar-whpx-chat_completions. Host tests, host/UEFI Clippy, formatting,
-Release packaging, Python 17-case and native command/permission/stream
-regressions pass. Required commands now number 48/48. General mounts/link
-traversal, installation manifests, retained sessions and full environment
-delivery remain incomplete.
-
-Upstream BusyBox stat now enables filesystem mode with a guest statfs adapter
-over the measured capacity provider. Default, terse and custom output cover
-workspace/tmpfs/devfs/proc identities. Native guest and actual 512 MiB WHPX
-checks pass both model APIs, with independent saved FAT capacity and metadata
-checks in artifacts/statfs-whpx-responses and
-artifacts/statfs-whpx-chat_completions. The actual shared image passes a
-deterministic 2^52-byte capacity check with exact 64-bit output and distinct
-free/available counts. Host Clippy and formatting pass. Required commands remain
-47/48, with tar pending. General mounts, manifests, retained sessions and full
-environment delivery remain incomplete.
-
-Upstream BusyBox df now builds into the shared image. Standard C and Python
-statvfs/fstatvfs use measured workspace capacity, distinct free/available bytes,
-namespace slot counts and runtime mount statistics. Windows allocation units
-come from the volume; firmware capacity comes from EFI_FILE_SYSTEM_INFO.
-Shared /tmp storage enforces 32 MiB and 4096 live objects, retaining unlinked
-open-file charges until last close. Boundary, rights and quota integration,
-native guest regressions, host tests, host/UEFI Clippy, formatting and Release
-packaging pass. Both actual 512 MiB WHPX model API flows pass independent
-saved FAT capacity and byte checks in artifacts/df-whpx-responses and
-artifacts/df-whpx-chat_completions. Required commands now number 47/48; tar
-remains. Stat -f, general mounts, manifests, retained sessions and full
-environment delivery remain incomplete.
-
-Upstream BusyBox ln now builds into the shared image. File and symlink hard
-links share namespace inodes, backing data, permissions, times and link counts.
-Alias deletion/promotion, same-inode rename, anchored views, open-file lifetime
-and journal recovery pass native integration and a structured mutation model.
-Physical host hard links import once and reclaim redundant names after commit.
-Python os.link supports directory fds and follow flags through its private
-startup adapter; CPython stays prebuilt. Cp -l/-a and du default/-l use the same
-identities. Launcher FAT staging/export/save/reload preserves groups and detects
-host identity conflicts. Actual 512 MiB WHPX passes both model API flows with
-independent saved FAT inode/backing/byte/mode checks in artifacts/ln-whpx-responses
-and artifacts/ln-whpx-chat_completions. Host tests, native guest regressions,
-host/UEFI Clippy, formatting and Release packaging pass. Required commands now
-number 46/48; df and tar remain. General mounts, manifests, retained sessions
-and full environment delivery remain incomplete.
-
-Upstream du now builds into the shared image with measured file allocation.
-Windows queries file compression/allocation information by handle; UEFI uses
-EFI_FILE_INFO PhysicalSize. Namespace files retain these values across rename,
-unlink and open handles. Logical directories and links use shared journals
-without independently allocated data blocks. Unknown allocation remains
-explicitly unsupported. Private metadata queries supply actual st_blocks to
-BusyBox and unchanged CPython through their existing adapters. Directory link
-counts now include subdirectories, enabling upstream directory deduplication.
-Native Release integration includes sparse files, independent Windows path
-queries and binary/unit boundaries. Both 512 MiB WHPX model APIs pass with
-independent saved FAT cluster-chain checks in artifacts/du-whpx-responses and
-artifacts/du-whpx-chat_completions. Native command/permission/Python/descriptor
-regressions, host tests, host/UEFI Clippy, formatting and packaging pass.
-The remaining required applets are df, tar and ln. General mount accounting,
-installation manifests and retained sessions remain incomplete.
-
-Upstream unzip now builds into the shared image with stored/DEFLATE members,
-central-directory parsing, filters, overwrite policies and symlinks. Dynamic
-archive descriptors preserve workspace fd 3. Extraction uses an anchored
-destination directory, including metadata and symlink operations; outside
-ancestor links cannot redirect writes. Staged fixes check stored CRC, output
-lengths, local/central signatures, names and maximum-comment end records.
-Regular files restore modes/times and directory restoration is deferred.
-Native integration and both 512 MiB WHPX model API flows pass, with independent
-saved bytes/modes/times/containment checks in artifacts/unzip-whpx-responses
-and artifacts/unzip-whpx-chat_completions. Metadata, Python, command and
-descriptor regressions, all host tests, host/UEFI Clippy and formatting pass.
-ZIP64, encryption
-and compression methods other than stored/DEFLATE remain unsupported.
-The remaining required applets are df, tar and ln. Mount, manifest and
-retained-session gates remain incomplete.
-
-Upstream gzip/gunzip/zcat now build into the shared image with CRC32 and
-direct stream transformers. Native Release integration and both 512 MiB WHPX
-model APIs pass independent gzip/zlib stored/fixed/dynamic inputs, concatenated
-members, optional headers and CRC, binary boundaries through 1 MiB, source
-retention after errors and saved output decoding by host Python. Evidence:
-artifacts/compression-whpx-responses and compression-whpx-chat_completions.
-Staged fixes reject read failures, header CRC/reserved flags and corrupt member
-lengths, and stream extra fields through 65535 bytes. Standalone applets now
-enter the existing Asyncify jump driver. Native awk/sed/grep/streams/basic/text/
-xargs/copy-move/mutation/PATH/CPython regressions, all host tests, host/UEFI
-Clippy, format and syntax checks pass. Compression levels and long options are
-enabled; upstream maps levels 1-3 to 4. Seamless non-gzip formats are disabled.
-The remaining required applets are df, tar and ln. Mount, manifest
-and retained-session gates remain incomplete.
-
-Upstream xargs now uses cooperative spawn/wait with exact argument vectors,
-inherited descriptors and concurrent children. Quotes, empty words, NUL input,
-replacement, argument files, batching, trace and child-status propagation pass
-native integration and both 512 MiB WHPX model APIs in
-artifacts/xargs-whpx-responses and artifacts/xargs-whpx-chat_completions.
-Staged fixes enforce -x, reject incomplete quoting and empty replacements,
-report read/output errors, and drain parallel children without losing fatal
-status. Upstream echo is also available as an external command. Interactive
-tty options fail because /dev/tty is absent; the runtime's 32-process quota
-still applies. All host tests, host/UEFI Clippy, format and Python/copy-move/
-descriptor regressions pass. The wider environment requirements remain open.
-
-Upstream cp/mv now replace the handwritten subsets and link shared copy-file,
-inode-hash and coreutils stat helpers. Long options, recursive/archive copies,
-symlink policies, prompts, update and multioperand moves work through ash.
-Staged corrections prevent same-file truncation through destination symlinks,
-fix --remove-destination's flag, report traversal/preservation/output failures
-and suppress false move-success messages. Native and both 512 MiB WHPX model
-APIs pass 50 semantic/boundary cases plus independent saved FAT bytes, modes,
-symlinks and times in artifacts/copy-move-whpx-responses and
-artifacts/copy-move-whpx-chat_completions. Basic/mutation/PATH regressions,
-host/UEFI Clippy and formatting pass. Hard links, special node creation and
-reflinks remain unavailable; cross-mount moves remain unverified. The broader
-command, mount, manifest and retained-session requirements remain incomplete.
-
-Installed commands and shared BusyBox aliases now appear in executable `/bin`
-entries, including upstream which and the sh alias. Ash uses upstream PATH
-lookup with builtin/function precedence and owner execute checks. Runtime
-subprocess/env lookup supports PATH, explicit WASM paths and bounded absolute
-shebangs. Child cwd participates in lookup; installed Python keeps its startup
-name for unchanged library discovery under -I. Native Release and actual
-512 MiB WHPX/Responses pass PATH ordering, empty components, shell precedence,
-shebang options/errors and independent saved FAT script bytes/modes in
-artifacts/program-paths-whpx-20261024. Workspace /bin entries remain visible;
-command collisions reject installation before aliases are published. All WASM
-tests, host/UEFI Clippy and native basic/descriptor/math/heredoc regressions pass.
-The existing 17 CPython integration cases pass. General mount/link traversal,
-persistent manifests, remaining applets and retained sessions remain incomplete.
-
-Upstream BusyBox stat now builds into the shared image with file metadata,
-custom/terse formats, link-following control and the fixed `agent` uid/gid
-names. Filesystem-stat mode is disabled pending namespace capacity reporting.
-Native ash/CPython integration and independent saved-workspace checks pass.
-Actual 512 MiB Windows WHPX/OVMF passes both Responses and Chat Completions
-tool flows with independent saved FAT metadata and byte checks in
-`artifacts/stat-whpx-responses-final` and
-`artifacts/stat-whpx-chat_completions-final`. Native Linux and Windows Release
-checks include 64-bit epoch boundaries and buffered stdout failures.
-
-Upstream BusyBox sort/uniq/cut/tr now build into the shared image. Length-aware
-records preserve NUL and -z data. Sort fixes field-relative offsets, stable
-record positions, large decimal precision, negative/zero human suffixes and
-read failures. Uniq bounds skipped fields by actual input. Cut fixes positive
-ranges, empty-line suppression, binary ordinary fields and read errors; regex
-NUL or zero-length matches fail explicitly. Tr uses upstream byte classes and
-equivalence sets. Native integration passes 142 semantic/property/boundary
-cases and independent saved bytes. Wider command/mount/PATH/session delivery
-remains incomplete.
-
-Upstream BusyBox date now replaces its handwritten subset. It provides UTC
-epoch/calendar/strptime parsing, RFC/ISO output, nanoseconds and file reference
-times. Clock setting rejects ENOTSUP; non-UTC TZ values reject explicitly
-because WASI libc otherwise silently uses UTC. Trailing -D input, clock errors,
-oversized output and stdout errors fail. Upstream compare-string-array helpers
-replace local duplicates. Full timezone support remains pending.
-All 32 native date cases, current-time/calendar oracles and saved reference
-bytes/times pass. Actual 512 MiB WHPX/Responses and TCG/Chat Completions pass
-the combined current file/code-tool sequence and independent FAT checks in
-artifacts/date-applet-whpx and date-applet-tcg. Release packaging, mutation,
-basic/stream/awk/sed/grep and ash math/random regressions pass.
-
-Upstream BusyBox od, hexdump and libbb dump support now build into the shared ash image.
-Native Release run_guest and actual 512 MiB WHPX/Responses checks pass binary
-octal/character/canonical output, custom formats, boundary lengths, skip/length,
-duplicate suppression, read/output errors and independent saved FAT bytes.
-Hexdump format-file read and close errors return failure. The runtime registry
-and ash dispatch expose hexdump from the shared image.
-
-Upstream BusyBox base64 encoding/decoding now builds into the shared ash image.
-Native integration covers RFC vectors, independent Python byte oracles, wrapping
-widths, binary data and 524289-byte streams through ash. Input and output errors
-are reported; broken-pipe status follows the final pipeline command. The actual
-512 MiB WHPX/Responses run passes with independent FAT checks for encoded and
-decoded files in artifacts/base64-whpx.
-
-Upstream BusyBox sha256sum and its checksum-file parser now build into the
-shared ash image. The SHA algorithm and check semantics remain upstream; the
-WASI support header supplies explicit little-endian hash context types and
-unaligned access operations. Native Release integration checks independent
-hashlib vectors and binary files, padding/block boundaries, 524289-byte and
-1 MiB inputs, valid/invalid checksum files, missing/directory inputs and closed
-stdout. Actual 512 MiB WHPX/Responses passes with independent saved FAT checks
-in artifacts/sha256-whpx.
-
-Upstream BusyBox realpath is registered in the shared ash image. It resolves
-relative/absolute paths and directory symlinks; the WASI helper also preserves
-upstream canonical output for a missing final component and dangling links.
-Native and actual 512 MiB WHPX/Responses checks pass path normalization,
-multiple inputs, missing-parent and trailing-slash errors, with independent
-saved FAT checks in artifacts/realpath-whpx.
-
-BusyBox mkdir/rmdir/rm/touch now use upstream applets and shared make-directory,
-recursive-remove, confirmation and time helpers. Staged corrections report
-directory traversal errors and new-file timestamp errors, preserve nonzero
-status for verbose output failures, reject mkdir / or . without -p, and omit
-false removal success messages. Native integration passes 63 command cases
-and independently checks saved names, bytes and timestamps. The mount,
-PATH, remaining applet inventory and retained-session gates remain incomplete.
-Actual 512 MiB WHPX/Responses pass the full current
-file/code-tool sequence and independent FAT checks in
-artifacts/mutation-applets-whpx. All 85 WASM tests,
-Clippy, formatting, Release packaging and shared-image guest regressions pass.
-
-Upstream BusyBox basename/dirname/pwd/env/printenv/seq/yes/true/false now
-build into the shared image. Local copies of path/single-argv/getcwd helpers
-were replaced by upstream helpers. Pwd enables -L/-P; env uses cooperative
-execution with explicit environments and preserves child/launch statuses.
-An empty environment no longer dereferences clearenv's null pointer. Flush
-results include existing stdio errors. A staged yes fix checks fputs failures,
-so multiword producers exit after head closes. Without SIGPIPE delivery, yes
-reports its EPIPE diagnostic; the final pipeline stage determines status.
-Native integration passes 65 cases plus independent saved bytes. Actual
-512 MiB WHPX/Responses and TCG/Chat Completions pass all current file/code-tool
-checks in artifacts/basic-applets-whpx-fixed and basic-applets-tcg-fixed.
-All 85 WASM tests, Clippy, format, Release packaging and shared guest
-regressions pass. Remaining command/mount/PATH/session gates are tracked in
-docs/environment-work.md.
-
-Firmware monotonic time and upstream BusyBox sleep now pass actual 512 MiB
-WHPX/Responses checks in
-artifacts/monotonic-whpx-final-all. Both use PI CPU
-timer 0 and report nominal 1 ns resolution through /caps. Standard Python
-sleep, RTC comparison, ash timed reads, tail follow/EPIPE, sleeping-tree
-cancellation and independent saved FAT bytes pass. Relative realtime waits
-use monotonic time; absolute waits retain their requested clock. Counter wrap,
-fractional conversion and separate-clock deadline tests pass among all 85
-WASM tests. Upstream sleep supports fractional/summed s/m/h/d operands and
-reports wait failures. The actual Timestamp protocol branch and physical
-firmware remain unverified. Subprocess timeout/signal adaptation is pending.
-
-BusyBox cat/head/tail/wc/tee now use upstream 1.37.0 applets and shared libbb
-stream/numeric helpers. Staged fixes preserve NUL bytes and unterminated lines
-in numbered cat and negative-line head, retain numbering across file joins,
-read complete long tail lines, handle UINT_MAX counts, and report I/O failures.
-Output queues now suspend on backpressure and return normal short writes
-instead of rejecting data above 512 KiB. All iovecs are validated first;
-private control messages retain their atomic size bound. Windows-native
-stream integration passes 112 cases plus independent saved tee bytes.
-Shared-image awk/sed/grep, permission, Python and descriptor checks pass.
-Actual 512 MiB WHPX/Responses verify standard Python
-subprocess stream capture, pipelines, errors and independent saved FAT bytes
-in artifacts/streams-whpx-final. All 82 WASM tests,
-Clippy, formatting and Windows Release EFI/launcher packaging pass.
-The broader command, mount, PATH and session requirements remain incomplete.
-
-BusyBox awk now uses the upstream 1.37.0 translation unit with SDK regex/math
-and cooperative ash-backed system/popen/pclose. Windows native integration
-checks 20 semantic cases and an independent 195000-byte pipe oracle; existing
-ash math/test regression passes. This does not establish firmware awk behavior.
-Other utility applets still include handwritten subsets and need upstream
-replacement. The wider command/mount/session delivery remains incomplete.
-Sed also uses its upstream parser and editor, plus upstream getopt32, linked
-lists and line readers. Windows native checks pass 23 semantic/error cases
-and temporary-file cleanup. In-place content/backup behavior is verified;
-mode preservation now uses the private guest metadata interface described below.
-Grep now uses upstream regex/options/context/recursive traversal. Windows
-native integration passes 33 cases, including limits, failures and long lines.
-Staged corrections reject -m 0 before reading and report input/output failures.
-Recursive grep exposed virtual mount names in ordinary child directory views;
-those views now retain their underlying namespace anchor without root mounts.
-Runtime lookup/spawn accepts /bin-prefixed registered names and applet aliases.
-Focused host checks cover compiled-only modules, lazy discovered aliases, and
-rejection of absent/incorrect paths. Filesystem PATH and executable bin entries
-still require implementation.
-
-BusyBox now uses upstream chmod/parse_mode, effective stat/chmod/fchmod wrappers,
-and inherited runtime umask/cwd. The private Python filesystem adapter exposes
-the same namespace modes through standard os methods, including fd-relative
-operations and scandir entry metadata. Directory-fd scanning retains an anchor
-after the caller closes its fd or renames the directory. Namespace ownership is
-fixed at uid/gid 1. Windows native integration verifies permissions, open-handle
-lifetime, symbolic/recursive chmod, sed backup modes, umask/cwd inheritance,
-persisted metadata and process restart. The C wrapper fixture distinguishes
-AT_FDCWD from explicit root fd 3. Runtime creation-mode scopes preserve modes
-through dangling links and are restored after errors. Final 512 MiB QEMU/OVMF
-checks pass WHPX/Responses with independent saved FAT
-mode/byte checks in artifacts/permissions-whpx-final.
-All 15 CPython integration cases pass,
-including bytecode cache creation/reuse and -B. Current directory state now uses
-anchors for rename/unlink tracking. Python subprocess passes
-cwd and umask through its private process adapter; the native Release runner
-passes all 17 CPython integration tests, including relative/absolute cwd,
-missing cwd errors, umask inheritance and per-child overrides. This change has
-passed the full Windows WHPX filesystem-tool sequence with independent saved
-FAT checks. Firmware ash cwd behavior also passed. Native tests verify import
-caches, explicit py_compile/compileall and -B behavior. WHPX verifies import
-cache creation/reuse, py_compile, compileall, -B and independent saved FAT
-bytecode headers. Scandir entries are private proxies
-with the standard methods, rather than instances of the built-in DirEntry type.
-The full mount/session/command delivery remains incomplete.
-
-The common no_std efi-agent-filesystem crate now owns provider interfaces and
-a persistent inode namespace. Two checksummed metadata generations preserve
-directory entries, symlinks, modes and times above FAT backing files. Anchored
-directory views survive rename; detached open files retain identity until the
-last close. Native-backed integration covers recovery, permissions, links and
-structured mutations. WASI mutation, readlink, stat lookup flags and timestamp
-imports delegate to providers; unsupported providers return explicit errors.
-Firmware and the native guest runner now install the namespace. Model file
-tools and module loading use that same tree. Launcher staging and export use
-logical snapshots; raw FAT paths are backing storage, not the guest tree.
-The launcher suite verifies FAT stage/export/save/reload with empty directories,
-links, modes, timestamps and deletions. The Release native runner passes all
-15 CPython integration cases. Read-only closes defer access-time persistence;
-explicit file/workspace flush persists it. Writable-close errors are retained
-and reported at the execution boundary. Virtual mounts, applets,
-sessions and the remaining delivery in docs/environment-work.md are incomplete.
+Prepared default guests are current. Fresh VM/native packages are under
+artifacts/environment-final-package; hashes are in environment-final-builds.tsv.
+The original user workspace and vendor/uefi-shell contents remain untouched.
+Detailed scope, acceptance evidence and remaining port limits are in
+[docs/environment-work.md](docs/environment-work.md),
+[docs/verification.md](docs/verification.md) and
+[docs/port-transparency-audit.md](docs/port-transparency-audit.md).
 
 ## Architecture
 
@@ -586,9 +106,10 @@ verify duplex output above pipe capacity, capture above the old 512 KiB cap,
 concurrency, descriptor boundaries and rejection before effects. Dynamic
 extensions and native threads remain unavailable. The prebuilt _socket exists,
 but socket creation lacks a backend. -S disables the startup patch.
-Timeouts, signals, cwd, process groups/credentials and distinct custom argv[0]
+Timeouts, signals, process groups/credentials and distinct custom argv[0]
 are unsupported.
-The runtime still executes registered names rather than filesystem PATH.
+The runtime resolves PATH, explicit executable paths and absolute-interpreter
+shebangs. Child cwd and umask use inherited runtime anchors and metadata.
 See docs/port-transparency-audit.md and docs/verification.md for evidence and limits.
 The former source-built standard-interface correction passes the 512 MiB
 QEMU/OVMF application combination with curl/TLS/DNS/POSIX/WolfSSH/QuickJS/ash
@@ -603,7 +124,7 @@ cancellation and saved-byte checks in artifacts/wasm-python-monkey-applications.
 -I retains the adapter; -S disables it. Ordinary file opens have an
 inheritable default under WASI libc, recorded in the transparency audit.
 The firmware module limit is now 48 MiB for the unchanged 30,522,756-byte binary.
-WHPX was not tested in this run.
+Current Windows WHPX verification is recorded in the Current state section.
 Normal return, proc_exit, traps and cancellation now drop execution Stores,
 linear memory, continuations and pending I/O immediately. Only parent PID,
 status and shared output remain until wait/reap. Live children are adopted by
@@ -807,7 +328,8 @@ The dedicated artifacts/wasm-ash-math-languages QEMU run also verifies
 QuickJS/Python shell arithmetic (sum of squares 0..20 = 2870) and exact test
 error capture. QuickJS awaits the outer Promise so assertion rejection fails
 the root process; both languages require status 2 and the actual diagnostic.
-Filesystem PATH, ulimit/umask and full filesystem support remain incomplete. The real
+Filesystem PATH and process umask use the shared runtime. Ulimit remains
+unsupported. The real
 upstream read builtin now supports IFS splitting, raw/escaped input, continuation,
 EOF, -n/-d and selected input descriptors through WASI read/poll. Host timed
 reads pass; UEFI positive timeouts use the installed monotonic clock.
@@ -823,8 +345,8 @@ ash redirections, fresh tasks and QuickJS file capture pass. Actual QEMU/OVMF
 also verifies file operations and the saved FAT bytes. Directory creation now
 reaches the native and firmware providers through WASI path_create_directory.
 The model write tool creates missing parents and includes paths in errors.
-Native rename reaches the provider; firmware rename/delete, timestamps and
-filesystem PATH remain pending. File fd_write validates every iovec before
+Native and firmware rename/delete, timestamps and filesystem PATH use the
+shared persistent namespace. File fd_write validates every iovec before
 effects and writes 64 KiB chunks without the former 512 KiB call limit.
 Finite input and captured output report stream types rather than character
 devices, so unchanged CPython reads `python -` as a script. Automatic import
@@ -948,9 +470,10 @@ and firmware settings have not yet been checked (see docs/verification.md).
 The WASM work is split into functional commits for the runtime, firmware
 providers, C guest helpers, BusyBox ash, QuickJS, CPython, POSIX networking,
 curl/wolfSSL, WolfSSH, and combined verification/documentation. The latest
-recorded complete regression is artifacts/wasm-applications-descriptors-512.
-The 2026-10-12 commit review uses existing evidence; it does not rerun tests.
-Guest source acquisition and automatic guest packaging remain pending.
+recorded complete regression is artifacts/environment-applications-whpx-idle.
+Prepared manifests include guest binaries, libraries and licenses in fresh
+VM/native packages. Source-built ports require their upstream sources, the
+explicit Windows WASI SDK and Binaryen; CPython uses its unchanged prebuilt.
 
 The 2026-10-12 native allocation investigation found linear-memory capacity
 amplification: each Python instance starts at 18.875 MiB, grows to a visible

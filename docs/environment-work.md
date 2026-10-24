@@ -1,7 +1,9 @@
 # Command and filesystem environment delivery
 
-Status: in progress. The checks below define completion of the environment
-expansion. Initial native/firmware interfaces do not establish full completion.
+Status: complete for the reported A1-A8/B9-B15 environment requirements.
+Acceptance evidence and limits are recorded below. Completion is based on
+native integration, both Windows WHPX API formats, independent saved FAT
+checks and the complete 512 MiB application combination.
 
 The retained-cwd metadata correction restores BusyBox `find .` traversal and
 `tar -C DIR ... .` archives. Shared C stat/lstat/fstatat routing preserves
@@ -13,7 +15,8 @@ WHPX application harness now uses logical module paths and independently reads
 saved namespace generations. Its Windows refusal peer sent TCP RST rather than
 the timeout expected by the old fixture. Firmware reports connection reset
 (WASI errno 15), rather than refusal (14); the harness expects that reset.
-The final network/application combination remains pending.
+The final network/application combination passes in
+artifacts/environment-applications-whpx-idle.
 
 Installation manifests now declare module sources, shared command aliases,
 libraries and licenses in root programs.json. Discovery validates binaries,
@@ -27,7 +30,7 @@ passes native integration and both 512 MiB WHPX model APIs. All declared
 library files and licenses match independent saved FAT bytes in
 artifacts/environment-final-assets-responses and
 artifacts/environment-final-assets-chat_completions. The final combined
-application gate remains pending.
+application gate passes in artifacts/environment-applications-whpx-idle.
 Both actual 512 MiB WHPX API flows pass manifest-installed applications and
 independent saved FAT assets/modes in artifacts/installation-final-whpx-responses
 and artifacts/installation-final-whpx-chat_completions.
@@ -61,7 +64,7 @@ in artifacts/environment-final-filesystem-responses and
 artifacts/environment-final-filesystem-chat_completions.
 Firmware monotonic waits now use a reported hardware-counter rate. General mount
 traversal, installation packaging and retained sessions have focused native and
-both WHPX API evidence; the final combined delivery audit remains incomplete.
+both WHPX API evidence. The final combined delivery audit is recorded below.
 Python's standard `os.remove`, `os.unlink` and `os.rmdir` now use the same
 namespace mutation providers as WASI and BusyBox. File and directory deletion
 therefore persists through the workspace namespace and passes the filesystem
@@ -168,8 +171,8 @@ attributes are restored after their children. Native integration checks saved
 archives, metadata, hard links, binary/pipe boundaries and path containment.
 Both actual 512 MiB WHPX model API flows pass with independent saved archive,
 byte, link and metadata checks in artifacts/tar-whpx-responses and
-artifacts/tar-whpx-chat_completions. The final combined delivery audit remains
-incomplete.
+artifacts/tar-whpx-chat_completions. The final native tar regression also passes
+after the common C cwd metadata correction.
 
 The /tmp provider now uses the common inode namespace over bounded memory
 objects. Nested directories, relative symlinks, hard links, enforced modes,
@@ -227,8 +230,8 @@ Linux UBI special case is omitted because WASI has no st_rdev or UBI volumes.
 Both actual 512 MiB WHPX model API flows pass with independent saved zero bytes,
 random sample digests and device mount exclusion in
 artifacts/character-devices-whpx-responses-final and
-artifacts/character-devices-whpx-chat_completions-final. The final combined
-delivery audit remains incomplete.
+artifacts/character-devices-whpx-chat_completions-final. Current native process
+and mount regressions also pass.
 
 Process files now expose actual identity, parent/state, startup arguments and
 environment, cwd/exe links, fd links and mounts. /proc/self follows each caller,
@@ -241,7 +244,7 @@ one link budget covers the full walk. Native integration and independent saved
 state checks pass. Both actual 512 MiB WHPX model API flows and independent FAT
 checks pass in artifacts/procfs-release-whpx-responses and
 artifacts/procfs-release-whpx-chat_completions. Host/target checks and Release
-packaging pass. The final combined delivery audit remains incomplete.
+packaging pass. The final combined delivery audit is recorded below.
 
 Processes now own cwd anchors and inherit them directly. Python and BusyBox
 initialize libc's relative-path routing through /proc/self/cwd, while standard
@@ -262,7 +265,7 @@ in artifacts/c-port-cwd-native.log. Full application staging now selects a
 64/128 MiB ESP and allows a 64 MiB boot tree; the workspace limit remains 48 MiB.
 Both actual 512 MiB WHPX API flows and independent saved FAT checks pass in
 artifacts/c-port-cwd-whpx-responses and artifacts/c-port-cwd-whpx-chat_completions.
-The final combined delivery audit remains incomplete. Executable lookup now
+Executable lookup now
 canonicalizes cwd/descriptor routes before selecting cached modules or compiled
 command aliases. File-backed cache validation now includes inode/device identity,
 size and namespace content revisions, so same-size edits with restored times,
@@ -325,3 +328,37 @@ Run the Windows-native guest and independent saved FAT checks through WHPX at
 networking regressions, host/target Clippy, format and whitespace checks. Record
 actual evidence and failures in verification.md. No stub, registered name or
 unverified provider operation satisfies these requirements.
+
+## Reported-issue acceptance evidence
+
+The current native regressions use the rebuilt shared image. The final
+filesystem and asset runs below use 512 MiB Windows WHPX under both API formats.
+The complete application combination also passes in
+artifacts/environment-applications-whpx-idle.
+
+| Issue | Verified behavior | Evidence |
+| --- | --- | --- |
+| A1 | Nested directories work through Python, ash and model file tools. | environment-final-filesystem-*; environment-complete-native-mount_paths.log |
+| A2 | File/directory deletion persists; open descriptors retain their inode. | environment-final-filesystem-*; timezone-host-tests.log namespace/open-lifetime cases |
+| A3 | Rename, replacement and links retain path/anchor semantics. | cwd-stat-whpx-final-*; mount-walk-whpx-*; environment-complete-native-cwd.log |
+| A4 | Modes affect metadata and access, survive save and inherit umask. | environment-final-filesystem-*; permissions-whpx-final; current native mutation/copy/tar suites |
+| A5 | Real device, temporary and process mounts share the namespace. | character-devices-whpx-*-final; procfs-release-whpx-*; tmp-inodes-whpx-*; current native proc/mount suites |
+| A6 | 8 MiB writes, short transfers and complete iovec validation work. | environment-final-filesystem-*; timezone-host-tests.log file_writes_accept_eight_mib_and_reject_a_late_invalid_vector_without_effects and output-backpressure cases |
+| A7 | Imports, py_compile and compileall write/reuse valid caches. | environment-final-filesystem-*; environment-complete-native-cpython.log |
+| A8 | Model writes create parent directories and expose operation/path errors. | environment-final-filesystem-*; mount-layout-whpx-* |
+| B9 | All 48 required upstream applets run through ash with error cases. | All 21 environment-complete-native-test_busybox_*.log suites; per-command WHPX records above |
+| B10 | /bin contains actual executable aliases and PATH resolves files/scripts. | program-paths-whpx-20261024; environment-final-assets-* |
+| B11 | Shell discovery and process execution use the same installed commands. | environment-final-assets-*; program-paths-whpx-20261024 |
+| B12 | /dev/null redirection and builtin detection work. | character-devices-whpx-*-final; current native basic suite |
+| B13 | Tool state persists; exit/clear/cancel report resets and isolate other roots. | sessions-final-whpx-*; sessions-default-whpx-*; environment-complete-native-sessions.log |
+| B14 | python - consumes finite stdin without a REPL banner. | environment-final-filesystem-*; environment-complete-native-cpython.log |
+| B15 | Validated manifests install lazy commands, libraries and licenses. | environment-final-assets-*; timezone-host-tests.log installation/revision/cache cases |
+
+Artifact paths in this table are under artifacts/. Existing save/recovery gates
+also pass current host tests: interrupted journal generations, deferred inode
+reclamation, actual FAT save/reload/restage, and host conflicts before effects.
+The resource check passes the C application sequence at 256 MiB; an additional
+Python child exceeds that configuration in the larger session sequence.
+The complete environment uses 512 MiB. Final packages are in
+artifacts/environment-final-package; artifact hashes are recorded in
+artifacts/environment-final-builds.tsv.
