@@ -136,8 +136,8 @@ and ash verify tempfile cleanup, child cwd, cross-device mv fallback and archive
 extraction. Both actual 512 MiB WHPX model APIs pass with independent saved FAT
 bytes/metadata and temporary mount exclusion in
 artifacts/tmp-inodes-whpx-responses and artifacts/tmp-inodes-whpx-chat_completions.
-Mount collisions, complete directory-view routing, device/process files and
-retained sessions still need their delivery gates.
+Complete device/process files, anchored cwd tracking and retained sessions
+still need their delivery gates.
 
 The virtual root now resolves absolute and relative links across runtime mounts
 before provider dispatch. Link/parent ordering, stat/lstat policy, mutations,
@@ -157,8 +157,21 @@ directories and real cross-device operations fail before effects. Native
 regressions and both actual 512 MiB WHPX model API flows pass, including
 independent saved FAT hard-link groups and bytes in
 artifacts/anchored-mount-whpx-responses and
-artifacts/anchored-mount-whpx-chat_completions. Mount collision policy, devices,
-process information, manifests and sessions still need completion.
+artifacts/anchored-mount-whpx-chat_completions.
+
+Mount initialization rejects existing workspace dev/tmp/proc entries before
+publishing a root, including empty directories and dangling links. Errors include
+the conflicting path. A real workspace bin directory is merged; non-directory
+bin entries and registered-command collisions reject installation. Failed root
+replacement retains the previous root and its temporary storage. Case variants
+and sibling prefixes remain ordinary entries. Firmware file tools and module
+loaders now obtain the same mounted root as shell and Python. Missing dev/proc
+paths cannot fall through to backing storage. Native conflict checks preserve
+saved bytes and names. Both actual 512 MiB WHPX model API flows verify model
+write/edit/read in /tmp, shell/Python access and /wasm load from the temporary
+mount, with independent saved FAT checks in artifacts/mount-layout-whpx-responses
+and artifacts/mount-layout-whpx-chat_completions. Devices, process information,
+anchored cwd tracking, manifests and sessions still need completion.
 
 ## Delivery requirements
 

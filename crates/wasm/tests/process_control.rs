@@ -7,7 +7,7 @@ use std::rc::Rc;
 struct Unused;
 impl FileSystem for Unused {
     fn symlink_metadata(&self, path: &str) -> Result<Metadata, FileError> {
-        if path == "bin" {
+        if matches!(path, "bin" | "dev" | "tmp" | "proc") {
             return Err(FileError::NotFound);
         }
         self.metadata(path)
@@ -58,7 +58,7 @@ fn run_with(body: &str, filesystem: Rc<dyn FileSystem>) {
         (call $equal (call $open (i32.const 3) (i32.const 0) (i32.const 64) (i32.const 12) (i32.const 0) (i64.const 66) (i64.const 0) (i32.const 0) (i32.const 32)) (i32.const 0))
         {body}))"#)).unwrap();
     let mut world = World::new();
-    world.set_filesystem(filesystem);
+    world.set_filesystem(filesystem).unwrap();
     world.register("control", &module).unwrap();
     let pid = world.spawn(vec!["control".into()], vec![]).unwrap();
     for _ in 0..1000 {
@@ -98,7 +98,7 @@ fn directory_snapshot_encodes_utf8_bytes_and_releases_private_descriptors() {
     struct Names;
     impl FileSystem for Names {
         fn symlink_metadata(&self, path: &str) -> Result<Metadata, FileError> {
-            if path == "bin" {
+            if matches!(path, "bin" | "dev" | "tmp" | "proc") {
                 return Err(FileError::NotFound);
             }
             self.metadata(path)

@@ -33,6 +33,20 @@ fn special_statistics(device: u32) -> FileSystemStatistics {
 }
 type Programs = Rc<RefCell<BTreeMap<String, Option<String>>>>;
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct MountError {
+    pub path: String,
+    pub error: FileError,
+}
+
+impl core::fmt::Display for MountError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(formatter, "Mount '{}': {:?}", self.path, self.error)
+    }
+}
+
+impl core::error::Error for MountError {}
+
 #[derive(Clone, PartialEq, Eq)]
 enum Scope {
     Root,
@@ -58,13 +72,28 @@ impl VirtualFileSystem {
         Ok((resolved, metadata))
     }
 
-    pub fn new(base: Rc<dyn FileSystem>) -> Rc<Self> {
+    pub fn new(base: Rc<dyn FileSystem>) -> Result<Rc<Self>, MountError> {
         Self::with_programs(base, Rc::new(RefCell::new(BTreeMap::new())))
     }
 
-    pub(crate) fn with_programs(base: Rc<dyn FileSystem>, programs: Programs) -> Rc<Self> {
+    pub(crate) fn with_programs(
+        base: Rc<dyn FileSystem>,
+        programs: Programs,
+    ) -> Result<Rc<Self>, MountError> {
+        for path in ["dev", "tmp", "proc"] {
+            let error = match base.symlink_metadata(path) {
+                Err(FileError::NotFound) => continue,
+                Ok(_) => FileError::Exists,
+                Err(error) => error,
+            };
+            return Err(MountError {
+                path: format!("/{path}"),
+                error,
+            });
+        }
+        Self::validate_bin(base.as_ref(), &programs.borrow())?;
         let identity = base.identity();
-        Rc::new(Self {
+        Ok(Rc::new(Self {
             base,
             tmp: Rc::new(namespace::Namespace::temporary(
                 TEMP_CAPACITY,
@@ -75,24 +104,36 @@ impl VirtualFileSystem {
             scope: Scope::Root,
             identity,
             programs,
-        })
+        }))
     }
 
     pub(crate) fn validate_programs(
         &self,
         programs: &BTreeMap<String, Option<String>>,
     ) -> Result<(), FileError> {
-        match self.base.symlink_metadata("bin") {
+        Self::validate_bin(self.base.as_ref(), programs).map_err(|error| error.error)
+    }
+
+    fn validate_bin(
+        base: &dyn FileSystem,
+        programs: &BTreeMap<String, Option<String>>,
+    ) -> Result<(), MountError> {
+        let mount_error = |path: &str, error| MountError {
+            path: format!("/{path}"),
+            error,
+        };
+        match base.symlink_metadata("bin") {
             Err(FileError::NotFound) => return Ok(()),
             Ok(info) if info.kind == EntryType::Directory => {}
-            Ok(_) => return Err(FileError::Exists),
-            Err(error) => return Err(error),
+            Ok(_) => return Err(mount_error("bin", FileError::Exists)),
+            Err(error) => return Err(mount_error("bin", error)),
         }
         for name in programs.keys() {
-            match self.base.symlink_metadata(&format!("bin/{name}")) {
+            let path = format!("bin/{name}");
+            match base.symlink_metadata(&path) {
                 Err(FileError::NotFound) => {}
-                Ok(_) => return Err(FileError::Exists),
-                Err(error) => return Err(error),
+                Ok(_) => return Err(mount_error(&path, FileError::Exists)),
+                Err(error) => return Err(mount_error(&path, error)),
             }
         }
         Ok(())
@@ -418,6 +459,15 @@ impl VirtualFileSystem {
                 device: if path.starts_with("dev/") { 2 } else { 4 },
             }));
         }
+        if self.read_only_mount(path) {
+            return Err(
+                if options.write || options.create || options.truncate || options.append {
+                    FileError::ReadOnly
+                } else {
+                    FileError::NotFound
+                },
+            );
+        }
         self.base.open(path, options)
     }
 
@@ -440,6 +490,9 @@ impl VirtualFileSystem {
             };
             return Ok(metadata);
         }
+        if self.read_only_mount(path) {
+            return Err(FileError::NotFound);
+        }
         self.base.metadata(path)
     }
 
@@ -449,7 +502,7 @@ impl VirtualFileSystem {
         if let Some(path) = self.temporary_path(path) {
             return self.tmp.read_directory(path);
         }
-        let mut entries = if path == "bin" {
+        let mut entries = if path == "bin" && self.scope != Scope::Workspace {
             match self.base.read_directory(path) {
                 Ok(entries) => entries,
                 Err(FileError::NotFound) => DirectoryEntries::new(),
@@ -497,8 +550,7 @@ impl VirtualFileSystem {
         }
         if self.virtual_directory(path)
             || self.program(path).is_some()
-            || (self.scope != Scope::Workspace
-                && (path.starts_with("dev/") || path.starts_with("proc/")))
+            || self.read_only_mount(path)
         {
             return Err(FileError::ReadOnly);
         }
@@ -511,7 +563,10 @@ impl VirtualFileSystem {
         if let Some(path) = self.temporary_path(path) {
             return self.tmp.unlink(path);
         }
-        if self.virtual_entry(path).is_some() || self.program(path).is_some() {
+        if self.read_only_mount(path)
+            || self.virtual_entry(path).is_some()
+            || self.program(path).is_some()
+        {
             return Err(FileError::ReadOnly);
         }
         self.base.unlink(path)
@@ -523,7 +578,7 @@ impl VirtualFileSystem {
         if let Some(path) = self.temporary_path(path) {
             return self.tmp.remove_directory(path);
         }
-        if self.virtual_directory(path) {
+        if self.read_only_mount(path) || self.virtual_directory(path) {
             return Err(FileError::ReadOnly);
         }
         self.base.remove_directory(path)
@@ -535,7 +590,10 @@ impl VirtualFileSystem {
         if let Some(path) = self.temporary_path(path) {
             return self.tmp.symlink(target, path);
         }
-        if self.virtual_entry(path).is_some() || self.program(path).is_some() {
+        if self.read_only_mount(path)
+            || self.virtual_entry(path).is_some()
+            || self.program(path).is_some()
+        {
             return Err(FileError::ReadOnly);
         }
         self.base.symlink(target, path)
@@ -550,6 +608,9 @@ impl VirtualFileSystem {
             return source
                 .map(|source| format!("/{source}"))
                 .ok_or(FileError::Invalid);
+        }
+        if self.read_only_mount(&path) {
+            return Err(FileError::NotFound);
         }
         self.base.read_link(&path)
     }
@@ -622,6 +683,9 @@ impl VirtualFileSystem {
                 Scope::Mount(mount) => path.strip_prefix(mount).unwrap().trim_start_matches('/'),
             };
             return self.metadata_raw(relative);
+        }
+        if self.read_only_mount(path) {
+            return Err(FileError::NotFound);
         }
         self.base.symlink_metadata(path)
     }
@@ -737,6 +801,9 @@ impl VirtualFileSystem {
         if other.temporary_path(&destination).is_some() {
             return Err(FileError::CrossDevice);
         }
+        if self.read_only_mount(&source) || other.read_only_mount(&destination) {
+            return Err(FileError::CrossDevice);
+        }
         if self.virtual_entry(&source).is_some()
             || other.virtual_entry(&destination).is_some()
             || self.program(&source).is_some()
@@ -828,6 +895,10 @@ impl VirtualFileSystem {
     fn special_mount(&self, path: &str) -> bool {
         self.scope != Scope::Workspace
             && matches!(path.split('/').next(), Some("dev" | "tmp" | "proc"))
+    }
+
+    fn read_only_mount(&self, path: &str) -> bool {
+        self.scope != Scope::Workspace && matches!(path.split('/').next(), Some("dev" | "proc"))
     }
 }
 

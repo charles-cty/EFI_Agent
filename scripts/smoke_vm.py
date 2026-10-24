@@ -196,10 +196,10 @@ class Provider(BaseHTTPRequestHandler):
             if previous:
                 expected = Provider.code_expected[step - 1]
                 assert expected in result, (step, result)
-                if step == 7 and not Provider.filesystem_tools:
+                if expected == "[Output truncated at 64 KiB]":
                     assert result.count("[Output truncated at 64 KiB]") == 1
                     assert "A" * 65536 in result and "B" * 65536 in result
-                if step == 8 and not Provider.filesystem_tools:
+                if expected == "Tool error: Code must contain no NUL":
                     assert "forbidden\n" not in result
             if step < len(Provider.code_steps):
                 name, arguments = Provider.code_steps[step]
@@ -519,6 +519,18 @@ def main():
                   'UPSTREAM_BASE64_OK' if args.base64_applet else 'UPSTREAM_TEXT_APPLETS_OK')
         Provider.code_steps = [('python', {'code': BASIC_APPLETS_CHECK})]
         Provider.code_expected = ['UPSTREAM_BASIC_APPLETS_OK']
+        if args.mount_paths:
+            Provider.code_steps.extend([
+                ('write', {'path': '/tmp/model-tools/deep/input.py', 'content': "print('SHARED_MOUNT_MODEL_ORIGINAL')\n"}),
+                ('edit', {'path': '/tmp/model-tools/deep/input.py', 'old_text': 'ORIGINAL', 'new_text': 'EDITED'}),
+                ('read', {'path': '/tmp/model-tools/deep/input.py'}),
+                ('shell', {'command': 'python /tmp/model-tools/deep/input.py; cat /tmp/model-tools/deep/input.py > shared-mount-tool-source; cp ash.wasm /tmp/model-tools/ash-copy.wasm'}),
+                ('python', {'code': "import os; assert os.path.isfile('/tmp/model-tools/deep/input.py'); print('SHARED_MOUNT_PYTHON_OK')"}),
+            ])
+            Provider.code_expected.extend([
+                'File saved', 'File edited', "print('SHARED_MOUNT_MODEL_EDITED')",
+                'SHARED_MOUNT_MODEL_EDITED', 'SHARED_MOUNT_PYTHON_OK',
+            ])
         if fixture is not None:
             Provider.code_steps.append(('python', {'code': fixture}))
             Provider.code_expected.append(marker)
@@ -631,6 +643,9 @@ def main():
             if applet_modes:
                 send("Exercise code tools")
                 wait("CODE_TOOLS_VERIFIED", args.code_timeout)
+                if args.mount_paths:
+                    send('/wasm load mounted /tmp/model-tools/ash-copy.wasm')
+                    wait('Loaded mounted', args.code_timeout)
                 send("/exit")
                 qemu.wait(timeout=15)
                 assert qemu.returncode == 0
@@ -677,6 +692,7 @@ def main():
                         verify_unzip(workspace)
                     elif args.mount_paths:
                         verify_mount_paths(workspace)
+                        assert workspace.read('shared-mount-tool-source') == b"print('SHARED_MOUNT_MODEL_EDITED')\n"
                     elif args.temporary_mount:
                         verify_temporary(workspace)
                     elif args.tar_applet:

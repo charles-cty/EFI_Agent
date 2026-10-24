@@ -510,16 +510,26 @@ impl World {
     }
 
     /// Install the root filesystem before spawning any process.
-    pub fn set_filesystem(&mut self, filesystem: Rc<dyn filesystem::FileSystem>) {
+    pub fn set_filesystem(
+        &mut self,
+        filesystem: Rc<dyn filesystem::FileSystem>,
+    ) -> Result<(), filesystem::MountError> {
         assert!(
             self.processes.is_empty(),
             "Cannot replace a live world's filesystem"
         );
-        let filesystem = filesystem::VirtualFileSystem::with_programs(filesystem, self.bin.clone());
+        let filesystem =
+            filesystem::VirtualFileSystem::with_programs(filesystem, self.bin.clone())?;
         if let Some(clock) = &self.clock {
             filesystem.set_clock(clock.clone());
         }
         self.filesystem = Some(filesystem);
+        Ok(())
+    }
+
+    /// Share the mounted root with host file tools and module loaders.
+    pub fn filesystem(&self) -> Option<Rc<dyn filesystem::FileSystem>> {
+        self.filesystem.clone()
     }
 
     pub fn spawn(&mut self, args: Vec<String>, stdin: Vec<u8>) -> Result<Pid, Error> {

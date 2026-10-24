@@ -30,7 +30,7 @@ impl FileSystem for AllocationFiles {
             "big" => Some((1 << 40) + 513),
             "zero" => Some(0),
             "none" => None,
-            "lost" | "bin" => return Err(FileError::NotFound),
+            "lost" | "bin" | "dev" | "tmp" | "proc" => return Err(FileError::NotFound),
             other => panic!("Unexpected provider lookup: {other}"),
         };
         Ok(info)
@@ -101,7 +101,7 @@ fn private_allocation_preserves_u64_and_checks_flags_descriptors_rights_and_supp
         (drop (call $query (i32.const 3) (i32.const 2) (i32.const 0) (i32.const 0) (i32.const 28)))
       ))"#).unwrap();
     let mut world = World::new();
-    world.set_filesystem(Rc::new(AllocationFiles));
+    world.set_filesystem(Rc::new(AllocationFiles)).unwrap();
     world.register("allocation", &module).unwrap();
     let pid = world.spawn(vec!["allocation".into()], vec![]).unwrap();
     for _ in 0..1000 {

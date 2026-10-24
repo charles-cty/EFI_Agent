@@ -10,7 +10,8 @@ struct Workspace(PathBuf);
 fn temporary_directory_views_route_mutations_in_both_directions_after_rename() {
     use efi_agent_wasm::filesystem::{FileError, FileSystem, OpenOptions, VirtualFileSystem};
     let work = Workspace::new();
-    let filesystem = VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(work.0.clone())));
+    let filesystem =
+        VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(work.0.clone()))).unwrap();
     let options = OpenOptions {
         read: true,
         write: true,
@@ -76,7 +77,8 @@ fn temporary_directory_views_route_mutations_in_both_directions_after_rename() {
     );
     assert!(!work.0.join("tmp").exists());
     assert!(!work.0.join("outside").exists());
-    let independent = VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(work.0.clone())));
+    let independent =
+        VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(work.0.clone()))).unwrap();
     assert_eq!(
         independent.metadata("tmp/root-alias").err(),
         Some(FileError::NotFound)
@@ -93,7 +95,8 @@ fn temporary_capacity_counts_detached_files_and_enforces_shared_exact_boundaries
         FileError, FileSystem, OpenOptions, TEMP_CAPACITY, VirtualFileSystem,
     };
     let work = Workspace::new();
-    let filesystem = VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(work.0.clone())));
+    let filesystem =
+        VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(work.0.clone()))).unwrap();
     let options = OpenOptions {
         read: true,
         write: true,
@@ -176,7 +179,8 @@ fn temporary_inode_quota_retains_detached_open_files_until_close() {
         FileError, FileSystem, MAX_DIRECTORY_ENTRIES, OpenOptions, VirtualFileSystem,
     };
     let work = Workspace::new();
-    let filesystem = VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(work.0.clone())));
+    let filesystem =
+        VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(work.0.clone()))).unwrap();
     let options = OpenOptions {
         read: true,
         write: true,
@@ -237,7 +241,9 @@ impl Workspace {
 
     fn run(&self, wat: &str) {
         let mut world = World::new();
-        world.set_filesystem(Rc::new(native_fs::NativeFileSystem(self.0.clone())));
+        world
+            .set_filesystem(Rc::new(native_fs::NativeFileSystem(self.0.clone())))
+            .unwrap();
         world
             .register("files", &wat::parse_str(wat).unwrap())
             .unwrap();
@@ -319,7 +325,7 @@ fn persistent_namespace_wasi_mutations_keep_directory_and_file_identity() {
         (call $ok (call $close (local.get $file)))
         (call $ok (call $close (local.get $dir)))))"#).unwrap();
     let mut world = World::new();
-    world.set_filesystem(namespace.clone());
+    world.set_filesystem(namespace.clone()).unwrap();
     world.register("mutations", &module).unwrap();
     let pid = world.spawn(vec!["mutations".into()], vec![]).unwrap();
     for _ in 0..1000 {
@@ -339,7 +345,7 @@ fn virtual_mounts_supply_devices_and_ephemeral_tmp_files() {
     use efi_agent_wasm::filesystem::{FileSystem, OpenOptions, VirtualFileSystem};
     let workspace = Workspace::new();
     let virtual_fs =
-        VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(workspace.0.clone())));
+        VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(workspace.0.clone()))).unwrap();
     assert!(virtual_fs.metadata("bin").unwrap().is_directory());
     assert!(virtual_fs.metadata("dev").unwrap().is_directory());
     assert!(virtual_fs.metadata("proc").unwrap().is_directory());
@@ -427,7 +433,7 @@ fn virtual_wrapper_preserves_symlink_walk_and_anchored_cross_directory_rename() 
     efi_agent_filesystem::text::write(namespace.as_ref(), "a/tmp/local", "nested").unwrap();
     efi_agent_filesystem::text::write(namespace.as_ref(), "b/value", "payload").unwrap();
     namespace.symlink("../b/deep", "a/link").unwrap();
-    let fs = VirtualFileSystem::new(namespace.clone());
+    let fs = VirtualFileSystem::new(namespace.clone()).unwrap();
     let path = fs.resolve_path("", "a/link/../value").unwrap();
     assert_eq!(
         fs.metadata(&path).unwrap().inode,
@@ -470,7 +476,9 @@ fn workspace_modules_load_on_demand_and_aliases_share_the_compiled_image() {
             .unwrap();
     fs::write(workspace.0.join("quickjs.wasm"), module).unwrap();
     let mut world = World::new();
-    world.set_filesystem(Rc::new(native_fs::NativeFileSystem(workspace.0.clone())));
+    world
+        .set_filesystem(Rc::new(native_fs::NativeFileSystem(workspace.0.clone())))
+        .unwrap();
     world.discover_programs().unwrap();
     assert!(world.has_program("quickjs"));
     assert!(world.has_program("qjs"));

@@ -147,8 +147,15 @@ Workspace directory views retain the virtual routing layer over their inode
 anchor. Rename and hard-link operations work in both directions between those
 views and the root, including after directory rename. Routing uses each view's
 scope, so local tmp/dev/proc/bin names remain ordinary directories. Cross-device
-mutations still fail before effects. Mount collisions and process-information
-support remain incomplete.
+mutations still fail before effects.
+Mount construction rejects existing workspace dev/tmp/proc entries before
+publishing a root, including empty directories and dangling links. A real bin
+directory remains merged; non-directory bin entries and installed-command
+collisions fail with their path. Failed root replacement leaves the previous
+root and temporary storage installed. Firmware model file tools and module
+loaders share World's mounted root; the raw namespace owns persistent flushing.
+Missing dev/proc paths do not fall through to backing storage. Complete device
+and process-information support remain incomplete.
 
 Ln uses upstream option parsing, hard/symbolic link creation, destination
 directory handling, backups and verbose output. Force and backup operations
@@ -674,7 +681,10 @@ boundaries and QuickJS binary capture in actual QEMU/OVMF.
 
 ## Guest files
 
-`World::set_filesystem` installs a provider before the first process starts.
+`World::set_filesystem` validates and installs a provider before the first
+process starts. It returns a path-bearing MountError for conflicts or provider
+failures and retains any previously installed root on failure.
+`World::filesystem` returns the mounted root for host tools and module loaders.
 Each process receives fd 3 as a preopened directory named `/`. The firmware
 provider opens files on the boot volume inside the configured workspace. Without
 model configuration, its workspace is `\work`. The host example uses its supplied

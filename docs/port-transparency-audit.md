@@ -93,8 +93,12 @@ and both actual 512 MiB WHPX model API flows include independent saved FAT
 bytes, modes and link targets. Anchored workspace views also retain the routing
 layer: rename/hard-link operations work in both directions with the root after
 directory rename, while local tmp/dev/proc/bin names remain ordinary directories.
-Mount collision policy and complete devices/process information remain
-incomplete.
+Mount construction now rejects existing workspace dev/tmp/proc entries,
+non-directory bin entries and installed-command conflicts before publication.
+The error retains the path; failed replacement preserves the previous root.
+Ordinary bin children remain merged. Firmware model file tools and module
+loaders now use the same mounted root as guest code. Complete devices/process
+information remain incomplete.
 
 The 2026-10-22 filesystem expansion connects directory creation to native and
 firmware providers, and rename to the native provider. File writes now use

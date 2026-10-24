@@ -9,6 +9,21 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Mount initialization now rejects existing workspace dev/tmp/proc entries,
+including empty directories and dangling links, before publishing a root.
+Real bin directories remain merged; non-directory bin entries and installed
+command conflicts report their path. Failed replacement preserves the old root
+and temporary bytes. Firmware model file tools and module loaders now share
+the guest mounted root, and unknown dev/proc paths cannot reach backing storage.
+Five Rust layout tests and ten native conflict cases pass with independent
+saved-state checks. Both actual 512 MiB WHPX model API flows verify model
+write/edit/read in /tmp, shell/Python access, loading a temporary WASM module,
+saved source bytes, temporary exclusion and existing mount/link invariants in
+artifacts/mount-layout-whpx-responses and
+artifacts/mount-layout-whpx-chat_completions. Host tests, host/UEFI Clippy,
+formatting, native regressions and Release packaging pass. Complete dev/proc,
+anchored cwd tracking, installation manifests and retained sessions remain.
+
 The virtual root resolves absolute/relative links across runtime mounts before
 provider dispatch, with link-before-parent ordering, shared 40-link and expanded
 4096-byte limits, final-entry mutation policy and searchable ancestor checks.
@@ -26,8 +41,8 @@ after directory rename; local tmp/dev/proc/bin names remain ordinary
 directories and actual cross-device operations fail before effects. Native
 regressions and both actual 512 MiB WHPX model API flows pass with independent
 saved FAT hard-link groups and bytes in artifacts/anchored-mount-whpx-responses
-and artifacts/anchored-mount-whpx-chat_completions. Mount collisions, complete
-dev/proc, anchored cwd tracking, manifests and retained sessions remain incomplete.
+and artifacts/anchored-mount-whpx-chat_completions. Complete dev/proc, anchored
+cwd tracking, manifests and retained sessions remain incomplete.
 
 The shared /tmp mount now reuses the inode namespace over bounded memory
 objects, with ephemeral metadata commits, nested directories, relative links,

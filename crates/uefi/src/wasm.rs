@@ -8,7 +8,7 @@ use alloc::{
 };
 use efi_agent_core::ui::App;
 use efi_agent_core::wasm_output::WasmOutput;
-use efi_agent_filesystem::{FileError, FileSystem, namespace::Namespace};
+use efi_agent_filesystem::{FileSystem, namespace::Namespace};
 use efi_agent_wasm::{Status, World};
 
 use crate::terminal;
@@ -101,22 +101,29 @@ impl Runtime {
         workspace: &str,
         ipv4: Option<efi_agent_core::config::StaticIpv4>,
         dns: ([u8; 4], u16),
-    ) -> Result<Self, FileError> {
+    ) -> Result<Self, String> {
         use efi_agent_wasm::clock::{Clock, ClockId};
         let clock = Rc::new(crate::wasm_clock::FirmwareClock::new());
         let file_clock = clock.clone();
-        let filesystem = Rc::new(Namespace::open(
-            Rc::new(crate::wasm_filesystem::FirmwareFileSystem(workspace.into())),
-            Some(Rc::new(move || {
-                file_clock.now(ClockId::Realtime).map_err(|_| FileError::Io)
-            })),
-        )?);
+        let filesystem = Rc::new(
+            Namespace::open(
+                Rc::new(crate::wasm_filesystem::FirmwareFileSystem(workspace.into())),
+                Some(Rc::new(move || {
+                    file_clock
+                        .now(ClockId::Realtime)
+                        .map_err(|_| efi_agent_filesystem::FileError::Io)
+                })),
+            )
+            .map_err(|error| format!("Initialize workspace: {error:?}"))?,
+        );
         let mut world = World::new();
         world.set_clock(clock.clone());
         world.set_random(Rc::new(FirmwareRandom));
         world.set_network(Rc::new(crate::tcp::cooperative::FirmwareNetwork(ipv4)));
         world.set_dns_server(dns.0, dns.1);
-        world.set_filesystem(filesystem.clone());
+        world
+            .set_filesystem(filesystem.clone())
+            .map_err(|error| error.to_string())?;
         Ok(Self {
             world,
             clock,
@@ -130,7 +137,9 @@ impl Runtime {
     }
 
     pub fn filesystem(&self) -> Rc<dyn FileSystem> {
-        self.filesystem.clone()
+        self.world
+            .filesystem()
+            .expect("Runtime installs the mounted root")
     }
 
     pub fn clock_description(&self) -> String {
@@ -205,7 +214,7 @@ impl Runtime {
         if !self.world.has_program(name) {
             let path = format!("{name}.wasm");
             let bytes = efi_agent_filesystem::text::read_bytes(
-                self.filesystem.as_ref(),
+                self.filesystem().as_ref(),
                 &path,
                 48 * 1024 * 1024,
             )
@@ -302,7 +311,7 @@ impl Runtime {
                 };
                 module.and_then(|(name, path)| {
                     efi_agent_filesystem::text::read_bytes(
-                        self.filesystem.as_ref(),
+                        self.filesystem().as_ref(),
                         path,
                         48 * 1024 * 1024,
                     )

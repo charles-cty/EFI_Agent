@@ -68,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .map_err(|error| format!("Initialize workspace namespace: {error:?}"))?,
     );
-    world.set_filesystem(filesystem.clone());
+    world.set_filesystem(filesystem.clone())?;
     world
         .discover_programs()
         .map_err(|error| format!("Discover workspace programs: {error:?}"))?;

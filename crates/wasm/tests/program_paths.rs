@@ -50,7 +50,7 @@ fn filesystem_path_order_modes_shebangs_and_symlink_parent_semantics() {
     namespace.create_directory("two/inner").unwrap();
     namespace.symlink("two/inner", "linked").unwrap();
     let mut world = World::new();
-    world.set_filesystem(namespace.clone());
+    world.set_filesystem(namespace.clone()).unwrap();
     for (name, path, code) in [
         ("pick", "/one:/two", 23),
         ("pick", "/missing:/two:/one", 41),
@@ -117,7 +117,7 @@ fn installation_rejects_bin_collisions_without_publishing_partial_aliases() {
     let namespace =
         Rc::new(Namespace::open(Rc::new(NativeFileSystem(root.clone())), None).unwrap());
     let mut world = World::new();
-    world.set_filesystem(namespace.clone());
+    world.set_filesystem(namespace.clone()).unwrap();
     assert_eq!(world.discover_programs(), Err(FileError::Exists));
     assert!(!world.has_program("ash"));
     assert!(!world.has_program("ls"));
@@ -144,7 +144,7 @@ fn symlinks_to_installed_commands_reuse_compiled_only_modules() {
     )
     .unwrap();
     let mut world = World::new();
-    world.set_filesystem(namespace);
+    world.set_filesystem(namespace).unwrap();
     world.register("custom", &module).unwrap();
     for name in ["/linked", "/tools/relative", "/tools/../linked"] {
         finish(&mut world, name, 23);

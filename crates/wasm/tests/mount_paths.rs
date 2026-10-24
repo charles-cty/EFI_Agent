@@ -27,6 +27,7 @@ impl Workspace {
         VirtualFileSystem::new(Rc::new(
             Namespace::open(Rc::new(NativeFileSystem(self.0.clone())), None).unwrap(),
         ))
+        .unwrap()
     }
 }
 impl Drop for Workspace {

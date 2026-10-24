@@ -119,7 +119,7 @@ fn statistics_reply_preserves_u64_reserved_space_and_checks_rights_before_effect
       ))"#).unwrap();
     let provider = Rc::new(Statistics::default());
     let mut world = World::new();
-    world.set_filesystem(provider.clone());
+    world.set_filesystem(provider.clone()).unwrap();
     world.register("statistics", &module).unwrap();
     let pid = world.spawn(vec!["statistics".into()], vec![]).unwrap();
     for _ in 0..1000 {
@@ -159,7 +159,9 @@ fn mount_snapshot_escapes_fields_and_uses_real_virtual_mount_inventory() {
         (i32.store (i32.const 20) (i32.load (i32.const 24)))
         (if (call $write (i32.const 1) (i32.const 16) (i32.const 1) (i32.const 24)) (then unreachable))))"#).unwrap();
     let mut world = World::new();
-    world.set_filesystem(Rc::new(Statistics::default()));
+    world
+        .set_filesystem(Rc::new(Statistics::default()))
+        .unwrap();
     world.register("mounts", &module).unwrap();
     let pid = world.spawn(vec!["mounts".into()], vec![]).unwrap();
     for _ in 0..100 {
@@ -197,7 +199,9 @@ fn upstream_statfs_preserves_large_counts_and_reserved_capacity() {
     let path = std::env::var_os("EFI_AGENT_ASH").expect("set EFI_AGENT_ASH to the built ash.wasm");
     let module = std::fs::read(path).unwrap();
     let mut world = World::new();
-    world.set_filesystem(Rc::new(Statistics::default()));
+    world
+        .set_filesystem(Rc::new(Statistics::default()))
+        .unwrap();
     world.register("ash", &module).unwrap();
     let pid = world
         .spawn(

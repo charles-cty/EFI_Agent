@@ -7,7 +7,7 @@ use std::{cell::RefCell, rc::Rc};
 struct UnsupportedMutations;
 impl FileSystem for UnsupportedMutations {
     fn symlink_metadata(&self, path: &str) -> Result<Metadata, FileError> {
-        if path == "bin" {
+        if matches!(path, "bin" | "dev" | "tmp" | "proc") {
             return Err(FileError::NotFound);
         }
         self.metadata(path)
@@ -134,7 +134,7 @@ fn hard_link_validates_both_paths_rights_flags_and_ranges_before_provider_effect
         (call $control (i32.const 3) (i32.const 3) (i32.const 0) (i32.const 6) (i32.const 31) (i32.const 76))))"#).unwrap();
     let provider = Rc::new(Links::default());
     let mut world = World::new();
-    world.set_filesystem(provider.clone());
+    world.set_filesystem(provider.clone()).unwrap();
     world.register("links", &module).unwrap();
     let pid = world.spawn(vec!["links".into()], vec![]).unwrap();
     for _ in 0..100 {
@@ -200,7 +200,7 @@ fn unavailable_wasi_socket_operations_validate_arguments_and_preserve_outputs() 
 struct NonLinks(RefCell<Vec<String>>);
 impl FileSystem for NonLinks {
     fn symlink_metadata(&self, path: &str) -> Result<Metadata, FileError> {
-        if path == "bin" {
+        if matches!(path, "bin" | "dev" | "tmp" | "proc") {
             return Err(FileError::NotFound);
         }
         self.metadata(path)
@@ -253,7 +253,7 @@ fn readlink_distinguishes_nonlinks_missing_paths_and_validation_without_output_c
         (if (i32.ne (i32.load8_u (i32.const 256)) (i32.const 193)) (then unreachable))))"#).unwrap();
     let provider = Rc::new(NonLinks(RefCell::new(Vec::new())));
     let mut world = World::new();
-    world.set_filesystem(provider.clone());
+    world.set_filesystem(provider.clone()).unwrap();
     world.register("readlink", &module).unwrap();
     let pid = world.spawn(vec!["readlink".into()], vec![]).unwrap();
     for _ in 0..100 {
@@ -317,7 +317,7 @@ fn unavailable_cli_mutations_and_accept_fail_without_provider_effects_or_output_
         (if (i32.ne (call $accept (i32.load (i32.const 0)) (i32.const 0) (i32.const 65533)) (i32.const 21)) (then unreachable))
         (if (i32.ne (i32.load (i32.const 65532)) (i32.const 71731)) (then unreachable))))"#).unwrap();
     let mut world = World::new();
-    world.set_filesystem(Rc::new(UnsupportedMutations));
+    world.set_filesystem(Rc::new(UnsupportedMutations)).unwrap();
     world.register("optional", &module).unwrap();
     let pid = world.spawn(vec!["optional".into()], vec![]).unwrap();
     for _ in 0..100 {

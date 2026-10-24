@@ -313,7 +313,7 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
             }),
     )
     .map_err(|error| {
-        uefi::println!("Workspace initialization failed: {error:?}");
+        uefi::println!("Workspace initialization failed: {error}");
         terminal::Error(Status::VOLUME_CORRUPTED)
     })?;
     app.capabilities.push('\n');

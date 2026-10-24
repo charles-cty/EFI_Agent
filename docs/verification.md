@@ -1,5 +1,65 @@
 # Verification record
 
+## 2026-10-24: Mount conflicts and shared model file tools
+
+Mount construction now inspects workspace entries without following links
+before publishing a root. Existing dev/tmp/proc entries, including empty
+directories and dangling links, reject initialization with a path-bearing
+MountError. A real workspace bin directory remains merged; a non-directory bin
+or an installed-command collision rejects initialization. Provider access,
+I/O and corruption failures retain their original error. A failed replacement
+keeps the previous root and its temporary bytes. Case variants and sibling
+prefixes remain ordinary workspace entries. No conflicting entry is moved,
+deleted or hidden by a successful mount.
+
+World exposes its installed root for host consumers. Firmware model read,
+write and edit tools, automatic module loading and /wasm load now use that
+same root as guest execution. The raw persistent namespace remains the flush
+owner. Read-only device/process mount paths no longer fall through to backing
+storage for missing entries or mutation destinations.
+
+Five mount-layout tests cover the conflict matrix, bin merging, provider
+failures, replacement lifetime, case/prefix boundaries and read-only routing.
+A real WAT guest reads a nested temporary file created through the model text
+helper; a binary loaded from that same temporary root runs successfully.
+Evidence: `artifacts/mount-layout-final-focused.log`. Native runner checks ten
+file/empty-directory/populated-directory conflicts and independently reads the
+committed namespace to verify preserved names and bytes in
+`artifacts/mount-layout-native-conflicts.log`. Dangling-link and registered
+command conflicts are covered by the Rust tests.
+
+Host workspace tests, host/UEFI Clippy and formatting pass in
+`artifacts/mount-layout-final-rust-tests.log`,
+`artifacts/mount-layout-final-clippy-host.log`,
+`artifacts/mount-layout-final-clippy-uefi.log` and
+`artifacts/mount-layout-final-format.log`. Native regressions pass mount paths,
+temporary storage, tar, unzip, hard links, copy/move and all 17 CPython cases in
+`artifacts/mount-layout-native-*`. Release packaging passes in
+`artifacts/mount-layout-package.log`.
+
+Check corrections: Metadata has no equality implementation, so the conflict
+test compares the relevant identity, kind, size, mode, link-count and timestamp
+fields directly. A format check encountered a newly added assertion before its
+formatting step; formatting and the final check pass. The model fixture's
+output-limit checks now select their expected marker instead of a fixed tool
+index, so adding real file-tool calls does not misclassify the seventh call.
+Read-only inspections initially named absent source files; file discovery
+identified their actual locations without changing runtime or build state.
+
+Both actual 512 MiB WHPX/OVMF model API flows pass. Model write/edit/read create
+and change a nested /tmp script; shell and Python read the same file. The shell
+copies ash.wasm into /tmp, then /wasm load successfully registers it from there.
+Independent saved FAT inspection verifies the copied script source, temporary
+exclusion, the preceding cross-mount checks and the seven-name hard-link group.
+Evidence: `artifacts/mount-layout-whpx-responses` and
+`artifacts/mount-layout-whpx-chat_completions`, with completed host logs beside
+them. Negative initialization conflicts are verified natively, not by these
+firmware flows. QEMU interrupt-vector and unrelated Windows Appx warnings
+persist without preventing success. The full networking/application combination
+was not rerun for this change. Complete devices/process information,
+anchored cwd tracking, installation manifests, retained sessions and final
+environment delivery remain incomplete.
+
 ## 2026-10-24: Bidirectional anchored workspace mutations
 
 Workspace directory views now retain the virtual filesystem routing layer over
