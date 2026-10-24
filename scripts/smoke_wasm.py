@@ -63,8 +63,8 @@ def main():
     parser.add_argument("--network", action="store_true")
     parser.add_argument("--dns", action="store_true")
     parser.add_argument("--posix-network", action="store_true")
-    parser.add_argument("--posix-connect-error", choices=["timeout", "refused"], default="timeout",
-                        help="Expected QEMU NAT error for a bound non-listening host port.")
+    parser.add_argument("--posix-connect-error", choices=["timeout", "refused", "reset"], default="reset",
+                        help="Expected error for the non-listening host port; Windows normally sends TCP RST.")
     parser.add_argument("--no-rdrand", action="store_true")
     args = parser.parse_args()
     if args.dns and not args.network:
@@ -712,7 +712,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                 if args.posix_network:
                     send("/wasm load posix_network \\posix_network.wasm", "Loaded posix_network")
                     send(f"/wasm run posix_network 10.0.2.2 {network_port}", "POSIX_NETWORK_OK", complete_line=True)
-                    failure_marker = "POSIX_TIMEOUT_OK" if args.posix_connect_error == "timeout" else "POSIX_REFUSED_OK"
+                    failure_marker = f"POSIX_{args.posix_connect_error.upper()}_OK"
                     send(f"/wasm run posix_network 10.0.2.2 {refused_listener.getsockname()[1]} {args.posix_connect_error}", failure_marker, complete_line=True)
                 network_thread.join(timeout=5)
                 assert not network_thread.is_alive(), "Network server did not finish"

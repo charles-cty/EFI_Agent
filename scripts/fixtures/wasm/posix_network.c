@@ -107,6 +107,9 @@ int main(int argc, char **argv)
     if (argc == 4 && strcmp(argv[3], "timeout") == 0) {
         expected = ETIMEDOUT;
     }
+    if (argc == 4 && strcmp(argv[3], "reset") == 0) {
+        expected = ECONNRESET;
+    }
     int connected = connect(descriptor, result->ai_addr, result->ai_addrlen);
     freeaddrinfo(result);
     if (connected == -1 && errno == EINPROGRESS) {
@@ -128,7 +131,8 @@ int main(int argc, char **argv)
     require(getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &pending, &size) == 0 && pending == 0, "SO_ERROR clear");
     if (expected) {
         require(close(descriptor) == 0, "close refused");
-        puts(expected == ETIMEDOUT ? "POSIX_TIMEOUT_OK" : "POSIX_REFUSED_OK");
+        puts(expected == ETIMEDOUT ? "POSIX_TIMEOUT_OK" :
+             expected == ECONNRESET ? "POSIX_RESET_OK" : "POSIX_REFUSED_OK");
         return 0;
     }
     require(getsockopt(descriptor, SOL_SOCKET, SO_TYPE, &pending, &size) == 0 && pending == SOCK_STREAM, "SO_TYPE");
