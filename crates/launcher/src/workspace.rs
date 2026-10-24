@@ -23,7 +23,7 @@ const MAX_METADATA: u64 = 4 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Contents {
-    File(Vec<u8>),
+    File(Rc<[u8]>),
     Directory,
     Link(String),
 }
@@ -52,12 +52,14 @@ impl From<Metadata> for Attributes {
 pub struct Entry {
     pub contents: Contents,
     attributes: Attributes,
+    hard_link: Option<String>,
 }
 
 impl Entry {
     // Reading a host file can update atime. It must not create a save conflict.
     fn host_matches(&self, other: &Self) -> bool {
         self.contents == other.contents
+            && self.hard_link == other.hard_link
             && self.attributes.mode == other.attributes.mode
             && self.attributes.modify == other.attributes.modify
     }
@@ -85,7 +87,7 @@ fn nanos(time: Result<SystemTime, std::io::Error>) -> u64 {
 fn observed(info: &fs::Metadata, contents: &Contents) -> Observed {
     let digest = match contents {
         Contents::Directory => [0; 32],
-        Contents::File(bytes) => Sha256::digest(bytes).into(),
+        Contents::File(bytes) => Sha256::digest(bytes.as_ref()).into(),
         Contents::Link(target) => Sha256::digest(target.as_bytes()).into(),
     };
     Observed {
@@ -179,11 +181,56 @@ fn validate(tree: &Snapshot) -> Result<(), Error> {
                 target.len()
             }
         };
+        if let Some(target) = &entry.hard_link {
+            let canonical = tree.get(target).ok_or("Missing hard-link target")?;
+            if target >= path
+                || canonical.hard_link.is_some()
+                || matches!(entry.contents, Contents::Directory)
+                || entry.contents != canonical.contents
+                || entry.attributes != canonical.attributes
+            {
+                return Err(format!("Invalid workspace hard-link group: {path}").into());
+            }
+        }
         bytes = bytes
-            .checked_add(size as u64)
+            .checked_add(if entry.hard_link.is_some() {
+                0
+            } else {
+                size as u64
+            })
             .ok_or("Workspace size overflow")?;
         if bytes > MAX_BYTES || entry.attributes.mode & !0o7777 != 0 {
             return Err("Workspace limits or mode are invalid".into());
+        }
+    }
+    Ok(())
+}
+
+type Identity = (u64, u64);
+
+#[derive(Default)]
+struct HostObjects {
+    bytes: u64,
+    groups: BTreeMap<Identity, Vec<String>>,
+    contents: BTreeMap<Identity, Rc<[u8]>>,
+}
+
+// Canonical names depend on path order, never on host iteration or inode IDs.
+fn group_links(tree: &mut Snapshot, groups: BTreeMap<Identity, Vec<String>>) -> Result<(), Error> {
+    for mut paths in groups.into_values() {
+        paths.sort();
+        let canonical = &paths[0];
+        let original = tree[canonical].clone();
+        for path in &paths[1..] {
+            let entry = tree.get_mut(path).unwrap();
+            if entry.contents != original.contents
+                || entry.attributes.mode != original.attributes.mode
+                || entry.attributes.modify != original.attributes.modify
+            {
+                return Err(format!("Inconsistent hard-link metadata: {path}").into());
+            }
+            entry.attributes = original.attributes.clone();
+            entry.hard_link = Some(canonical.clone());
         }
     }
     Ok(())
@@ -235,13 +282,14 @@ pub fn host(root: &Path) -> Result<Snapshot, Error> {
     let cached = load_host_metadata(root)?;
     let provider = NativeFileSystem(root.into());
     let mut result = Snapshot::new();
+    let mut objects = HostObjects::default();
     fn walk(
         root: &Path,
         prefix: &str,
         provider: &NativeFileSystem,
         cached: &BTreeMap<String, Cached>,
         result: &mut Snapshot,
-        bytes: &mut u64,
+        objects: &mut HostObjects,
     ) -> Result<(), Error> {
         let directory = root.join(prefix);
         for child in fs::read_dir(&directory)? {
@@ -260,20 +308,41 @@ pub fn host(root: &Path) -> Result<Snapshot, Error> {
             };
             valid_path(&path)?;
             let info = regular_metadata(&child.path())?;
-            *bytes = bytes
-                .checked_add(if info.is_file() { info.len() } else { 0 })
+            let raw = provider
+                .metadata(&path)
+                .map_err(|error| format!("Workspace stat {path}: {error:?}"))?;
+            let identity = (raw.device, raw.inode);
+            let shared = info.is_file() && raw.inode != 0;
+            objects.bytes = objects
+                .bytes
+                .checked_add(
+                    if info.is_file() && (!shared || !objects.contents.contains_key(&identity)) {
+                        info.len()
+                    } else {
+                        0
+                    },
+                )
                 .ok_or("Workspace size overflow")?;
-            if *bytes > MAX_BYTES || result.len() >= MAX_ENTRIES {
+            if objects.bytes > MAX_BYTES || result.len() >= MAX_ENTRIES {
                 return Err("Workspace exceeds size or entry limits".into());
             }
             let mut contents = if info.is_dir() {
                 Contents::Directory
             } else {
-                Contents::File(fs::read(child.path())?)
+                let bytes = match objects.contents.get(&identity).filter(|_| shared) {
+                    Some(bytes) => bytes.clone(),
+                    None => Rc::from(fs::read(child.path())?),
+                };
+                if shared {
+                    objects
+                        .groups
+                        .entry(identity)
+                        .or_default()
+                        .push(path.clone());
+                    objects.contents.insert(identity, bytes.clone());
+                }
+                Contents::File(bytes)
             };
-            let raw = provider
-                .metadata(&path)
-                .map_err(|error| format!("Workspace stat {path}: {error:?}"))?;
             let mut attributes = Attributes::from(raw);
             if let Some(cache) = cached
                 .get(&path)
@@ -281,7 +350,7 @@ pub fn host(root: &Path) -> Result<Snapshot, Error> {
             {
                 attributes = cache.attributes.clone();
                 if let Some(target) = &cache.link {
-                    if contents != Contents::File(target.as_bytes().to_vec()) {
+                    if contents != Contents::File(Rc::from(target.as_bytes())) {
                         return Err(format!("Workspace link placeholder changed: {path}").into());
                     }
                     contents = Contents::Link(target.clone());
@@ -292,15 +361,17 @@ pub fn host(root: &Path) -> Result<Snapshot, Error> {
                 Entry {
                     contents,
                     attributes,
+                    hard_link: None,
                 },
             );
             if info.is_dir() {
-                walk(root, &path, provider, cached, result, bytes)?;
+                walk(root, &path, provider, cached, result, objects)?;
             }
         }
         Ok(())
     }
-    walk(root, "", &provider, &cached, &mut result, &mut 0)?;
+    walk(root, "", &provider, &cached, &mut result, &mut objects)?;
+    group_links(&mut result, objects.groups)?;
     validate(&result)?;
     Ok(result)
 }
@@ -328,33 +399,53 @@ pub fn guest(root: &Path, baseline: &Snapshot) -> Result<Snapshot, Error> {
         .ok_or("Guest namespace has no committed generation")?;
     let mut result = Snapshot::new();
     let mut bytes = 0u64;
+    let mut groups: BTreeMap<Identity, Vec<String>> = BTreeMap::new();
+    let mut objects: BTreeMap<Identity, Contents> = BTreeMap::new();
     for entry in entries {
         if entry.path.is_empty() {
             continue;
         }
         valid_path(&entry.path)?;
+        let identity = (entry.metadata.device, entry.metadata.inode);
+        let shared = entry.metadata.kind != EntryType::Directory;
         bytes = bytes
-            .checked_add(entry.metadata.size)
+            .checked_add(if objects.contains_key(&identity) {
+                0
+            } else {
+                entry.metadata.size
+            })
             .ok_or("Guest workspace size overflow")?;
         if bytes > MAX_BYTES || result.len() >= MAX_ENTRIES {
             return Err("Guest workspace exceeds limits".into());
         }
-        let contents = match entry.metadata.kind {
-            EntryType::File => Contents::File(fs::read(
-                root.join(entry.backing.ok_or("Missing guest backing")?),
-            )?),
-            EntryType::Directory => Contents::Directory,
-            EntryType::Symlink => Contents::Link(entry.target.ok_or("Missing guest link target")?),
-            _ => return Err("Unsupported guest entry kind".into()),
+        let contents = if let Some(contents) = objects.get(&identity).filter(|_| shared) {
+            contents.clone()
+        } else {
+            match entry.metadata.kind {
+                EntryType::File => Contents::File(Rc::from(fs::read(
+                    root.join(entry.backing.ok_or("Missing guest backing")?),
+                )?)),
+                EntryType::Directory => Contents::Directory,
+                EntryType::Symlink => {
+                    Contents::Link(entry.target.ok_or("Missing guest link target")?)
+                }
+                _ => return Err("Unsupported guest entry kind".into()),
+            }
         };
+        if shared {
+            groups.entry(identity).or_default().push(entry.path.clone());
+            objects.insert(identity, contents.clone());
+        }
         result.insert(
             entry.path,
             Entry {
                 contents,
                 attributes: entry.metadata.into(),
+                hard_link: None,
             },
         );
     }
+    group_links(&mut result, groups)?;
     validate(&result)?;
     Ok(result)
 }
@@ -367,6 +458,9 @@ pub fn stage(tree: &Snapshot, destination: &Path) -> Result<(), Error> {
     // This private directory is not observable by guests. Import ordinary
     // files once instead of committing the full journal for each library file.
     for (path, entry) in tree {
+        if entry.hard_link.is_some() {
+            continue;
+        }
         match &entry.contents {
             Contents::Directory => fs::create_dir(destination.join(path))?,
             Contents::File(bytes) => {
@@ -385,10 +479,19 @@ pub fn stage(tree: &Snapshot, destination: &Path) -> Result<(), Error> {
     let namespace = Namespace::open(Rc::new(NativeFileSystem(destination.into())), None)
         .map_err(|error| format!("Initialize staged workspace: {error:?}"))?;
     for (path, entry) in tree {
-        if let Contents::Link(target) = &entry.contents {
+        if entry.hard_link.is_none()
+            && let Contents::Link(target) = &entry.contents
+        {
             namespace
                 .symlink(target, path)
                 .map_err(|error| format!("Stage link {path}: {error:?}"))?;
+        }
+    }
+    for (path, entry) in tree {
+        if let Some(target) = &entry.hard_link {
+            namespace
+                .hard_link(target, path, false)
+                .map_err(|error| format!("Stage hard link {path}: {error:?}"))?;
         }
     }
     // Restore permissions after creation so restrictive parents remain usable
@@ -504,9 +607,12 @@ pub fn save(root: &Path, baseline: &Snapshot, changed: &Snapshot) -> Result<(), 
         }
     }
     for (path, entry) in &desired {
+        if entry.hard_link.is_some() {
+            continue;
+        }
         if current
             .get(path)
-            .is_some_and(|old| old.contents == entry.contents)
+            .is_some_and(|old| old.contents == entry.contents && old.hard_link.is_none())
         {
             continue;
         }
@@ -522,6 +628,28 @@ pub fn save(root: &Path, baseline: &Snapshot, changed: &Snapshot) -> Result<(), 
             }
             Contents::File(bytes) => replace_file(&destination, bytes)?,
             Contents::Link(target) => replace_file(&destination, target.as_bytes())?,
+        }
+    }
+    // Rebuild aliases after every canonical replacement. Atomic file replacement
+    // creates a new host inode even when its former aliases remain open.
+    for (path, entry) in &desired {
+        if let Some(target) = &entry.hard_link {
+            let destination = root.join(path);
+            if let Some((parent, _)) = path.rsplit_once('/')
+                && !regular_metadata(&root.join(parent))?.is_dir()
+            {
+                return Err(format!("Workspace parent changed: {parent}").into());
+            }
+            match fs::symlink_metadata(&destination) {
+                Ok(_) => {
+                    regular_metadata(&destination)?;
+                    fs::remove_file(&destination)?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                Err(error) => return Err(error.into()),
+            }
+            regular_metadata(&root.join(target))?;
+            fs::hard_link(root.join(target), destination)?;
         }
     }
     // POSIX attributes and links have one representation on Windows and Unix.
@@ -580,6 +708,7 @@ mod tests {
     fn entry(contents: Contents) -> Entry {
         Entry {
             contents,
+            hard_link: None,
             attributes: Attributes {
                 mode: 0o751,
                 access: 193,
@@ -589,7 +718,7 @@ mod tests {
         }
     }
     fn file(bytes: &[u8]) -> Entry {
-        entry(Contents::File(bytes.to_vec()))
+        entry(Contents::File(Rc::from(bytes)))
     }
 
     #[test]
@@ -609,6 +738,12 @@ mod tests {
         // symlink metadata must not be applied to its target.
         expected.get_mut("dir").unwrap().attributes.mode = 0o400;
         expected.get_mut("link").unwrap().attributes.mode = 0o123;
+        let mut alias = expected["dir/data"].clone();
+        alias.hard_link = Some("dir/data".into());
+        expected.insert("hard-file".into(), alias);
+        let mut alias = expected["link"].clone();
+        alias.hard_link = Some("link".into());
+        expected.insert("linked-symlink".into(), alias);
         stage(&expected, &tree.join("work")).unwrap();
         let image = work.0.join("disk.img");
         crate::pack::run(vec![
@@ -628,6 +763,102 @@ mod tests {
         let restaged = work.0.join("restaged");
         stage(&reloaded, &restaged).unwrap();
         assert_eq!(guest(&restaged, &Snapshot::new()).unwrap(), expected);
+        let provider = NativeFileSystem(host_root);
+        assert_eq!(
+            provider.metadata("hard-file").unwrap().inode,
+            provider.metadata("dir/data").unwrap().inode
+        );
+        assert_eq!(
+            provider.metadata("link").unwrap().inode,
+            provider.metadata("linked-symlink").unwrap().inode
+        );
+    }
+
+    #[test]
+    fn host_hard_links_preserve_identity_and_save_can_split_and_rejoin_groups() {
+        let work = Work::new();
+        fs::create_dir(work.0.join("dir")).unwrap();
+        fs::write(work.0.join("dir/original"), b"shared").unwrap();
+        fs::hard_link(work.0.join("dir/original"), work.0.join("alias")).unwrap();
+        let baseline = host(&work.0).unwrap();
+        assert_eq!(baseline["dir/original"].hard_link.as_deref(), Some("alias"));
+        let mut changed = baseline.clone();
+        for path in ["alias", "dir/original"] {
+            changed.get_mut(path).unwrap().contents =
+                Contents::File(Rc::from(b"updated".as_slice()));
+        }
+        save(&work.0, &baseline, &changed).unwrap();
+        let shared = host(&work.0).unwrap();
+        let provider = NativeFileSystem(work.0.clone());
+        assert_eq!(
+            provider.metadata("alias").unwrap().inode,
+            provider.metadata("dir/original").unwrap().inode
+        );
+        assert_eq!(fs::read(work.0.join("dir/original")).unwrap(), b"updated");
+        let mut split = shared.clone();
+        split.get_mut("dir/original").unwrap().hard_link = None;
+        save(&work.0, &shared, &split).unwrap();
+        assert_ne!(
+            provider.metadata("alias").unwrap().inode,
+            provider.metadata("dir/original").unwrap().inode
+        );
+        let split = host(&work.0).unwrap();
+        let mut rejoined = split.clone();
+        rejoined.get_mut("dir/original").unwrap().hard_link = Some("alias".into());
+        save(&work.0, &split, &rejoined).unwrap();
+        assert_eq!(host(&work.0).unwrap(), rejoined);
+        assert_eq!(
+            provider.metadata("alias").unwrap().inode,
+            provider.metadata("dir/original").unwrap().inode
+        );
+    }
+
+    #[test]
+    fn host_identity_changes_conflict_even_with_equal_bytes_and_timestamps() {
+        let work = Work::new();
+        fs::write(work.0.join("a"), b"original").unwrap();
+        fs::hard_link(work.0.join("a"), work.0.join("b")).unwrap();
+        let baseline = host(&work.0).unwrap();
+        let mut changed = baseline.clone();
+        for path in ["a", "b"] {
+            changed.get_mut(path).unwrap().contents = Contents::File(Rc::from(b"guest".as_slice()));
+        }
+        let modified = fs::metadata(work.0.join("b")).unwrap().modified().unwrap();
+        replace_file(&work.0.join("b"), b"original").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(work.0.join("b"))
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        assert!(save(&work.0, &baseline, &changed).is_err());
+        assert_eq!(fs::read(work.0.join("a")).unwrap(), b"original");
+        assert_eq!(fs::read(work.0.join("b")).unwrap(), b"original");
+        assert!(!work.0.join(HOST_METADATA).exists());
+    }
+
+    #[test]
+    fn hard_link_groups_count_bytes_once_and_reject_inconsistent_snapshots_before_staging() {
+        let work = Work::new();
+        let original = entry(Contents::File(Rc::from(vec![193; 25 * 1024 * 1024])));
+        let mut alias = original.clone();
+        alias.hard_link = Some("a".into());
+        let valid = Snapshot::from([("a".into(), original), ("b".into(), alias)]);
+        validate(&valid).unwrap();
+        for case in 0..5 {
+            let mut invalid = valid.clone();
+            let alias = invalid.get_mut("b").unwrap();
+            match case {
+                0 => alias.hard_link = None, // Two independent 25 MiB files exceed the limit.
+                1 => alias.hard_link = Some("missing".into()),
+                2 => alias.hard_link = Some("b".into()),
+                3 => alias.attributes.mode ^= 0o100,
+                _ => alias.contents = Contents::File(Rc::from(b"different bytes".as_slice())),
+            }
+            let destination = work.0.join(format!("bad-{case}"));
+            assert!(stage(&invalid, &destination).is_err());
+            assert!(!destination.exists());
+        }
     }
 
     #[test]
@@ -659,7 +890,7 @@ mod tests {
         assert_eq!(saved["renamed"], changed["renamed"]);
         assert_eq!(
             saved["unchanged"].contents,
-            Contents::File(b"host edit".to_vec())
+            Contents::File(Rc::from(b"host edit".as_slice()))
         );
         assert_eq!(fs::read(work.0.join("link")).unwrap(), b"renamed");
         assert!(!saved.contains_key(HOST_METADATA));
@@ -748,7 +979,7 @@ mod tests {
         );
         assert_eq!(
             tree["moved"].contents,
-            Contents::File(b"original bytes".to_vec())
+            Contents::File(Rc::from(b"original bytes".as_slice()))
         );
         assert_eq!(tree["moved"].attributes.mode, 0o640);
         assert_eq!(tree["moved"].attributes.modify, 853);
@@ -817,7 +1048,7 @@ mod tests {
         let current = host(&work.0).unwrap();
         assert_eq!(
             current["link"].contents,
-            Contents::File(b"replaced".to_vec())
+            Contents::File(Rc::from(b"replaced".as_slice()))
         );
         assert_ne!(
             current["link"].attributes.modify,

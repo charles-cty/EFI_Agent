@@ -9,6 +9,21 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Upstream BusyBox ln now builds into the shared image. File and symlink hard
+links share namespace inodes, backing data, permissions, times and link counts.
+Alias deletion/promotion, same-inode rename, anchored views, open-file lifetime
+and journal recovery pass native integration and a structured mutation model.
+Physical host hard links import once and reclaim redundant names after commit.
+Python os.link supports directory fds and follow flags through its private
+startup adapter; CPython stays prebuilt. Cp -l/-a and du default/-l use the same
+identities. Launcher FAT staging/export/save/reload preserves groups and detects
+host identity conflicts. Actual 512 MiB WHPX passes both model API flows with
+independent saved FAT inode/backing/byte/mode checks in artifacts/ln-whpx-responses
+and artifacts/ln-whpx-chat_completions. Host tests, native guest regressions,
+host/UEFI Clippy, formatting and Release packaging pass. Required commands now
+number 46/48; df and tar remain. General mounts, manifests, retained sessions
+and full environment delivery remain incomplete.
+
 Upstream du now builds into the shared image with measured file allocation.
 Windows queries file compression/allocation information by handle; UEFI uses
 EFI_FILE_INFO PhysicalSize. Namespace files retain these values across rename,

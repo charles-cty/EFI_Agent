@@ -69,6 +69,12 @@ WASI libc's synthesized blocks. Native sparse-file checks use an independent
 Windows path query; both WHPX model APIs compare saved FAT cluster chains.
 Unknown allocation fails explicitly. Shared namespace journals are accounted
 at filesystem level, outside per-file allocated data bytes.
+Hard-link support uses the same namespace inode graph across C link/linkat,
+BusyBox ln/cp and Python os.link. The prebuilt interpreter omits directory-fd
+link operations, so its private startup adapter supplies that standard method
+through the internal endpoint, including explicit symlink-following control.
+The launcher retains shared identities through FAT staging and host save;
+equal contents alone do not imply a hard-link group.
 
 The 2026-10-22 filesystem expansion connects directory creation to native and
 firmware providers, and rename to the native provider. File writes now use

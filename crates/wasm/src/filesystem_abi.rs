@@ -18,6 +18,31 @@ fn time_update(value: u64, flags: u32) -> TimeUpdate {
     }
 }
 
+pub(super) fn control_hard_link(
+    context: &Context,
+    source_fd: u32,
+    destination_fd: u32,
+    flags: u32,
+    source: &str,
+    destination: &str,
+) -> Result<(), i32> {
+    let get_directory = |fd, right| match context.descriptors.get(&fd).ok_or(io::BADF)? {
+        Descriptor::Directory(directory) if directory.rights & right == right => Ok(directory),
+        Descriptor::Directory(_) => Err(76),
+        _ => Err(54),
+    };
+    let old = get_directory(source_fd, 1 << 11)?;
+    let new = get_directory(destination_fd, 1 << 12)?;
+    if flags & !1 != 0 {
+        return Err(28);
+    }
+    let source = old.resolve(source)?;
+    let destination = new.resolve(destination)?;
+    old.filesystem
+        .hard_link_to(&source, new.filesystem.as_ref(), &destination, flags == 1)
+        .map_err(FileError::errno)
+}
+
 /// Allocation is absent from Preview 1 filestat. Preserve provider errors and
 /// distinguish unknown allocation from files with no allocated data blocks.
 pub(super) fn control_allocation(
@@ -599,9 +624,11 @@ pub(crate) fn link(linker: &mut Linker<Context>) {
                     if flags & !1 != 0 {
                         return Err(28);
                     }
-                    path(&caller, &old, old_ptr, old_len)?;
-                    path(&caller, &new, new_ptr, new_len)?;
-                    Err::<(), i32>(58)
+                    let source = path(&caller, &old, old_ptr, old_len)?;
+                    let destination = path(&caller, &new, new_ptr, new_len)?;
+                    old.filesystem
+                        .hard_link_to(&source, new.filesystem.as_ref(), &destination, flags == 1)
+                        .map_err(FileError::errno)
                 })();
                 result.err().unwrap_or(0)
             },

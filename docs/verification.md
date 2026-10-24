@@ -1,5 +1,86 @@
 # Verification record
 
+## 2026-10-24: Upstream ln and persistent hard-link identity
+
+BusyBox 1.37.0 ln now builds into the shared image. Namespace directory entries
+can share one file or symlink inode. Native Release integration verifies hard
+and symbolic links, force and backup policies, verbose output, directory targets,
+-n/-T, multiple sources, denied destinations and closed stdout. Source-entry
+protection includes alternate parent paths. Empty backup suffixes and backups
+that would overwrite a source fail before changes. Verbose success lines follow
+successful creation and output failures return failure.
+
+Python os.link supports independent source/destination directory fds and explicit
+symlink-following control through private operation 25. The upstream interpreter
+binary remains unchanged. Actual C link, cp -l/-a and du default/-l behavior use
+the same inode identities. An independent reader checks saved inode groups,
+single backing objects, bytes, modes, symlink targets and deleted names.
+Evidence: `artifacts/hardlinks-native.log` and
+`artifacts/hardlinks-busybox-build.log`.
+
+Actual 512 MiB WHPX/OVMF passes Responses and Chat Completions, including the
+preceding basic applet suite. Both runs independently verify saved FAT inode
+groups, shared backing paths, binary data, modes, symlink targets and removed
+names. Evidence: `artifacts/ln-whpx-responses` and
+`artifacts/ln-whpx-chat_completions`, with completed host logs beside them.
+
+Namespace integration verifies shared writes, modes, allocation and link counts;
+primary/alias deletion; anchored directory rename; replacement while the former
+target remains linked/open; same-inode rename as a no-op; symlink hard links;
+last-close reclamation; and journal recovery. A structured 180-step mutation
+model independently tracks groups and contents across restarts. Import groups
+physical host hard links by device/inode identity and commits logical names
+before removing redundant raw aliases. A failed initial flush leaves aliases
+intact for recovery; an interrupted link commit retains the prior generation.
+All 25 filesystem integration cases pass in
+`artifacts/hardlinks-filesystem-tests.log`.
+
+Launcher integration passes 11 snapshot/save cases, including an actual FAT
+pack/extract/restage round trip with file and symlink hard links. Save creates
+physical host hard links, rebuilds aliases after canonical replacements, and can
+split/rejoin groups. Host group changes conflict even when bytes and timestamps
+match. Snapshot buffers share data and byte limits count each group once;
+invalid groups fail before staging effects. Evidence:
+`artifacts/hardlinks-launcher-tests.log`.
+
+WASI and private endpoint tests verify both directory rights, independent fd
+anchors, follow flags, malformed lengths, ranges, NUL names, unavailable providers
+and provider errors before effects. All host workspace tests pass in
+`artifacts/hardlinks-rust-tests.log`; the two subsequently extended suites pass
+in their focused logs. Host/UEFI Clippy, formatting and Release EFI/launcher
+packaging pass in `artifacts/hardlinks-clippy-host.log`,
+`artifacts/hardlinks-clippy-uefi.log`, `artifacts/hardlinks-format.log` and
+`artifacts/hardlinks-package.log`.
+
+Stat, ls, copy/move, du, mutation, PATH, compression, unzip, all 17 CPython cases,
+permissions/C metadata, awk/sed/grep, streams, basic/text commands, xargs, ash
+descriptors and math pass native regressions in
+`artifacts/hardlinks-regression-*.log`. Modified Python source syntax passes in
+`artifacts/hardlinks-python-syntax.log`.
+
+Corrections and execution issues:
+
+- The directory rights mask omitted PATH_LINK_SOURCE/TARGET. Both rights are
+  now exposed and restricted-directory tests verify independent enforcement.
+- The prebuilt Python os.link rejected directory-fd arguments. The private
+  startup adapter supplies those standard arguments without an interpreter build.
+- Initial ln compilation needed the upstream is_directory declaration and
+  translation unit. Initial tests used a nonexistent FileError variant and
+  expected EINVAL for NUL paths; the existing capability resolver returns
+  ENOTCAPABLE. The unavailable-provider test now expects ENOTSUP after the new
+  rights pass. Clippy identified an oversized helper argument list and a map
+  entry pattern; both were corrected.
+- The first WHPX invocation selected the generic code-tool branch and checked
+  unrelated default output names. The harness now uses its selected applet-mode
+  count for that branch. That attempt was not counted as a passing applet gate.
+- The ash math regression invocation initially omitted its child fixture. It
+  passed with the required fixture. A log inspection used an invalid multi-file
+  tail option form; the explicit line-count form succeeded.
+
+Df, tar, general mounts, persistent manifests, retained sessions and final full
+environment verification remain incomplete. Cross-mount hard links and du -x
+require the mount gates.
+
 ## 2026-10-24: Upstream du and measured file allocation
 
 The shared image builds BusyBox 1.37.0 du. Native Release integration verifies

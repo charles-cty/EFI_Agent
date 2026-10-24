@@ -36,6 +36,7 @@ pub enum FileError {
     NoSpace,
     NotSeekable,
     Corrupt,
+    NotPermitted,
 }
 
 impl FileError {
@@ -60,12 +61,14 @@ impl FileError {
             Self::NoSpace => 51,
             Self::NotSeekable => 70,
             Self::Corrupt => 29,
+            Self::NotPermitted => 63,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct Metadata {
+    pub device: u64,
     pub kind: EntryType,
     pub size: u64,
     /// Storage allocated to file data, excluding shared namespace journals.
@@ -82,6 +85,7 @@ pub struct Metadata {
 impl Metadata {
     pub fn new(kind: EntryType, size: u64) -> Self {
         Self {
+            device: 0,
             kind,
             size,
             allocated: None,
@@ -104,6 +108,7 @@ impl Metadata {
 
     pub fn wasi(self) -> [u8; 64] {
         let mut stat = [0; 64];
+        stat[0..8].copy_from_slice(&self.device.to_le_bytes());
         stat[8..16].copy_from_slice(&self.inode.to_le_bytes());
         stat[16] = self.kind as u8;
         stat[24..32].copy_from_slice(&self.links.to_le_bytes());
@@ -178,6 +183,21 @@ pub trait FileSystem: core::any::Any {
     }
     fn symlink(&self, _target: &str, _path: &str) -> Result<(), FileError> {
         Err(FileError::Unsupported)
+    }
+    fn hard_link(&self, _source: &str, _destination: &str, _follow: bool) -> Result<(), FileError> {
+        Err(FileError::Unsupported)
+    }
+    fn hard_link_to(
+        &self,
+        source: &str,
+        other: &dyn FileSystem,
+        destination: &str,
+        follow: bool,
+    ) -> Result<(), FileError> {
+        if self.identity() != other.identity() {
+            return Err(FileError::CrossDevice);
+        }
+        self.hard_link(source, destination, follow)
     }
     fn read_link(&self, path: &str) -> Result<String, FileError> {
         self.symlink_metadata(path)?;

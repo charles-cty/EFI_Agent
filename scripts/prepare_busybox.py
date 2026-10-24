@@ -26,7 +26,7 @@ ENABLED = {
     "SLEEP", "FEATURE_FANCY_SLEEP", "FLOAT_DURATION",
     "BASENAME", "DIRNAME", "PWD", "ENV", "PRINTENV", "SEQ", "YES", "TRUE", "FALSE",
     "MKDIR", "RMDIR", "RM", "TOUCH", "FEATURE_TOUCH_SUSV3", "FEATURE_VERBOSE",
-    "CP", "MV", "FEATURE_CP_LONG_OPTIONS", "FEATURE_VERBOSE_CP_MESSAGE",
+    "CP", "MV", "LN", "FEATURE_PRESERVE_HARDLINKS", "FEATURE_CP_LONG_OPTIONS", "FEATURE_VERBOSE_CP_MESSAGE",
     "XARGS", "FEATURE_XARGS_SUPPORT_CONFIRMATION", "FEATURE_XARGS_SUPPORT_QUOTES",
     "FEATURE_XARGS_SUPPORT_TERMOPT", "FEATURE_XARGS_SUPPORT_ZERO_TERM",
     "FEATURE_XARGS_SUPPORT_REPL_STR", "FEATURE_XARGS_SUPPORT_PARALLEL",
@@ -224,6 +224,62 @@ def prepare_streams(source: Path, output: Path):
 
 def prepare_mutations(source: Path, output: Path):
     """Use upstream traversal, parsing and prompts with explicit I/O failures."""
+    text = (source / "coreutils/ln.c").read_text(encoding="utf-8")
+    text = replace_once(text, 'int ln_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;', '''static int efi_same_entry(const char *source, const char *destination)
+{
+    char *source_path = xstrdup(source);
+    char *destination_path = xstrdup(destination);
+    struct stat source_parent, destination_parent;
+    int same = strcmp(bb_get_last_path_component_strip(source_path),
+                      bb_get_last_path_component_strip(destination_path)) == 0
+        && stat(dirname(source_path), &source_parent) == 0
+        && stat(dirname(destination_path), &destination_parent) == 0
+        && source_parent.st_dev == destination_parent.st_dev
+        && source_parent.st_ino == destination_parent.st_ino;
+    free(source_path);
+    free(destination_path);
+    return same;
+}
+
+int ln_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;''')
+    text = replace_once(text, '\t\tif (opts & LN_BACKUP) {', '''        /* Never remove the source when force or backup names the same inode. */
+        if (opts & (LN_FORCE | LN_BACKUP)) {
+            struct stat source_info, destination_info;
+            if (lstat(*argv, &source_info) == 0 && lstat(src, &destination_info) == 0
+                && source_info.st_dev == destination_info.st_dev
+                && source_info.st_ino == destination_info.st_ino
+                && efi_same_entry(*argv, src)) {
+                bb_error_msg("'%s' and '%s' are the same file", *argv, src);
+                status = EXIT_FAILURE;
+                free(src_name);
+                continue;
+            }
+        }
+\t\tif (opts & LN_BACKUP) {''')
+    text = replace_once(text, '''\t\tif (opts & LN_VERBOSE) {
+\t\t\tprintf("'%s' -> '%s'\\n", src, *argv);
+\t\t}
+
+''', '')
+    text = replace_once(text, '\t\t\tbackup = xasprintf("%s%s", src, suffix);', '''            backup = xasprintf("%s%s", src, suffix);
+            if (!suffix[0] || (lstat(*argv, &statbuf) == 0
+                              && efi_same_entry(*argv, backup))) {
+                bb_error_msg("backup '%s' would replace a source or destination", backup);
+                status = EXIT_FAILURE;
+                free(backup);
+                free(src_name);
+                continue;
+            }''')
+    text = replace_once(text, '\t\t\t\tfree(backup);\n\t\t\t\tcontinue;',
+                        '\t\t\t\tfree(backup);\n\t\t\t\tfree(src_name);\n\t\t\t\tcontinue;')
+    text = replace_once(text, '\t\t\tstatus = EXIT_FAILURE;\n\t\t}\n\n\t\tfree(src_name);', '''            status = EXIT_FAILURE;
+        } else if (opts & LN_VERBOSE) {
+            printf("'%s' -> '%s'\\n", src, *argv);
+        }
+
+        free(src_name);''')
+    text = replace_once(text, '\treturn status;', '\tfflush_stdout_and_exit(status);')
+    (output / "ln.c").write_text(text, encoding="utf-8")
     for name in ("cp", "mv"):
         text = (source / f"coreutils/{name}.c").read_text(encoding="utf-8")
         text = replace_once(text, '\treturn status;', '\tfflush_stdout_and_exit(status);')
@@ -448,7 +504,7 @@ def main():
              *(args.source / f"coreutils/{name}.c" for name in (
                  "cat", "head", "tail", "wc", "tee", "sleep", "basename",
                  "dirname", "pwd", "env", "printenv", "seq", "yes", "true", "false",
-                 "mkdir", "rmdir", "rm", "touch", "cp", "mv", "du")),
+                 "mkdir", "rmdir", "rm", "touch", "cp", "mv", "du", "ln")),
              args.source / "libbb/copy_file.c", args.source / "libbb/inode_hash.c",
              args.source / "findutils/xargs.c",
              args.source / "archival/gzip.c", args.source / "archival/bbunzip.c",

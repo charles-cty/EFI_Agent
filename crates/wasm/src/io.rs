@@ -431,6 +431,8 @@ pub(crate) const FILE_RIGHTS: u64 = (1 << 0)
     | (1 << 27);
 pub(crate) const DIRECTORY_RIGHTS: u64 = (1 << 9)
     | (1 << 10)
+    | (1 << 11)
+    | (1 << 12)
     | (1 << 13)
     | (1 << 14)
     | (1 << 15)

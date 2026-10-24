@@ -81,6 +81,259 @@ fn host_allocated(path: &std::path::Path) -> u64 {
     fs::metadata(path).unwrap().blocks() * 512
 }
 
+#[test]
+fn hard_links_share_identity_and_survive_name_mutation_reload_and_last_close() {
+    let work = Workspace::new();
+    let namespace = work.open();
+    namespace.create_directory("a").unwrap();
+    namespace.create_directory("b").unwrap();
+    write(&namespace, "a/file", b"original");
+    let a = namespace.directory_view("a").unwrap().unwrap();
+    let b = namespace.directory_view("b").unwrap().unwrap();
+    a.hard_link_to("file", b.as_ref(), "alias", false).unwrap();
+    namespace.hard_link("a/file", "third", false).unwrap();
+    let mut handle = namespace.open("third", options()).unwrap();
+    let inode = handle.metadata().unwrap().inode;
+    namespace.set_mode("b/alias", 0o640).unwrap();
+    namespace
+        .set_times("third", true, TimeUpdate::Set(193), TimeUpdate::Set(853))
+        .unwrap();
+    write(&namespace, "b/alias", b"shared bytes");
+    for path in ["a/file", "b/alias", "third"] {
+        let info = namespace.metadata(path).unwrap();
+        assert_eq!((info.inode, info.links, info.mode), (inode, 3, 0o640));
+        assert_eq!(info.allocated, handle.metadata().unwrap().allocated);
+        assert_eq!(read(&namespace, path), b"shared bytes");
+    }
+    // Renaming onto a second name of the same inode must preserve both entries.
+    namespace.rename("a/file", "b/alias").unwrap();
+    assert_eq!(namespace.metadata("a/file").unwrap().links, 3);
+    namespace.rename("b", "moved").unwrap();
+    b.rename("alias", "renamed").unwrap();
+    namespace.unlink("third").unwrap(); // Remove an additional entry.
+    namespace.unlink("a/file").unwrap(); // Remove the primary, promote the alias.
+    assert_eq!(read(b.as_ref(), "renamed"), b"shared bytes");
+    assert_eq!(handle.metadata().unwrap().links, 1);
+    namespace
+        .hard_link("moved/renamed", "persisted", false)
+        .unwrap();
+    namespace.flush().unwrap();
+    drop(handle);
+    drop(a);
+    drop(b);
+    drop(namespace);
+    let namespace = work.open();
+    assert_eq!(namespace.metadata("persisted").unwrap().inode, inode);
+    assert_eq!(namespace.metadata("moved/renamed").unwrap().links, 2);
+    let snapshot = namespace.snapshot().unwrap();
+    let backing = snapshot
+        .iter()
+        .find(|e| e.path == "persisted")
+        .unwrap()
+        .backing
+        .clone()
+        .unwrap();
+    assert_eq!(
+        snapshot
+            .iter()
+            .filter(|e| e.metadata.inode == inode)
+            .count(),
+        2
+    );
+    let mut handle = namespace.open("persisted", options()).unwrap();
+    namespace.unlink("moved/renamed").unwrap();
+    namespace.unlink("persisted").unwrap();
+    assert_eq!(handle.metadata().unwrap().links, 0);
+    assert!(work.0.join(&backing).exists());
+    let mut bytes = [0; 12];
+    assert_eq!(handle.read(&mut bytes).unwrap(), 12);
+    assert_eq!(&bytes, b"shared bytes");
+    drop(handle);
+    assert!(!work.0.join(backing).exists());
+    assert!(namespace.take_errors().is_empty());
+}
+
+#[test]
+fn hard_link_replacement_retains_other_target_names_and_open_descriptors() {
+    let work = Workspace::new();
+    let namespace = work.open();
+    write(&namespace, "source", b"new");
+    write(&namespace, "target", b"old");
+    namespace
+        .hard_link("source", "source-alias", false)
+        .unwrap();
+    namespace
+        .hard_link("target", "target-alias", false)
+        .unwrap();
+    let mut target = namespace.open("target", options()).unwrap();
+    let target_inode = target.metadata().unwrap().inode;
+    namespace.rename("source-alias", "target").unwrap();
+    assert_eq!(namespace.metadata("source").unwrap().links, 2);
+    assert_eq!(
+        namespace.metadata("target-alias").unwrap().inode,
+        target_inode
+    );
+    assert_eq!(target.metadata().unwrap().links, 1);
+    assert_eq!(read(&namespace, "target-alias"), b"old");
+    assert_eq!(read(&namespace, "target"), b"new");
+    namespace.unlink("target-alias").unwrap();
+    assert_eq!(target.metadata().unwrap().links, 0);
+}
+
+#[test]
+fn importing_physical_hard_links_uses_one_backing_and_reclaims_all_raw_names() {
+    let work = Workspace::new();
+    fs::create_dir(work.0.join("dir")).unwrap();
+    fs::write(work.0.join("file"), b"physical").unwrap();
+    fs::hard_link(work.0.join("file"), work.0.join("dir/alias")).unwrap();
+    let namespace = work.open();
+    let info = namespace.metadata("file").unwrap();
+    assert_eq!(info.links, 2);
+    assert_eq!(namespace.metadata("dir/alias").unwrap().inode, info.inode);
+    assert_eq!(read(&namespace, "dir/alias"), b"physical");
+    assert_ne!(
+        work.0.join("file").exists(),
+        work.0.join("dir/alias").exists()
+    );
+    drop(namespace);
+    let namespace = work.open();
+    assert_eq!(read(&namespace, "file"), b"physical");
+    namespace.unlink("file").unwrap();
+    namespace.unlink("dir/alias").unwrap();
+    assert!(!work.0.join("file").exists());
+    assert!(!work.0.join("dir/alias").exists());
+}
+
+#[test]
+fn structured_hard_link_mutations_match_independent_groups_across_restarts() {
+    let work = Workspace::new();
+    let mut namespace = work.open();
+    let mut names = BTreeMap::<String, u64>::new();
+    let mut contents = BTreeMap::<u64, Vec<u8>>::new();
+    let mut random = 731u64;
+    let mut next_group = 1;
+    for step in 0..180 {
+        random = random.wrapping_mul(6364136223846793005).wrapping_add(193);
+        let source = format!("name-{}", (random >> 24) % 11);
+        let target = format!("name-{}", (random >> 36) % 11);
+        match (random >> 48) % 4 {
+            0 => {
+                let group = *names.entry(source.clone()).or_insert_with(|| {
+                    next_group += 1;
+                    next_group
+                });
+                let bytes = format!("step-{step}-group-{group}").into_bytes();
+                write(&namespace, &source, &bytes);
+                contents.insert(group, bytes);
+            }
+            1 => {
+                if let Some(&group) = names.get(&source) {
+                    let result = namespace.hard_link(&source, &target, false);
+                    if let std::collections::btree_map::Entry::Vacant(entry) = names.entry(target) {
+                        result.unwrap();
+                        entry.insert(group);
+                    } else {
+                        assert_eq!(result, Err(FileError::Exists));
+                    }
+                }
+            }
+            2 => {
+                if let Some(&group) = names.get(&source) {
+                    namespace.rename(&source, &target).unwrap();
+                    if names.get(&target) != Some(&group) {
+                        names.remove(&source);
+                        names.insert(target, group);
+                    }
+                }
+            }
+            _ => {
+                if names.remove(&source).is_some() {
+                    namespace.unlink(&source).unwrap();
+                }
+            }
+        }
+        if step % 7 == 0 {
+            namespace.flush().unwrap();
+            drop(namespace);
+            namespace = work.open();
+        }
+        let mut identities = BTreeMap::new();
+        for (name, &group) in &names {
+            let info = namespace.metadata(name).unwrap();
+            if let Some(inode) = identities.insert(group, info.inode) {
+                assert_eq!(inode, info.inode, "step {step}: {name}");
+            }
+            assert_eq!(
+                info.links,
+                names.values().filter(|&&id| id == group).count() as u64
+            );
+            assert_eq!(
+                read(&namespace, name),
+                contents[&group],
+                "step {step}: {name}"
+            );
+        }
+        let unique: std::collections::BTreeSet<_> = identities.values().collect();
+        assert_eq!(unique.len(), identities.len());
+        assert_eq!(
+            namespace
+                .snapshot()
+                .unwrap()
+                .iter()
+                .filter(|entry| !entry.path.is_empty())
+                .count(),
+            names.len()
+        );
+    }
+}
+
+#[test]
+fn hard_links_to_symlinks_resolve_relative_to_each_entry_and_validate_before_effects() {
+    let work = Workspace::new();
+    let namespace = work.open();
+    namespace.create_directory("a").unwrap();
+    namespace.create_directory("b").unwrap();
+    write(&namespace, "a/file", b"A");
+    write(&namespace, "b/file", b"B");
+    namespace.symlink("file", "a/link").unwrap();
+    namespace.hard_link("a/link", "b/link", false).unwrap();
+    assert_eq!(read(&namespace, "a/link"), b"A");
+    assert_eq!(read(&namespace, "b/link"), b"B");
+    assert_eq!(namespace.symlink_metadata("b/link").unwrap().links, 2);
+    namespace.hard_link("b/link", "followed", true).unwrap();
+    assert_eq!(read(&namespace, "followed"), b"B");
+    assert_eq!(namespace.metadata("b/file").unwrap().links, 2);
+    namespace.symlink("missing", "dangling").unwrap();
+    namespace
+        .hard_link("dangling", "dangling-alias", false)
+        .unwrap();
+    assert_eq!(namespace.read_link("dangling-alias").unwrap(), "missing");
+    for (source, destination, follow, expected) in [
+        ("dangling", "absent", true, FileError::NotFound),
+        ("a", "directory-link", false, FileError::NotPermitted),
+        ("a/file", "b/file", false, FileError::Exists),
+        ("a/file", "bad/", false, FileError::NotDirectory),
+        ("a/file", "missing/file", false, FileError::NotFound),
+    ] {
+        assert_eq!(
+            namespace.hard_link(source, destination, follow),
+            Err(expected)
+        );
+    }
+    namespace.set_mode("b", 0o555).unwrap();
+    assert_eq!(
+        namespace.hard_link("a/file", "b/denied", false),
+        Err(FileError::Access)
+    );
+    let other = Workspace::new().open();
+    assert_eq!(
+        namespace.hard_link_to("a/file", &other, "cross", false),
+        Err(FileError::CrossDevice)
+    );
+    assert_eq!(namespace.metadata("a/file").unwrap().links, 1);
+    assert_eq!(namespace.metadata("b/file").unwrap().links, 2);
+}
+
 #[cfg(windows)]
 fn host_allocated(path: &std::path::Path) -> u64 {
     use std::os::windows::ffi::OsStrExt;
@@ -483,6 +736,49 @@ impl File for FaultFile {
 struct FaultFs {
     raw: Rc<dyn FileSystem>,
     faults: Rc<Faults>,
+}
+
+#[test]
+fn hard_link_import_and_link_creation_recover_after_failed_commits() {
+    let work = Workspace::new();
+    fs::write(work.0.join("source"), b"preserved").unwrap();
+    fs::hard_link(work.0.join("source"), work.0.join("alias")).unwrap();
+    let faults = Rc::new(Faults {
+        remaining: Cell::new(None),
+        flush: Cell::new(true),
+    });
+    let raw: Rc<dyn FileSystem> = Rc::new(FaultFs {
+        raw: work.raw(),
+        faults: faults.clone(),
+    });
+    // Initialization wrote a complete generation but its flush failed. Physical
+    // aliases must remain until recovery confirms their committed logical names.
+    assert_eq!(
+        Namespace::open(raw.clone(), None).err(),
+        Some(FileError::Io)
+    );
+    assert!(work.0.join("source").exists() && work.0.join("alias").exists());
+    let namespace = Namespace::open(raw.clone(), None).unwrap();
+    assert_eq!(namespace.metadata("source").unwrap().links, 2);
+    assert_eq!(read(&namespace, "alias"), b"preserved");
+    assert_ne!(
+        work.0.join("source").exists(),
+        work.0.join("alias").exists()
+    );
+    faults.remaining.set(Some(32));
+    assert_eq!(
+        namespace.hard_link("source", "incomplete", false),
+        Err(FileError::Io)
+    );
+    drop(namespace);
+    faults.remaining.set(None);
+    let namespace = Namespace::open(raw, None).unwrap();
+    assert_eq!(
+        namespace.metadata("incomplete").unwrap_err(),
+        FileError::NotFound
+    );
+    assert_eq!(namespace.metadata("source").unwrap().links, 2);
+    assert_eq!(read(&namespace, "alias"), b"preserved");
 }
 impl FileSystem for FaultFs {
     fn open(&self, path: &str, options: OpenOptions) -> Result<Box<dyn File>, FileError> {

@@ -45,6 +45,9 @@ fn metadata(metadata: fs::Metadata) -> Metadata {
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         result.mode = (metadata.permissions().mode() & 0o7777) as u16;
+        result.device = metadata.dev();
+        result.inode = metadata.ino();
+        result.links = metadata.nlink();
         result.allocated = metadata.blocks().checked_mul(512);
     }
     #[cfg(windows)]
@@ -139,7 +142,7 @@ impl FileSystem for NativeFileSystem {
                     .access_mode(windows_sys::Win32::Storage::FileSystem::FILE_READ_ATTRIBUTES)
                     .open(&path)
                     .map_err(error)?;
-                info.allocated = Some(allocated(&handle)?);
+                file_metadata(&handle, &mut info)?;
             }
             info
         };
@@ -225,10 +228,11 @@ struct NativeFile {
 }
 
 #[cfg(windows)]
-fn allocated(handle: &fs::File) -> Result<u64, FileError> {
+fn file_metadata(handle: &fs::File, metadata: &mut Metadata) -> Result<(), FileError> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
-        FILE_COMPRESSION_INFO, FileCompressionInfo, GetFileInformationByHandleEx,
+        BY_HANDLE_FILE_INFORMATION, FILE_COMPRESSION_INFO, FileCompressionInfo,
+        GetFileInformationByHandle, GetFileInformationByHandleEx,
     };
     let mut info = FILE_COMPRESSION_INFO::default();
     // The live handle and the output buffer remain valid for this call.
@@ -243,9 +247,20 @@ fn allocated(handle: &fs::File) -> Result<u64, FileError> {
     {
         return Err(error(std::io::Error::last_os_error()));
     }
-    info.CompressedFileSize
-        .try_into()
-        .map_err(|_| FileError::Overflow)
+    metadata.allocated = Some(
+        info.CompressedFileSize
+            .try_into()
+            .map_err(|_| FileError::Overflow)?,
+    );
+    let mut identity = BY_HANDLE_FILE_INFORMATION::default();
+    // The identity query uses the same retained handle as the allocation query.
+    if unsafe { GetFileInformationByHandle(handle.as_raw_handle(), &mut identity) } == 0 {
+        return Err(error(std::io::Error::last_os_error()));
+    }
+    metadata.device = u64::from(identity.dwVolumeSerialNumber);
+    metadata.inode = (u64::from(identity.nFileIndexHigh) << 32) | u64::from(identity.nFileIndexLow);
+    metadata.links = u64::from(identity.nNumberOfLinks);
+    Ok(())
 }
 
 impl File for NativeFile {
@@ -272,7 +287,7 @@ impl File for NativeFile {
         #[cfg(windows)]
         let info = {
             let mut info = info;
-            info.allocated = Some(allocated(&self.handle)?);
+            file_metadata(&self.handle, &mut info)?;
             info
         };
         Ok(info)

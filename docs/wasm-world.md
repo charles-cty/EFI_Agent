@@ -85,8 +85,8 @@ before truncation. Traversal, metadata preservation and stdout failures fail;
 mv prints success only after a move succeeds. Long options are enabled.
 The fixed uid/gid may be preserved after a real metadata check; other ownership
 changes fail. Copy timestamp preservation retains upstream whole-second
-precision. Reflinks and automatic hard-link preservation are disabled pending
-provider support; explicit hard links and special node creation return errors.
+precision. Explicit hard links and automatic hard-link preservation use shared
+namespace inodes. Reflinks remain disabled; special node creation returns errors.
 Cross-mount mv fallback has not been verified with the incomplete mount layer.
 
 Du uses upstream traversal, depth limits, totals, symlink policy and inode
@@ -96,7 +96,24 @@ BusyBox stat wrappers and Python stat/fstat/scandir expose those values as
 journals and have no separately allocated data blocks. Directory link counts
 include subdirectories. Unknown provider allocation returns ENOTSUP. Explicit
 du units use upstream ceiling behavior; directory read/close errors fail.
-General mount accounting and hard-link support remain incomplete.
+Hard-linked files count once by default; -l counts each name. General mount
+accounting remains incomplete.
+
+Ln uses upstream option parsing, hard/symbolic link creation, destination
+directory handling, backups and verbose output. Force and backup operations
+reject replacement of the source directory entry, including parent-directory
+aliases. Backups cannot overwrite the source or use an empty suffix. Verbose
+success lines follow successful creation; stdout failures return failure.
+Non-directory hard links share one inode, backing file, mode, times and link
+count. Renaming onto the same inode preserves both names. Removing one name
+retains the inode; last-name deletion retains open handles until their last
+close. Symlink hard links retain the target string and resolve relative to
+the directory entry used. Directory hard links fail with EPERM. Cross-mount
+links remain unavailable while the mount layer is incomplete.
+Launcher snapshots group host files by physical device/inode identity, retain
+logical hard-link groups through FAT staging, and recreate physical host hard
+links on save. Conflict checks include changes in those groups. Snapshot bytes
+are shared in memory and count once toward the workspace byte limit.
 
 Date uses upstream BusyBox UTC parsing and formatting, RFC/ISO output,
 nanosecond fields and file reference times. Invalid -D input tails, unavailable
@@ -672,6 +689,11 @@ provides a close-on-exec snapshot descriptor with one little-endian u64 byte
 count. The client closes this descriptor after reading. Unknown allocation
 is distinct from known zero. Windows uses handle compression information,
 which measures sparse allocation; firmware uses EFI_FILE_INFO PhysicalSize.
+Hard-link operation 25 takes source/destination directory fds, a follow flag,
+the source UTF-8 byte length and concatenated source/destination paths. Both
+directory rights and paths are checked before mutation. Python os.link uses
+this private operation to supply directory-fd and follow-symlink arguments
+absent from the prebuilt interpreter. The interpreter binary stays unchanged.
 Creation applies the process umask; changing a mode affects later opens and
 directory traversal while existing file handles retain their granted access.
 The single guest owner/group is uid/gid 1. Symlink mode mutation without

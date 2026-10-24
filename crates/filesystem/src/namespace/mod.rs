@@ -67,11 +67,10 @@ pub fn read_snapshot(raw: &dyn FileSystem) -> Result<Option<Vec<SnapshotEntry>>,
     let Some((_, state)) = journal::load(raw)? else {
         return Ok(None);
     };
-    state
-        .nodes
-        .iter()
-        .filter(|(id, node)| **id == ROOT || node.parent.is_some())
-        .map(|(&id, node)| {
+    core::iter::once((ROOT, ROOT, ""))
+        .chain(state.entries())
+        .map(|(id, parent, name)| {
+            let node = &state.nodes[&id];
             let (size, allocated) = match node.kind {
                 EntryType::File => {
                     let info = raw.metadata(node.backing.as_ref().unwrap())?;
@@ -81,7 +80,11 @@ pub fn read_snapshot(raw: &dyn FileSystem) -> Result<Option<Vec<SnapshotEntry>>,
                 _ => (0, Some(0)),
             };
             Ok(SnapshotEntry {
-                path: state.path(id)?,
+                path: if id == ROOT {
+                    String::new()
+                } else {
+                    state.entry_path(parent, name)?
+                },
                 metadata: node_metadata(&state, id, size, allocated),
                 backing: node.backing.clone(),
                 target: node.target.clone(),
@@ -187,10 +190,17 @@ impl Inner {
                     .then_some(id)
             })
             .collect();
-        if unused.is_empty() {
+        if unused.is_empty() && self.state.borrow().import_aliases.is_empty() {
             return Ok(());
         }
         let mut candidate = self.state.borrow().clone();
+        for path in &candidate.import_aliases {
+            match self.raw.unlink(path) {
+                Ok(()) | Err(FileError::NotFound) => (),
+                Err(error) => return Err(error),
+            }
+        }
+        candidate.import_aliases.clear();
         for &id in &unused {
             if let Some(path) = &candidate.nodes[&id].backing {
                 match self.raw.unlink(path) {
@@ -236,9 +246,14 @@ fn node_metadata(state: &State, inode: u64, size: u64, allocated: Option<u64>) -
             .filter(|child| child.parent == Some(inode) && child.kind == EntryType::Directory)
             .count() as u64
     } else {
-        1
+        1 + state
+            .links
+            .iter()
+            .filter(|link| link.inode == inode)
+            .count() as u64
     };
     Metadata {
+        device: 0,
         inode,
         kind: node.kind,
         size,
@@ -265,7 +280,15 @@ impl Namespace {
                 .transpose()?
                 .unwrap_or(0);
             let mut state = State::new(now);
-            import(raw.as_ref(), &mut state, ROOT, "", 0, resume)?;
+            import(
+                raw.as_ref(),
+                &mut state,
+                ROOT,
+                "",
+                0,
+                resume,
+                &mut BTreeMap::new(),
+            )?;
             let bytes = journal::encode(1, &state)?;
             journal::initialize(raw.as_ref(), resume)?;
             journal::commit(raw.as_ref(), 1, &bytes)?;
@@ -333,13 +356,16 @@ impl Namespace {
     pub fn snapshot(&self) -> Result<Vec<SnapshotEntry>, FileError> {
         self.inner().check()?;
         let state = self.inner().state.borrow();
-        state
-            .nodes
-            .iter()
-            .filter(|(id, node)| **id == ROOT || node.parent.is_some())
-            .map(|(&id, node)| {
+        core::iter::once((ROOT, ROOT, ""))
+            .chain(state.entries())
+            .map(|(id, parent, name)| {
+                let node = &state.nodes[&id];
                 Ok(SnapshotEntry {
-                    path: state.path(id)?,
+                    path: if id == ROOT {
+                        String::new()
+                    } else {
+                        state.entry_path(parent, name)?
+                    },
                     metadata: self.inner().metadata(id)?,
                     backing: node.backing.clone(),
                     target: node.target.clone(),
@@ -513,12 +539,10 @@ impl Namespace {
                 FileError::IsDirectory
             });
         }
-        if directory && candidate.nodes.values().any(|node| node.parent == Some(id)) {
+        if directory && candidate.entries().any(|(_, parent, _)| parent == id) {
             return Err(FileError::NotEmpty);
         }
-        let node = candidate.nodes.get_mut(&id).unwrap();
-        node.parent = None;
-        node.name.clear();
+        candidate.detach_entry(parent, &name)?;
         candidate.nodes.get_mut(&parent).unwrap().modified = self.stamp()?;
         self.inner().commit(candidate)?;
         if let Err(error) = self.collect_garbage() {
@@ -562,6 +586,9 @@ impl Namespace {
             }
         }
         if let Some(target) = candidate.child(new_parent, &new_name) {
+            if target == id {
+                return Ok(());
+            }
             let target_directory = candidate.nodes[&target].kind == EntryType::Directory;
             if destination.ends_with('/') && !target_directory {
                 return Err(FileError::NotDirectory);
@@ -573,21 +600,12 @@ impl Namespace {
                     FileError::IsDirectory
                 });
             }
-            if target_directory
-                && candidate
-                    .nodes
-                    .values()
-                    .any(|node| node.parent == Some(target))
-            {
+            if target_directory && candidate.entries().any(|(_, parent, _)| parent == target) {
                 return Err(FileError::NotEmpty);
             }
-            let target = candidate.nodes.get_mut(&target).unwrap();
-            target.parent = None;
-            target.name.clear();
+            candidate.detach_entry(new_parent, &new_name)?;
         }
-        let node = candidate.nodes.get_mut(&id).unwrap();
-        node.parent = Some(new_parent);
-        node.name = new_name;
+        candidate.move_entry(old_parent, &old_name, new_parent, new_name)?;
         let now = self.stamp()?;
         candidate.nodes.get_mut(&old_parent).unwrap().modified = now;
         candidate.nodes.get_mut(&new_parent).unwrap().modified = now;
@@ -596,6 +614,30 @@ impl Namespace {
             self.inner().record(error);
         }
         Ok(())
+    }
+
+    fn link_to(
+        &self,
+        source: &str,
+        destination_view: &Self,
+        destination: &str,
+        follow: bool,
+    ) -> Result<(), FileError> {
+        if !Rc::ptr_eq(self.inner(), destination_view.inner()) {
+            return Err(FileError::CrossDevice);
+        }
+        let inode = self.walk(source, follow)?;
+        if self.inner().state.borrow().nodes[&inode].kind == EntryType::Directory {
+            return Err(FileError::NotPermitted);
+        }
+        if destination.ends_with('/') {
+            return Err(FileError::NotDirectory);
+        }
+        let (parent, name) = destination_view.parent(destination)?;
+        let mut candidate = self.inner().state.borrow().clone();
+        candidate.add_link(inode, parent, name)?;
+        candidate.nodes.get_mut(&parent).unwrap().modified = self.stamp()?;
+        self.inner().commit(candidate)
     }
 }
 
@@ -606,6 +648,7 @@ fn import(
     path: &str,
     depth: usize,
     resume: bool,
+    identities: &mut BTreeMap<(u64, u64), u64>,
 ) -> Result<(), FileError> {
     if depth > 32 {
         return Err(FileError::ResourceLimit);
@@ -633,6 +676,14 @@ fn import(
             return Err(FileError::Unsupported);
         }
         let info = raw.metadata(&path)?;
+        if kind == EntryType::File
+            && info.inode != 0
+            && let Some(&inode) = identities.get(&(info.device, info.inode))
+        {
+            state.add_link(inode, parent, name.into())?;
+            state.import_aliases.push(path);
+            continue;
+        }
         let mut node = Node::new(Some(parent), name.into(), kind, info.modified);
         node.mode = info.mode;
         node.accessed = info.accessed;
@@ -641,8 +692,11 @@ fn import(
             node.backing = Some(path.clone());
         }
         let id = state.allocate(node)?;
+        if kind == EntryType::File && info.inode != 0 {
+            identities.insert((info.device, info.inode), id);
+        }
         if kind == EntryType::Directory {
-            import(raw, state, id, &path, depth + 1, resume)?;
+            import(raw, state, id, &path, depth + 1, resume, identities)?;
         }
     }
     Ok(())
@@ -765,8 +819,8 @@ impl FileSystem for Namespace {
         let mut entries = DirectoryEntries::new();
         entries.push(".".into(), EntryType::Directory)?;
         entries.push("..".into(), EntryType::Directory)?;
-        for node in state.nodes.values().filter(|node| node.parent == Some(id)) {
-            entries.push(node.name.clone(), node.kind)?;
+        for (inode, _, name) in state.entries().filter(|(_, parent, _)| *parent == id) {
+            entries.push(name.into(), state.nodes[&inode].kind)?;
         }
         Ok(entries)
     }
@@ -794,6 +848,21 @@ impl FileSystem for Namespace {
     }
     fn rename(&self, source: &str, destination: &str) -> Result<(), FileError> {
         self.move_to(source, self, destination)
+    }
+    fn hard_link(&self, source: &str, destination: &str, follow: bool) -> Result<(), FileError> {
+        self.link_to(source, self, destination, follow)
+    }
+    fn hard_link_to(
+        &self,
+        source: &str,
+        other: &dyn FileSystem,
+        destination: &str,
+        follow: bool,
+    ) -> Result<(), FileError> {
+        let other = (other as &dyn core::any::Any)
+            .downcast_ref::<Self>()
+            .ok_or(FileError::CrossDevice)?;
+        self.link_to(source, other, destination, follow)
     }
     fn rename_to(
         &self,

@@ -21,6 +21,124 @@ impl FileSystem for Untouched {
     }
 }
 
+#[derive(Default)]
+struct Links(RefCell<Vec<(String, String, bool)>>);
+impl FileSystem for Links {
+    fn open(&self, _: &str, _: OpenOptions) -> Result<Box<dyn File>, FileError> {
+        panic!("path_link must not open regular files")
+    }
+    fn metadata(&self, path: &str) -> Result<Metadata, FileError> {
+        if path == "dir" {
+            Ok(Metadata::new(
+                efi_agent_wasm::filesystem::EntryType::Directory,
+                0,
+            ))
+        } else {
+            Err(FileError::NotFound)
+        }
+    }
+    fn read_directory(&self, _: &str) -> Result<DirectoryEntries, FileError> {
+        panic!("path_link must not enumerate directories")
+    }
+    fn hard_link(&self, source: &str, destination: &str, follow: bool) -> Result<(), FileError> {
+        self.0
+            .borrow_mut()
+            .push((source.into(), destination.into(), follow));
+        if destination == "exists" {
+            Err(FileError::Exists)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[test]
+fn hard_link_validates_both_paths_rights_flags_and_ranges_before_provider_effects() {
+    let module = wat::parse_str(r#"(module
+      (import "wasi_snapshot_preview1" "proc_exit" (func $exit (param i32)))
+      (import "wasi_snapshot_preview1" "path_link" (func $link (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "path_open" (func $open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_write" (func $write (param i32 i32 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_read" (func $read (param i32 i32 i32 i32) (result i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 64) "sourcedestexistsdir../bad\00")
+      (data (i32.const 400) ".efi-process")
+      (global $channel (mut i32) (i32.const 0))
+      (global $case (mut i32) (i32.const 0))
+      (func $equal (param $a i32) (param $b i32)
+        (global.set $case (i32.add (global.get $case) (i32.const 1)))
+        (if (i32.ne (local.get $a) (local.get $b))
+          (then (call $exit (i32.add (i32.mul (global.get $case) (i32.const 100)) (local.get $a))))))
+      (func $control (param $source_fd i32) (param $destination_fd i32) (param $flags i32)
+                     (param $source_len i32) (param $length i32) (param $error i32)
+        (i32.store (i32.const 128) (i32.const 25))
+        (i32.store (i32.const 132) (local.get $source_fd))
+        (i32.store (i32.const 136) (local.get $destination_fd))
+        (i32.store (i32.const 140) (local.get $flags))
+        (i32.store (i32.const 144) (local.get $source_len))
+        (memory.copy (i32.const 148) (i32.const 64) (i32.const 10))
+        (i32.store (i32.const 16) (i32.const 128))
+        (i32.store (i32.const 20) (local.get $length))
+        (call $equal (call $write (global.get $channel) (i32.const 16) (i32.const 1) (i32.const 24)) (i32.const 0))
+        (i32.store (i32.const 16) (i32.const 192))
+        (i32.store (i32.const 20) (i32.const 8))
+        (call $equal (call $read (global.get $channel) (i32.const 16) (i32.const 1) (i32.const 24)) (i32.const 0))
+        (call $equal (i32.load (i32.const 192)) (local.get $error))
+        (call $equal (i32.load (i32.const 196)) (i32.const 0)))
+      (func (export "_start")
+        (call $equal (call $link (i32.const 3) (i32.const 0) (i32.const 64) (i32.const 6) (i32.const 3) (i32.const 70) (i32.const 4)) (i32.const 0))
+        (call $equal (call $link (i32.const 3) (i32.const 1) (i32.const 64) (i32.const 6) (i32.const 3) (i32.const 74) (i32.const 6)) (i32.const 20))
+        (call $equal (call $link (i32.const 3) (i32.const 2) (i32.const 64) (i32.const 6) (i32.const 3) (i32.const 70) (i32.const 4)) (i32.const 28))
+        (call $equal (call $link (i32.const 127) (i32.const 0) (i32.const 64) (i32.const 6) (i32.const 3) (i32.const 70) (i32.const 4)) (i32.const 8))
+        (call $equal (call $link (i32.const 3) (i32.const 0) (i32.const 64) (i32.const 6) (i32.const 127) (i32.const 70) (i32.const 4)) (i32.const 8))
+        (call $equal (call $link (i32.const 3) (i32.const 0) (i32.const 65535) (i32.const 2) (i32.const 3) (i32.const 70) (i32.const 4)) (i32.const 21))
+        (call $equal (call $link (i32.const 3) (i32.const 0) (i32.const 64) (i32.const 6) (i32.const 3) (i32.const 65535) (i32.const 2)) (i32.const 21))
+        (call $equal (call $link (i32.const 3) (i32.const 0) (i32.const 64) (i32.const 6) (i32.const 3) (i32.const 83) (i32.const 6)) (i32.const 76))
+        (call $equal (call $link (i32.const 3) (i32.const 0) (i32.const 64) (i32.const 6) (i32.const 3) (i32.const 89) (i32.const 1)) (i32.const 76))
+        ;; A directory with source-only rights cannot act as the destination.
+        (call $equal (call $open (i32.const 3) (i32.const 0) (i32.const 80) (i32.const 3) (i32.const 2) (i64.const 2048) (i64.const 0) (i32.const 0) (i32.const 320)) (i32.const 0))
+        (call $equal (call $link (i32.const 3) (i32.const 0) (i32.const 64) (i32.const 6) (i32.load (i32.const 320)) (i32.const 70) (i32.const 4)) (i32.const 76))
+        (call $equal (call $link (i32.load (i32.const 320)) (i32.const 0) (i32.const 64) (i32.const 6) (i32.const 3) (i32.const 70) (i32.const 4)) (i32.const 0))
+        ;; Destination-only rights cannot authorize the source.
+        (call $equal (call $open (i32.const 3) (i32.const 0) (i32.const 80) (i32.const 3) (i32.const 2) (i64.const 4096) (i64.const 0) (i32.const 0) (i32.const 324)) (i32.const 0))
+        (call $equal (call $link (i32.load (i32.const 324)) (i32.const 0) (i32.const 64) (i32.const 6) (i32.const 3) (i32.const 70) (i32.const 4)) (i32.const 76))
+        (call $equal (call $link (i32.const 3) (i32.const 1) (i32.const 64) (i32.const 6) (i32.load (i32.const 324)) (i32.const 70) (i32.const 4)) (i32.const 0))
+        (call $equal (call $open (i32.const 3) (i32.const 0) (i32.const 400) (i32.const 12) (i32.const 0) (i64.const 66) (i64.const 0) (i32.const 0) (i32.const 328)) (i32.const 0))
+        (global.set $channel (i32.load (i32.const 328)))
+        (call $control (i32.const 3) (i32.const 3) (i32.const 1) (i32.const 6) (i32.const 30) (i32.const 0))
+        (call $control (i32.const 127) (i32.const 3) (i32.const 0) (i32.const 6) (i32.const 30) (i32.const 8))
+        (call $control (i32.const 3) (i32.const 127) (i32.const 0) (i32.const 6) (i32.const 30) (i32.const 8))
+        (call $control (i32.const 3) (i32.const 3) (i32.const 2) (i32.const 6) (i32.const 30) (i32.const 28))
+        (call $control (i32.load (i32.const 324)) (i32.const 3) (i32.const 0) (i32.const 6) (i32.const 30) (i32.const 76))
+        (call $control (i32.const 3) (i32.load (i32.const 320)) (i32.const 0) (i32.const 6) (i32.const 30) (i32.const 76))
+        (call $control (i32.const 3) (i32.const 3) (i32.const 0) (i32.const 11) (i32.const 30) (i32.const -22))
+        (call $control (i32.const 3) (i32.const 3) (i32.const 0) (i32.const -1) (i32.const 30) (i32.const -22))
+        (call $control (i32.const 3) (i32.const 3) (i32.const 0) (i32.const 6) (i32.const 19) (i32.const -22))
+        (call $control (i32.const 3) (i32.const 3) (i32.const 0) (i32.const 6) (i32.const 31) (i32.const 76))))"#).unwrap();
+    let provider = Rc::new(Links::default());
+    let mut world = World::new();
+    world.set_filesystem(provider.clone());
+    world.register("links", &module).unwrap();
+    let pid = world.spawn(vec!["links".into()], vec![]).unwrap();
+    for _ in 0..100 {
+        if !world.status(pid).unwrap().is_live() {
+            break;
+        }
+        world.step();
+    }
+    assert_eq!(world.status(pid).unwrap(), &Status::Exited(0));
+    assert_eq!(
+        *provider.0.borrow(),
+        [
+            ("source".into(), "dest".into(), false),
+            ("source".into(), "exists".into(), true),
+            ("dir/source".into(), "dest".into(), false),
+            ("source".into(), "dir/dest".into(), true),
+            ("source".into(), "dest".into(), true),
+        ]
+    );
+}
+
 #[test]
 fn unavailable_wasi_socket_operations_validate_arguments_and_preserve_outputs() {
     let module = wat::parse_str(r#"(module
@@ -162,7 +280,7 @@ fn unavailable_cli_mutations_and_accept_fail_without_provider_effects_or_output_
         (i32.store (i32.const 65532) (i32.const 71731))
         (if (i32.ne (call $rmdir (i32.const 3) (i32.const 64) (i32.const 7)) (i32.const 58)) (then unreachable))
         (if (i32.ne (call $symlink (i32.const 64) (i32.const 7) (i32.const 3) (i32.const 64) (i32.const 7)) (i32.const 58)) (then unreachable))
-        (if (i32.ne (call $link (i32.const 3) (i32.const 0) (i32.const 64) (i32.const 7) (i32.const 3) (i32.const 64) (i32.const 7)) (i32.const 76)) (then unreachable))
+        (if (i32.ne (call $link (i32.const 3) (i32.const 0) (i32.const 64) (i32.const 7) (i32.const 3) (i32.const 64) (i32.const 7)) (i32.const 58)) (then unreachable))
         (if (i32.ne (call $advise (i32.const 127) (i64.const 0) (i64.const 0) (i32.const 0)) (i32.const 8)) (then unreachable))
         (if (i32.ne (call $advise (i32.const 1) (i64.const 0) (i64.const 0) (i32.const 6)) (i32.const 28)) (then unreachable))
         (if (i32.ne (call $fd_times (i32.const 3) (i64.const 0) (i64.const 0) (i32.const 0)) (i32.const 58)) (then unreachable))

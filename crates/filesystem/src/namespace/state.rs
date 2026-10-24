@@ -2,6 +2,7 @@ use crate::{EntryType, FileError, MAX_DIRECTORY_ENTRIES};
 use alloc::{
     collections::{BTreeMap, BTreeSet},
     string::{String, ToString},
+    vec::Vec,
 };
 use serde::{Deserialize, Serialize};
 
@@ -50,6 +51,21 @@ impl Node {
 pub struct State {
     pub next_inode: u64,
     pub nodes: BTreeMap<u64, Node>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<DirectoryLink>,
+    /// Imported physical aliases are removed only after their logical entries commit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub import_aliases: Vec<String>,
+}
+
+/// Additional directory names reference one inode and its one backing object.
+/// Directories retain a unique parent; directory hard links are prohibited.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DirectoryLink {
+    pub inode: u64,
+    pub parent: u64,
+    pub name: String,
 }
 
 pub fn valid_name(name: &str) -> Result<(), FileError> {
@@ -89,12 +105,14 @@ impl State {
                 ROOT,
                 Node::new(None, String::new(), EntryType::Directory, now),
             )]),
+            links: Vec::new(),
+            import_aliases: Vec::new(),
         }
     }
 
     pub fn validate(&self) -> Result<(), FileError> {
         let root = self.nodes.get(&ROOT).ok_or(FileError::Corrupt)?;
-        if self.nodes.len() > MAX_NODES
+        if self.nodes.len() + self.links.len() > MAX_NODES
             || self
                 .nodes
                 .keys()
@@ -138,7 +156,7 @@ impl State {
                 {
                     return Err(FileError::Corrupt);
                 }
-                if !names.insert((parent, &node.name)) {
+                if !names.insert((parent, node.name.as_str())) {
                     return Err(FileError::Corrupt);
                 }
                 let mut ancestor = parent;
@@ -158,17 +176,129 @@ impl State {
                 return Err(FileError::Corrupt);
             }
         }
+        for link in &self.links {
+            let inode = self.nodes.get(&link.inode).ok_or(FileError::Corrupt)?;
+            if inode.kind == EntryType::Directory || inode.parent.is_none() {
+                return Err(FileError::Corrupt);
+            }
+            valid_name(&link.name).map_err(|_| FileError::Corrupt)?;
+            let parent = self.nodes.get(&link.parent).ok_or(FileError::Corrupt)?;
+            if parent.kind != EntryType::Directory
+                || (link.parent != ROOT && parent.parent.is_none())
+                || (link.parent == ROOT
+                    && (link.name.eq_ignore_ascii_case(PRIVATE) || link.name == ".efi-process"))
+                || !names.insert((link.parent, link.name.as_str()))
+            {
+                return Err(FileError::Corrupt);
+            }
+            self.path(link.parent).map_err(|_| FileError::Corrupt)?;
+        }
+        let mut aliases = BTreeSet::new();
+        if self.import_aliases.len() > MAX_NODES {
+            return Err(FileError::Corrupt);
+        }
+        for path in &self.import_aliases {
+            if !valid_backing(path) || backings.contains(path) || !aliases.insert(path) {
+                return Err(FileError::Corrupt);
+            }
+        }
         Ok(())
     }
 
     pub fn child(&self, directory: u64, name: &str) -> Option<u64> {
-        self.nodes.iter().find_map(|(&id, node)| {
-            (node.parent == Some(directory) && node.name == name).then_some(id)
+        self.entries()
+            .find_map(|(id, parent, child)| (parent == directory && child == name).then_some(id))
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = (u64, u64, &str)> {
+        self.nodes
+            .iter()
+            .filter_map(|(&id, node)| node.parent.map(|parent| (id, parent, node.name.as_str())))
+            .chain(
+                self.links
+                    .iter()
+                    .map(|link| (link.inode, link.parent, link.name.as_str())),
+            )
+    }
+
+    pub fn entry_path(&self, parent: u64, name: &str) -> Result<String, FileError> {
+        let parent = self.path(parent)?;
+        Ok(if parent.is_empty() {
+            name.into()
+        } else {
+            alloc::format!("{parent}/{name}")
         })
     }
 
+    pub fn detach_entry(&mut self, parent: u64, name: &str) -> Result<u64, FileError> {
+        let id = self.child(parent, name).ok_or(FileError::NotFound)?;
+        let node = &self.nodes[&id];
+        if node.parent == Some(parent) && node.name == name {
+            let replacement = self
+                .links
+                .iter()
+                .position(|link| link.inode == id)
+                .map(|index| self.links.swap_remove(index));
+            let node = self.nodes.get_mut(&id).unwrap();
+            if let Some(link) = replacement {
+                node.parent = Some(link.parent);
+                node.name = link.name;
+            } else {
+                node.parent = None;
+                node.name.clear();
+            }
+        } else {
+            let index = self
+                .links
+                .iter()
+                .position(|link| link.parent == parent && link.name == name)
+                .unwrap();
+            self.links.swap_remove(index);
+        }
+        Ok(id)
+    }
+
+    pub fn move_entry(
+        &mut self,
+        parent: u64,
+        name: &str,
+        new_parent: u64,
+        new_name: String,
+    ) -> Result<(), FileError> {
+        let id = self.child(parent, name).ok_or(FileError::NotFound)?;
+        let node = self.nodes.get_mut(&id).unwrap();
+        if node.parent == Some(parent) && node.name == name {
+            node.parent = Some(new_parent);
+            node.name = new_name;
+        } else {
+            let link = self
+                .links
+                .iter_mut()
+                .find(|link| link.parent == parent && link.name == name)
+                .unwrap();
+            link.parent = new_parent;
+            link.name = new_name;
+        }
+        Ok(())
+    }
+
+    pub fn add_link(&mut self, inode: u64, parent: u64, name: String) -> Result<(), FileError> {
+        if self.nodes.len() + self.links.len() >= MAX_NODES {
+            return Err(FileError::ResourceLimit);
+        }
+        if self.child(parent, &name).is_some() {
+            return Err(FileError::Exists);
+        }
+        self.links.push(DirectoryLink {
+            inode,
+            parent,
+            name,
+        });
+        Ok(())
+    }
+
     pub fn allocate(&mut self, node: Node) -> Result<u64, FileError> {
-        if self.nodes.len() >= MAX_NODES {
+        if self.nodes.len() + self.links.len() >= MAX_NODES {
             return Err(FileError::ResourceLimit);
         }
         let id = self.next_inode;

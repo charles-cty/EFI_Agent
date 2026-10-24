@@ -304,11 +304,25 @@ def install(request):
         if error:
             raise OSError(error, os.strerror(error), path)
 
+    def link(src, dst, *, src_dir_fd=None, dst_dir_fd=None, follow_symlinks=True):
+        source, source_fd = at_path(src, src_dir_fd)
+        destination, destination_fd = at_path(dst, dst_dir_fd)
+        if not (0 <= source_fd < 128 and 0 <= destination_fd < 128):
+            raise OSError(errno.EBADF, os.strerror(errno.EBADF))
+        source = os.fsencode(source)
+        destination = os.fsencode(destination)
+        if b'\0' in source or b'\0' in destination:
+            raise ValueError('embedded null byte')
+        error, _ = request(25, source_fd, destination_fd, int(bool(follow_symlinks)),
+                           len(source), payload=source + destination)
+        if error:
+            raise OSError(error, os.strerror(error), src, None, dst)
+
     methods = {'stat': stat_path, 'lstat': lstat, 'fstat': fstat,
                'chmod': chmod, 'fchmod': fchmod, 'umask': umask,
                'mkdir': mkdir, 'open': open_path, 'access': access, 'chdir': chdir,
                'scandir': scandir}
-    methods.update({'remove': remove, 'unlink': remove, 'rmdir': rmdir})
+    methods.update({'remove': remove, 'unlink': remove, 'rmdir': rmdir, 'link': link})
     for name, function in methods.items():
         previous = getattr(os, name, None)
         for capability in ('supports_fd', 'supports_dir_fd', 'supports_follow_symlinks', 'supports_effective_ids'):
@@ -323,6 +337,8 @@ def install(request):
     os.supports_follow_symlinks.add(chmod)
     os.supports_effective_ids.add(access)
     os.supports_fd.add(scandir)
+    os.supports_dir_fd.add(link)
+    os.supports_follow_symlinks.add(link)
     os.getuid = posix.getuid = lambda: 1
     os.geteuid = posix.geteuid = lambda: 1
     os.getgid = posix.getgid = lambda: 1

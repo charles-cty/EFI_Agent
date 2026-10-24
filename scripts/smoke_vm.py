@@ -47,6 +47,8 @@ from wasm_unzip_fixture import UNZIP_CHECK
 from test_busybox_unzip import verify_unzip
 from wasm_du_fixture import DU_CHECK
 from test_busybox_du import verify_du
+from wasm_ln_fixture import LN_CHECK
+from test_busybox_ln import verify_ln
 from test_busybox_stat import verify_stat
 
 from cryptography import x509
@@ -303,6 +305,7 @@ def main():
     parser.add_argument("--compression-applets", action="store_true", help="Verify upstream gzip/gunzip/zcat and independently decode saved output")
     parser.add_argument("--unzip-applet", action="store_true", help="Verify upstream unzip integrity, containment and saved metadata")
     parser.add_argument("--du-applet", action="store_true", help="Verify upstream du and independently count saved FAT clusters")
+    parser.add_argument("--ln-applet", action="store_true", help="Verify upstream ln and independently inspect saved hard-link groups")
     args = parser.parse_args()
     if args.code_cancel_only and not args.code_workspace:
         parser.error("--code-cancel-only requires --code-workspace")
@@ -463,13 +466,14 @@ def main():
                         args.realpath_applet, args.stat_applet, args.ls_applet,
                         args.find_applet, args.program_paths, args.copy_move_applets,
                         args.xargs_applet, args.compression_applets, args.unzip_applet,
-                        args.du_applet))
+                        args.du_applet, args.ln_applet))
     if applet_modes:
         if not args.code_workspace or args.filesystem_tools or args.code_cancel_only:
             parser.error("Applet checks require --code-workspace and exclude other code modes")
         if applet_modes != 1:
             parser.error("Select one applet check mode")
-        fixture = (DU_CHECK if args.du_applet else
+        fixture = (LN_CHECK if args.ln_applet else
+                   DU_CHECK if args.du_applet else
                    UNZIP_CHECK if args.unzip_applet else
                    COMPRESSION_CHECK if args.compression_applets else
                    XARGS_CHECK if args.xargs_applet else
@@ -481,7 +485,8 @@ def main():
                    REALPATH_CHECK if args.realpath_applet else
                    SHA256_CHECK if args.sha256_applet else
                    BASE64_CHECK if args.base64_applet else TEXT_APPLETS_CHECK)
-        marker = ('UPSTREAM_DU_OK' if args.du_applet else
+        marker = ('UPSTREAM_LN_OK' if args.ln_applet else
+                  'UPSTREAM_DU_OK' if args.du_applet else
                   'UPSTREAM_UNZIP_OK' if args.unzip_applet else
                   'UPSTREAM_COMPRESSION_OK' if args.compression_applets else
                   'UPSTREAM_XARGS_OK' if args.xargs_applet else
@@ -604,11 +609,7 @@ def main():
                 wait("Extra drivers started: 1")
                 send("/clear")
                 wait("Conversation cleared")
-            if (args.text_applets or args.base64_applet or args.sha256_applet
-                    or args.realpath_applet or args.stat_applet or args.ls_applet
-                    or args.find_applet or args.program_paths or args.copy_move_applets
-                    or args.xargs_applet or args.compression_applets or args.unzip_applet
-                    or args.du_applet):
+            if applet_modes:
                 send("Exercise code tools")
                 wait("CODE_TOOLS_VERIFIED", args.code_timeout)
                 send("/exit")
@@ -658,6 +659,8 @@ def main():
                             entry = fs.get('/work/' + workspace.entries[name]['backing'])
                             return sum(length for _, length in entry.dataruns()) * fs.cluster_size
                         verify_du(workspace, allocation)
+                    elif args.ln_applet:
+                        verify_ln(workspace)
                     elif args.realpath_applet:
                         verify_realpath(workspace)
                     elif args.sha256_applet:

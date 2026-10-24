@@ -6,7 +6,7 @@ expansion. Initial native/firmware interfaces do not establish full completion.
 The shared image currently uses upstream ls, find, awk, sed, grep, chmod, cat, head,
 tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true,
 false, od, hexdump, base64, sha256sum and realpath, plus mkdir, rmdir, rm,
-touch, date, sort, uniq, cut, tr, cp, mv, which, xargs, gzip, gunzip, zcat, unzip and du. Other
+touch, date, sort, uniq, cut, tr, cp, mv, which, xargs, gzip, gunzip, zcat, unzip, du and ln. Other
 utility applets still need upstream replacement or addition.
 Upstream `stat` now reports file and symlink metadata, ownership, permissions,
 timestamps and custom/terse formats. Filesystem mode (`stat -f`) remains
@@ -55,9 +55,9 @@ Cp and mv now use upstream parsers and shared copy/stat/inode helpers. Windows
 native integration and both 512 MiB WHPX model APIs pass 50 copy/move cases,
 with independent saved FAT bytes, links, modes and timestamps. Same-file aliases
 are checked before truncation; traversal and preservation failures report errors.
-Long options and symbolic links are enabled. Hard-link creation/preservation,
-special node creation and reflinks still require provider support; reflink and
-automatic hard-link preservation features are disabled. Cross-mount move
+Long options, symbolic links, explicit hard links and automatic hard-link
+preservation are enabled. Special node creation and reflinks remain unavailable;
+the reflink feature is disabled. Cross-mount move
 fallback remains unverified until mount support is complete.
 
 Xargs now preserves argument vectors through cooperative serial/parallel
@@ -97,8 +97,16 @@ shared journal storage belongs to filesystem capacity accounting. Native
 integration verifies sparse and ordinary files against independent Windows
 queries. Both 512 MiB WHPX APIs verify bytes and saved FAT cluster chains in
 artifacts/du-whpx-responses and du-whpx-chat_completions. Hard-link counting
-and cross-mount -x behavior still need the corresponding provider gates.
-The missing required applets are df, tar and ln.
+uses shared inode identities; cross-mount -x behavior still needs mount gates.
+Ln and Python os.link now share namespace inodes, data, permissions and times.
+Namespace rename/unlink, last-close reclamation, symlink hard links and anchored
+directory views retain identity. Launcher staging/export/save/reload preserves
+groups and detects host link-group changes before effects. Native integration
+verifies cp -l/-a, du deduplication, descriptor-relative Python links, backups,
+source protection and independent saved groups. Both actual 512 MiB WHPX model
+APIs pass with independent saved FAT inode/backing/byte/mode checks in
+artifacts/ln-whpx-responses and artifacts/ln-whpx-chat_completions.
+The missing required applets are df and tar.
 
 ## Delivery requirements
 

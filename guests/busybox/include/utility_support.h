@@ -266,6 +266,7 @@ char *decode_base64(char *destination, const char **source);
 void read_base64(FILE *source, FILE *destination, int flags);
 void bb_perror_msg(const char *format, ...) __attribute__((format(printf, 1, 2)));
 void fflush_stdout_and_exit(int status) NORETURN;
+int is_directory(const char *name, int follow_links);
 void fflush_stdout_and_exit_SUCCESS(void) NORETURN;
 off_t bb_copyfd_size(int input, int output, off_t size);
 off_t bb_copyfd_eof(int input, int output);

@@ -474,6 +474,40 @@ impl FileSystem for VirtualFileSystem {
         self.base.read_link(&path)
     }
 
+    fn hard_link(&self, source: &str, destination: &str, follow: bool) -> Result<(), FileError> {
+        self.hard_link_to(source, self, destination, follow)
+    }
+
+    fn hard_link_to(
+        &self,
+        source: &str,
+        other: &dyn FileSystem,
+        destination: &str,
+        follow: bool,
+    ) -> Result<(), FileError> {
+        let source = self.mounted(source);
+        let other_virtual = (other as &dyn core::any::Any).downcast_ref::<Self>();
+        let destination =
+            other_virtual.map_or_else(|| destination.into(), |other| other.mounted(destination));
+        let special = |path: &str| matches!(path.split('/').next(), Some("dev" | "tmp" | "proc"));
+        if special(&source) || special(&destination) {
+            return Err(FileError::CrossDevice);
+        }
+        if self.program(&source).is_some()
+            || other_virtual.is_some_and(|other| other.program(&destination).is_some())
+            || Self::virtual_directory(&source)
+            || Self::virtual_directory(&destination)
+        {
+            return Err(FileError::ReadOnly);
+        }
+        self.base.hard_link_to(
+            &source,
+            other_virtual.map_or(other, |other| other.base.as_ref()),
+            &destination,
+            follow,
+        )
+    }
+
     fn symlink_metadata(&self, path: &str) -> Result<Metadata, FileError> {
         let path = self.mounted(path);
         let path = path.as_str();

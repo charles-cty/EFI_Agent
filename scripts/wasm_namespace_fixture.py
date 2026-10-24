@@ -41,7 +41,27 @@ class Workspace:
                 current = str(entry['parent'])
             path = '/'.join(reversed(parts))
             assert path not in self.entries
-            self.entries[path] = node
+            self.entries[path] = dict(node, inode=int(inode))
+        for link in state.get('links', []):
+            inode = str(link['inode'])
+            node = nodes[inode]
+            assert node['kind'] in ('File', 'Symlink') and node['parent'] is not None
+            parts = [link['name']]
+            current = str(link['parent'])
+            seen = set()
+            while current != '1':
+                assert current not in seen, 'Cyclic link parent graph'
+                seen.add(current)
+                parent = nodes[current]
+                assert parent['kind'] == 'Directory' and parent['parent'] is not None
+                parts.append(parent['name'])
+                current = str(parent['parent'])
+            path = '/'.join(reversed(parts))
+            assert path not in self.entries
+            assert all(part and part not in ('.', '..') and '/' not in part
+                       and '\\' not in part for part in parts)
+            self.entries[path] = dict(node, inode=int(inode),
+                                      parent=link['parent'], name=link['name'])
 
     def read(self, path):
         node = self.entries[path]

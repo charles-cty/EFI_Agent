@@ -83,7 +83,7 @@ impl World {
                 4 | 13 | 15 | 18 | 19 => 8,
                 14 => 12,
                 20 | 21 => bytes.len(),
-                8 | 9 | 11 | 12 | 17 | 22 | 23 | 24 => bytes.len(),
+                8 | 9 | 11 | 12 | 17 | 22 | 23 | 24 | 25 => bytes.len(),
                 _ => return Err(-22),
             };
             if bytes.len() != expected {
@@ -386,6 +386,27 @@ impl World {
                             Err(error) => (error, 0),
                         },
                     )
+                }
+                25 => {
+                    let source_fd = word(bytes, 1)?;
+                    let destination_fd = word(bytes, 2)?;
+                    let flags = word(bytes, 3)?;
+                    let source_len = word(bytes, 4)? as usize;
+                    let payload = bytes.get(20..).ok_or(-22)?;
+                    let source = core::str::from_utf8(payload.get(..source_len).ok_or(-22)?)
+                        .map_err(|_| -22)?;
+                    let destination = core::str::from_utf8(payload.get(source_len..).ok_or(-22)?)
+                        .map_err(|_| -22)?;
+                    let context = self.processes[&pid].execution().store.data();
+                    let result = crate::filesystem_abi::control_hard_link(
+                        context,
+                        source_fd,
+                        destination_fd,
+                        flags,
+                        source,
+                        destination,
+                    );
+                    Ok((result.err().unwrap_or(0), 0))
                 }
                 24 => {
                     let directory = word(bytes, 1)?;
