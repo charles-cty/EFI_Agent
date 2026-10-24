@@ -124,8 +124,8 @@ The launcher copies the host workspace into a private writable FAT disk. Guest
 file tools operate there; changed files are saved back after QEMU stops. Host
 files do not change during the session. Conflicting host edits prevent saving;
 the launcher reports an error and retains the disk for recovery. Workspace
-contents are limited by FAT packaging to 48 MiB, 4096 entries, and 32 directory
-levels, including boot files. Symlinks and special files are rejected.
+contents are limited to 48 MiB, 4096 entries, and 32 directory levels. The full
+boot tree can contain 64 MiB. Boot-tree symlinks and special files are rejected.
 Firmware variables use a temporary snapshot. The supplied boot input and OVMF
 VARS template are not modified.
 
@@ -205,8 +205,9 @@ launcher's `package` command and create:
 | `artifacts/efi-agent-native.img` | GPT/FAT32 native boot disk with the same config and workspace |
 
 The native tree has no `VM.TXT`. Existing native workspace files are retained
-and included in later packages. Images contain a 64 MiB ESP and are 66 MiB in
-total. Each generated image is replaced only after packaging succeeds. Scripts
+and included in later packages. Images use a 64 or 128 MiB ESP, selected from the
+source size with reserved free space, plus 2 MiB for GPT. Each generated image is
+replaced only after packaging succeeds. Scripts
 never write physical disks. To package a custom tree separately:
 
 ```bash

@@ -126,7 +126,13 @@ unlink while relative access, parent navigation and inherited child identity
 remain available. Ordinary directory-fd bounds remain unchanged. Python keeps
 the upstream interpreter and ordinary open/FileIO operations unchanged; the
 private startup adapter initializes libc's routing prefix and supplies standard
-cwd queries. Other C application entry points still need bootstrap verification.
+cwd queries. BusyBox, curl, QuickJS and WolfSSH share a constructor-time libc
+cwd adapter and standard chdir/getcwd wrappers in guests/lib/cwd.c. Native
+application-relative config, transfer and authentication checks pass, along
+with C allocation/buffer, rename/unlink and long-physical-path cases.
+Both actual 512 MiB WHPX API flows also pass these checks and independent saved
+FAT bytes in artifacts/c-port-cwd-whpx-responses and
+artifacts/c-port-cwd-whpx-chat_completions.
 
 The 2026-10-22 filesystem expansion connects directory creation to native and
 firmware providers, and rename to the native provider. File writes now use

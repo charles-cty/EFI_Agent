@@ -189,7 +189,7 @@ impl Drop for Disk {
         }
     }
 }
-const MAX_TREE_BYTES: u64 = 48 * 1024 * 1024;
+const MAX_TREE_BYTES: u64 = crate::pack::MAX_SOURCE_BYTES;
 const MAX_TREE_ENTRIES: usize = 4096;
 #[derive(Default)]
 struct Budget {
@@ -201,7 +201,7 @@ impl Budget {
         self.bytes = self.bytes.checked_add(bytes).ok_or("Tree size overflow")?;
         self.entries += 1;
         if self.bytes > MAX_TREE_BYTES || self.entries > MAX_TREE_ENTRIES || depth > 32 {
-            return Err("Tree exceeds 48 MiB, 4096 entries, or 32 directory levels".into());
+            return Err("Tree exceeds 64 MiB, 4096 entries, or 32 directory levels".into());
         }
         Ok(())
     }

@@ -26,9 +26,10 @@ foreach ($name in @('ssh', 'internal', 'log', 'io', 'port', 'ossh')) {
 }
 $library = Join-Path $build 'libwolfssh.a'
 & (Join-Path $WasiSdk 'bin/llvm-ar.exe') rcs $library @objects
-$link = '-Wall', '-Wextra', '-Werror', 'guests/wolfssh/main.c', 'guests/posix/network.c',
+$link = '-Wall', '-Wextra', '-Werror', 'guests/wolfssh/main.c', 'guests/posix/network.c', 'guests/lib/cwd.c',
     $library, (Join-Path $WolfSsl 'lib/libwolfssl.a'),
     '-Wl,--fatal-warnings', '-Wl,-z,stack-size=1048576', '-Wl,--max-memory=67108864',
+    '-Wl,--wrap=chdir', '-Wl,--wrap=getcwd', '-Wl,--undefined=chdir',
     '-o', (Join-Path $Output 'wolfssh.wasm')
 & $clang @flags @link
 Copy-Item -LiteralPath (Join-Path $Source 'LICENSING') -Destination (Join-Path $Output 'wolfssh.LICENSING')

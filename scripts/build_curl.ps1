@@ -64,7 +64,9 @@ $build = Join-Path $Output 'curl-build'
 New-Item -ItemType Directory -Force -Path $build | Out-Null
 $shim = Join-Path $build 'posix-network.o'
 & (Join-Path $WasiSdk 'bin/clang.exe') --target=wasm32-wasip1 -O2 -Wall -Wextra -Werror -Iguests/posix/include -Iguests/include -c guests/posix/network.c -o $shim
-& (Join-Path $WasiSdk 'bin/llvm-ar.exe') rcs (Join-Path $build 'libefi_posix.a') $shim
+$cwd = Join-Path $build 'cwd.o'
+& (Join-Path $WasiSdk 'bin/clang.exe') --target=wasm32-wasip1 -O2 -Wall -Wextra -Werror -c guests/lib/cwd.c -o $cwd
+& (Join-Path $WasiSdk 'bin/llvm-ar.exe') rcs (Join-Path $build 'libefi_posix.a') $shim $cwd
 if ($Reconfigure -and (Test-Path -LiteralPath (Join-Path $build 'Makefile'))) {
     Remove-Item -LiteralPath (Join-Path $build 'Makefile')
 }
@@ -85,7 +87,7 @@ export RANLIB="$sdk/bin/llvm-ranlib.exe"
 export CPPFLAGS="-I$project/guests/posix/include -I$project/guests/include -DWOLFSSL_USER_SETTINGS -I$wolfssl/include -include $wolfssl/include/user_settings.h"
 export CFLAGS='-O2 -ffunction-sections -fdata-sections'
 export LDFLAGS="-L$library"
-export LIBS='-lefi_posix'
+export LIBS='-Wl,--wrap=chdir -Wl,--wrap=getcwd -Wl,--undefined=chdir -Wl,--undefined=efi_filesystem_initialize -lefi_posix'
 export PKG_CONFIG=false
 configured=0
 if test ! -f Makefile; then
@@ -102,10 +104,10 @@ if test "$configured" = 1; then
   make -C lib clean > build.log 2>&1
   make -C src clean >> build.log 2>&1
 fi
-make -C lib -j"$jobs" libcurl.la > build.log 2>&1
+make -C lib -j"$jobs" LIBS="$LIBS" libcurl.la > build.log 2>&1
 # The externally linked POSIX archive is not a generated Makefile dependency.
 rm -f src/curl
-make -C src -j"$jobs" curl >> build.log 2>&1
+make -C src -j"$jobs" LIBS="$LIBS" curl >> build.log 2>&1
 '@
 & $MsysBash -c $script 'efi-curl-build' $Source $WasiSdk $project $build $Jobs $WolfSsl
 Copy-Item -LiteralPath (Join-Path $build 'src/curl') -Destination (Join-Path $Output 'curl.wasm')

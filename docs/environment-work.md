@@ -210,8 +210,16 @@ checks ordinary open/FileIO/import caches, ash, relative scripts, permission and
 umask boundaries, 40/41 links and long physical paths. Both actual 512 MiB WHPX
 API flows and independent saved FAT checks pass in
 artifacts/cwd-anchor-release-whpx-responses and
-artifacts/cwd-anchor-release-whpx-chat_completions. Other C application entry
-points still need cwd bootstrap verification. Installation manifests, retained
+artifacts/cwd-anchor-release-whpx-chat_completions. BusyBox, curl, QuickJS and
+WolfSSH now share the C cwd constructor and standard wrappers. Native C checks
+cover long paths, deleted cwd and inherited search permissions. Actual curl
+relative configuration/download/upload files, WolfSSH relative password
+authentication and QuickJS shell inheritance pass with independent saved bytes
+in artifacts/c-port-cwd-native.log. Full application staging now selects a
+64/128 MiB ESP and allows a 64 MiB boot tree; the workspace limit remains 48 MiB.
+Both actual 512 MiB WHPX API flows and independent saved FAT checks pass in
+artifacts/c-port-cwd-whpx-responses and artifacts/c-port-cwd-whpx-chat_completions.
+Installation manifests, retained
 sessions and final delivery gates remain incomplete. Executable lookup now
 canonicalizes cwd/descriptor routes before selecting cached modules or compiled
 command aliases. Same-physical-path executable changes still need cache/content

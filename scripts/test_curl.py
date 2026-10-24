@@ -18,6 +18,7 @@ import threading
 import unittest
 from test_dns import read_exact, response
 from wasm_tls_fixture import tls_context
+from wasm_namespace_fixture import DirectoryWorkspace
 
 BODY = bytes((index * 53 + index // 239 + 7) % 256 for index in range(131089))
 UPLOAD = bytes((index * 37 + index // 251 + 19) % 256 for index in range(196613))
@@ -174,7 +175,7 @@ class CurlIntegration(unittest.TestCase):
 
     def test_redirect_binary_file_and_exact_saved_bytes(self):
         self.assertEqual(self.execute("--location", "--output", "download.bin", self.base + "/redirect"), b"")
-        self.assertEqual((self.tree / "download.bin").read_bytes(), BODY)
+        self.assertEqual(DirectoryWorkspace(self.tree).read('download.bin'), BODY)
 
     def test_chunked_response_to_stdout(self):
         # WASI standard streams are character devices. Explicitly permit curl's
@@ -194,12 +195,16 @@ class CurlIntegration(unittest.TestCase):
         self.assertEqual(self.errors, [])
 
     def test_actual_curl_tls_and_certificate_rejection(self):
+        contexts = {}
         for case in ["tls12", "tls13", "untrusted", "no_signer", "hostname", "expired"]:
+            directory = self.tree / case
+            directory.mkdir()
+            failure = None if case in ["tls12", "tls13"] else case
+            contexts[case] = tls_context(directory, failure)
+        for case, context in contexts.items():
             with self.subTest(case=case):
                 failure = None if case in ["tls12", "tls13"] else case
                 directory = self.tree / case
-                directory.mkdir()
-                context = tls_context(directory, failure)
                 if case in ["tls12", "tls13"]:
                     version = ssl.TLSVersion.TLSv1_2 if case == "tls12" else ssl.TLSVersion.TLSv1_3
                     context.minimum_version = version

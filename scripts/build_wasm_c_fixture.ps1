@@ -43,6 +43,7 @@ try {
     & $Clang --target=wasm32-wasip1 "--sysroot=$sysroot" -O2 -Wall -Wextra -Werror -Iguests/include scripts/fixtures/wasm/filesystem.c guests/lib/process.c -o (Join-Path $Output 'filesystem.wasm')
     & $Clang --target=wasm32-wasip1 "--sysroot=$sysroot" -O2 -Wall -Wextra -Werror -Iguests/include scripts/fixtures/wasm/directory.c guests/lib/process.c -o (Join-Path $Output 'directory.wasm')
     & $Clang --target=wasm32-wasip1 "--sysroot=$sysroot" -O2 -Wall -Wextra -Werror scripts/fixtures/wasm/random.c -o (Join-Path $Output 'random.wasm')
+    & $Clang --target=wasm32-wasip1 "--sysroot=$sysroot" -O2 -Wall -Wextra -Werror scripts/fixtures/wasm/cwd.c guests/lib/cwd.c '-Wl,--wrap=chdir' '-Wl,--wrap=getcwd' '-Wl,--undefined=chdir' -o (Join-Path $Output 'cwd_probe.wasm')
     & $Clang --target=wasm32-wasip1 "--sysroot=$sysroot" -O2 -Wall -Wextra -Werror -Iguests/include scripts/fixtures/wasm/network.c guests/lib/process.c -o (Join-Path $Output 'network.wasm')
     & $Clang --target=wasm32-wasip1 "--sysroot=$sysroot" -O2 -Wall -Wextra -Werror -Iguests/posix/include -Iguests/include scripts/fixtures/wasm/posix_network.c guests/posix/network.c guests/lib/process.c -o (Join-Path $Output 'posix_network.wasm')
 } finally {

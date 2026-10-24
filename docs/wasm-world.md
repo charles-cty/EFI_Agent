@@ -28,16 +28,17 @@ This operation is not exposed through guest directory capabilities.
 
 Proc cwd links route through the retained anchor. Relative cwd paths can use
 actual parents, absolute symlink targets and runtime mount boundaries. Ordinary
-directory fds retain their bounds. The Python startup adapter and BusyBox entry
-point initialize libc's cached cwd to `/proc/self/cwd`; unchanged standard file
+directory fds retain their bounds. The Python startup adapter and shared C
+constructors initialize libc's cached cwd to `/proc/self/cwd`; unchanged standard file
 operations then reach the current anchor. Standard getcwd/getcwdb query its
-physical name and fail with ENOENT after unlink. BusyBox getcwd uses a sized
+physical name and fail with ENOENT after unlink. C getcwd uses a sized
 snapshot and preserves buffer/allocation semantics, including physical paths
 longer than 4096 bytes. The caller's initial libc routing prefix consumes none
 of the relative path or 40-link budget. User symlink expansions remain bounded.
 Registry cwd references are weak; terminal paths release cwd and detached
-ancestry before reap. Other application entry points still need cwd bootstrap
-verification.
+ancestry before reap. BusyBox, curl, QuickJS and WolfSSH link the same adapter
+from guests/lib/cwd.c. Source-built ports retain the original libc chdir
+symbol explicitly, including when the application itself never calls chdir.
 Executable lookup derives the physical path of routed directory views before
 module-cache and installed-alias selection. Same-physical-path executable edits
 still need content/generation validation with manifest delivery.
@@ -1286,8 +1287,8 @@ passes, including application chains, network/TLS and concurrent processes.
 The full 256 MiB combination fails during second concurrent Python startup.
 The remaining scope is:
 
-- Verify cwd bootstrap in the remaining application ports; complete installation
-  manifests and retained interpreter sessions. CPU-time clocks are unavailable.
+- Complete installation manifests and retained interpreter sessions. CPU-time
+  clocks are unavailable.
 - Socket options, address queries, listen/accept, peek/waitall and half-shutdown.
 - Reproducible source acquisition and packaging for the existing guest builds.
 - Remaining shell builtins and complete executable mount traversal; all 48

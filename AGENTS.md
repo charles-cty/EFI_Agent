@@ -9,6 +9,21 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+BusyBox, curl, QuickJS and WolfSSH now share guests/lib/cwd.c. Its constructor
+initializes libc routing; chdir/getcwd retain runtime directory identity and
+physical-path semantics. All ports explicitly retain the original libc chdir
+symbol to avoid an invalid wasm-ld call when main has no chdir reference.
+Native C buffer/long-path/detached-cwd checks, actual application-relative files,
+independent SSH authentication and saved namespace bytes pass. Python/ash,
+permissions, streams, curl HTTP/TLS/DNS, WolfSSH and QuickJS regressions pass.
+Both actual 512 MiB Windows WHPX API flows pass C/application cwd checks and
+independent saved FAT bytes in artifacts/c-port-cwd-whpx-responses and
+artifacts/c-port-cwd-whpx-chat_completions.
+Complete application staging exposed the old 48 MiB boot-tree limit. Packaging
+now accepts 64 MiB boot trees and selects a 64/128 MiB ESP with reserved space;
+the logical workspace remains limited to 48 MiB. All 23 launcher tests,
+including exact FAT capacity boundaries and extraction bytes, and Clippy pass.
+
 Process cwd now owns a directory anchor; child inheritance preserves identity
 through ancestor rename/unlink and old-name reuse. Proc cwd magic links route
 through that anchor, with actual-parent navigation and runtime mounts. Ordinary
@@ -20,8 +35,7 @@ references release cwd ancestry at termination before reap. Full host tests,
 host/UEFI Clippy, native cwd integration and Release packaging pass. Both actual
 512 MiB Windows WHPX API flows and independent saved FAT checks pass in
 artifacts/cwd-anchor-release-whpx-responses and
-artifacts/cwd-anchor-release-whpx-chat_completions. Other C
-application entry points still need cwd bootstrap verification; installation
+artifacts/cwd-anchor-release-whpx-chat_completions. Installation
 manifests, retained sessions and final delivery remain incomplete.
 
 Directory views now expose their current physical path from the inode graph.

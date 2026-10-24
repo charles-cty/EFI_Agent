@@ -1,11 +1,12 @@
 # /// script
-# dependencies = ["pyte>=0.8.2,<0.9", "cryptography>=44", "dissect.fat>=3,<4"]
+# dependencies = ["pyte>=0.8.2,<0.9", "cryptography>=44", "dissect.fat>=3,<4", "asyncssh>=2.21"]
 # ///
 """Verify direct firmware DNS/HTTPS/SSE/tool execution with QEMU and a local provider.
 
 No relay or API credentials are needed. DNS uses an unprivileged local TCP port.
 """
 import argparse
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 import json
 import re
@@ -59,6 +60,7 @@ from wasm_mount_paths_fixture import MOUNT_PATHS_CHECK, verify_mount_paths
 from wasm_character_devices_fixture import CHARACTER_DEVICES_CHECK, verify_character_devices
 from wasm_process_files_fixture import PROCESS_FILES_CHECK, verify_process_files
 from wasm_cwd_fixture import CWD_CHECK, verify_cwd
+from wasm_c_port_cwd_fixture import c_port_cwd_check, verify_c_port_cwd
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -285,7 +287,7 @@ def certificates(directory, expired=False):
     (directory / "key.pem").write_bytes(server_key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
 
 
-def main():
+def run(services):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--qemu", default="qemu-system-x86_64")
     parser.add_argument("--accel", default="kvm", choices=["kvm", "whpx", "tcg"])
@@ -298,6 +300,8 @@ def main():
     parser.add_argument("--http", action="store_true", help="Use plaintext HTTP to test local-only transport and clean TCP EOF")
     parser.add_argument("--driver", type=Path, help="Optional EFI boot-service driver fixture")
     parser.add_argument("--code-workspace", type=Path, help="Stage ash, Python and its library; exercise real model code tools")
+    parser.add_argument("--c-port-cwd", action="store_true", help="Verify shared C cwd support and real curl, QuickJS and WolfSSH relative paths")
+    parser.add_argument("--cwd-probe", type=Path, help="C cwd fixture binary; required with --c-port-cwd")
     parser.add_argument("--code-timeout", type=float, default=480, help="Maximum seconds for the complete code-tool sequence")
     parser.add_argument("--code-cancel-only", action="store_true", help="Run only code cancellation/isolation checks; requires --code-workspace")
     parser.add_argument("--filesystem-tools", action="store_true", help="Verify nested file-tool writes, mkdir, large writes and finite Python stdin")
@@ -483,13 +487,20 @@ def main():
                         args.find_applet, args.program_paths, args.copy_move_applets,
                         args.xargs_applet, args.compression_applets, args.unzip_applet,
                         args.du_applet, args.ln_applet, args.df_applet, args.tar_applet,
-                        args.temporary_mount, args.mount_paths, args.character_devices, args.process_files, args.cwd))
+                        args.temporary_mount, args.mount_paths, args.character_devices, args.process_files, args.cwd,
+                        args.c_port_cwd))
     if applet_modes:
         if not args.code_workspace or args.filesystem_tools or args.code_cancel_only:
             parser.error("Applet checks require --code-workspace and exclude other code modes")
         if applet_modes != 1:
             parser.error("Select one applet check mode")
-        fixture = (CWD_CHECK if args.cwd else
+        if args.c_port_cwd:
+            if not args.cwd_probe:
+                parser.error("--c-port-cwd requires --cwd-probe")
+            from test_wolfssh import SshPeer
+            ssh_peer = services.enter_context(SshPeer('0.0.0.0'))
+        fixture = (c_port_cwd_check('10.0.2.2', ssh_peer.port, ssh_peer.pin) if args.c_port_cwd else
+                   CWD_CHECK if args.cwd else
                    PROCESS_FILES_CHECK if args.process_files else
                    CHARACTER_DEVICES_CHECK if args.character_devices else
                    MOUNT_PATHS_CHECK if args.mount_paths else
@@ -509,7 +520,8 @@ def main():
                    REALPATH_CHECK if args.realpath_applet else
                    SHA256_CHECK if args.sha256_applet else
                    BASE64_CHECK if args.base64_applet else TEXT_APPLETS_CHECK)
-        marker = ('CWD_ANCHORS_OK' if args.cwd else
+        marker = ('C_PORT_CWD_OK' if args.c_port_cwd else
+                  'CWD_ANCHORS_OK' if args.cwd else
                   'PROCESS_FILES_OK' if args.process_files else
                   'CHARACTER_DEVICES_OK' if args.character_devices else
                   'MOUNT_PATHS_OK' if args.mount_paths else
@@ -587,6 +599,10 @@ def main():
             for name in ("ash.wasm", "python.wasm"):
                 shutil.copyfile(args.code_workspace / name, tree / "work" / name)
             shutil.copytree(args.code_workspace / "lib", tree / "work/lib")
+            if args.c_port_cwd:
+                for name in ('curl', 'quickjs', 'wolfssh'):
+                    shutil.copyfile(args.code_workspace / (name + '.wasm'), tree / 'work' / (name + '.wasm'))
+                shutil.copyfile(args.cwd_probe, tree / 'work/cwd_probe.wasm')
             (tree / "work/background-loop.sh").write_bytes(b"while :; do :; done\n")
         if args.program_paths:
             (tree / "work/bin").mkdir()
@@ -708,6 +724,10 @@ def main():
                         verify_process_files(workspace)
                     elif args.cwd:
                         verify_cwd(workspace)
+                    elif args.c_port_cwd:
+                        verify_c_port_cwd(workspace)
+                        assert ssh_peer.errors == [] and ssh_peer.commands == ['nonzero']
+                        assert ssh_peer.auth_attempts == [('guest', 'secret')]
                     elif args.mount_paths:
                         verify_mount_paths(workspace)
                         assert workspace.read('shared-mount-tool-source') == b"print('SHARED_MOUNT_MODEL_EDITED')\n"
@@ -879,6 +899,11 @@ def main():
             provider.server_close()
             dns.shutdown()
             dns.server_close()
+
+
+def main():
+    with ExitStack() as services:
+        run(services)
 
 
 if __name__ == "__main__":

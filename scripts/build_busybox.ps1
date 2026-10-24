@@ -24,6 +24,7 @@ foreach ($symbol in @('stat', 'lstat', 'fstat', 'fstatat', 'chmod', 'fchmod', 'o
     $compile += "-Wl,--wrap=$symbol"
 }
 $compile += '-Wl,--wrap=statvfs', '-Wl,--wrap=fstatvfs'
+$compile += '-Wl,--undefined=chdir'
 $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-Path $Source 'shell/ash_ptr_hack.c'),
     (Join-Path $Source 'coreutils/echo.c'), (Join-Path $Source 'libbb/process_escape_sequence.c'),
     (Join-Path $build 'printf.c'), (Join-Path $Source 'libbb/bb_strtonum.c'),
@@ -104,13 +105,13 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $Source 'coreutils/tr.c'), (Join-Path $Source 'libbb/xrealloc_vector.c'),
     'guests/busybox/text_support.c',
     'guests/busybox/main.c', 'guests/busybox/support.c', 'guests/busybox/awk_support.c', 'guests/busybox/applets.c', 'guests/busybox/exec.c',
-    'guests/lib/process.c', 'guests/sjlj/runtime.c', 'guests/sjlj/stack.s'
+    'guests/lib/process.c', 'guests/lib/cwd.c', 'guests/sjlj/runtime.c', 'guests/sjlj/stack.s'
 $raw = Join-Path $build 'ash.raw.wasm'
 try {
     & $clang @compile @sources -o $raw
     & $optimizer $raw --asyncify --pass-arg=asyncify-ignore-imports -o (Join-Path $Output 'ash.wasm')
     if ($BuildFixtures) {
-        & $clang @compile scripts/fixtures/wasm/busybox_metadata.c guests/busybox/metadata.c -o (Join-Path $build 'metadata.wasm')
+        & $clang @compile scripts/fixtures/wasm/busybox_metadata.c guests/busybox/metadata.c guests/lib/cwd.c -o (Join-Path $build 'metadata.wasm')
     }
 } finally {
     if (Test-Path -LiteralPath $raw) { Remove-Item -LiteralPath $raw }

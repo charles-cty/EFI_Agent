@@ -2,8 +2,6 @@
 #include "libbb.h"
 #include <assert.h>
 
-void efi_busybox_restore_cwd(void);
-
 void *xmalloc(size_t size)
 {
     void *result = malloc(size);
@@ -36,7 +34,6 @@ void bb_simple_perror_msg_and_die(const char *text)
 
 int main(void)
 {
-    efi_busybox_restore_cwd();
     assert(mkdir("c-metadata", 0700) == 0);
     int root = open("c-metadata/root", O_CREAT | O_WRONLY, 0600);
     assert(root >= 0);

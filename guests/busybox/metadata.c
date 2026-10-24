@@ -12,7 +12,6 @@ int __real_lstat(const char *path, struct stat *info);
 int __real_fstat(int fd, struct stat *info);
 int __real_fstatat(int fd, const char *path, struct stat *info, int flags);
 int __real_mkdir(const char *path, mode_t mode);
-int __real_chdir(const char *path);
 int __real_symlink(const char *target, const char *path);
 int __real_unlink(const char *path);
 int __real_link(const char *source, const char *destination);
@@ -70,76 +69,6 @@ static int request(uint32_t *words, size_t count, const char *path, uint32_t res
         case 76: errno = ENOTCAPABLE; break;
         default: errno = EINVAL; break;
         }
-        return -1;
-    }
-    return 0;
-}
-
-void efi_busybox_restore_cwd(void)
-{
-    if (__real_chdir("/proc/self/cwd") < 0)
-        bb_simple_perror_msg_and_die("current directory");
-}
-
-char *__wrap_getcwd(char *buffer, size_t capacity)
-{
-    if (buffer && capacity == 0) {
-        errno = EINVAL;
-        return NULL;
-    }
-    uint32_t words[] = {16};
-    uint32_t response[2];
-    if (request(words, 1, NULL, response) < 0)
-        return NULL;
-    int fd = response[0];
-    size_t size = response[1];
-    if (capacity && capacity <= size) {
-        close(fd);
-        errno = ERANGE;
-        return NULL;
-    }
-    int allocated = buffer == NULL;
-    if (!buffer) {
-        buffer = malloc(capacity ? capacity : size + 1);
-        if (!buffer) {
-            int error = errno;
-            close(fd);
-            errno = error;
-            return NULL;
-        }
-    }
-    size_t copied = 0;
-    while (copied < size) {
-        ssize_t count = read(fd, buffer + copied, size - copied);
-        if (count <= 0) {
-            int error = count < 0 ? errno : EIO;
-            close(fd);
-            if (allocated)
-                free(buffer);
-            errno = error;
-            return NULL;
-        }
-        copied += count;
-    }
-    close(fd);
-    buffer[size] = '\0';
-    return buffer;
-}
-
-int __wrap_chdir(const char *path)
-{
-    if (!*path) {
-        errno = ENOENT;
-        return -1;
-    }
-    char *absolute = path[0] == '/' ? NULL : xasprintf("/proc/self/cwd/%s", path);
-    uint32_t words[] = {17};
-    uint32_t response[2];
-    int result = request(words, 1, absolute ? absolute : path, response);
-    free(absolute);
-    if (result < 0 || response[0]) {
-        int error = result < 0 ? errno : (int)response[0];
-        errno = error;
         return -1;
     }
     return 0;

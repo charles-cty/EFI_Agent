@@ -8,10 +8,13 @@ use std::{
 };
 
 const MIB: u64 = 1024 * 1024;
-const ESP_BYTES: u64 = 64 * MIB;
-const DISK_BYTES: u64 = ESP_BYTES + 2 * MIB;
-const MAX_SOURCE_BYTES: u64 = 48 * MIB;
+pub(crate) const MAX_SOURCE_BYTES: u64 = 64 * MIB;
 const MAX_ENTRIES: usize = 4096;
+
+fn esp_bytes(source_bytes: u64) -> u64 {
+    // Reserve room for FAT metadata, cluster rounding and guest mutations.
+    (source_bytes + 16 * MIB).div_ceil(64 * MIB) * 64 * MIB
+}
 
 struct Entry {
     source: PathBuf,
@@ -131,7 +134,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         .try_fold(0u64, |sum, length| sum.checked_add(length))
         .ok_or("Boot tree size overflow")?;
     if source_bytes > MAX_SOURCE_BYTES {
-        return Err("Boot tree exceeds 48 MiB".into());
+        return Err("Boot tree exceeds 64 MiB".into());
     }
     // Never open a disk device or overwrite an existing artifact.
     let mut file = File::options()
@@ -139,7 +142,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         .write(true)
         .create_new(true)
         .open(output)?;
-    let result = build(&mut file, &entries);
+    let result = build(&mut file, &entries, esp_bytes(source_bytes));
     drop(file);
     if let Err(error) = result {
         fs::remove_file(output)?;
@@ -148,16 +151,21 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn build(file: &mut File, entries: &[Entry]) -> Result<(), Box<dyn std::error::Error>> {
-    file.set_len(DISK_BYTES)?;
-    gpt::mbr::ProtectiveMBR::with_lb_size((DISK_BYTES / 512 - 1) as u32).overwrite_lba0(file)?;
+fn build(
+    file: &mut File,
+    entries: &[Entry],
+    esp_bytes: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let disk_bytes = esp_bytes + 2 * MIB;
+    file.set_len(disk_bytes)?;
+    gpt::mbr::ProtectiveMBR::with_lb_size((disk_bytes / 512 - 1) as u32).overwrite_lba0(file)?;
     let mut disk = gpt::GptConfig::new()
         .writable(true)
         .logical_block_size(gpt::disk::LogicalBlockSize::Lb512)
         .create_from_device(&mut *file, None)?;
     let id = disk.add_partition(
         "EFI Agent",
-        ESP_BYTES,
+        esp_bytes,
         gpt::partition_types::EFI,
         0,
         Some(2048),
@@ -209,4 +217,82 @@ fn build(file: &mut File, entries: &[Entry]) -> Result<(), Box<dyn std::error::E
     filesystem.unmount()?;
     file.sync_all()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn fat_roundtrips_both_sizes_and_rejects_oversize_before_creating_output() {
+        let temporary = std::env::temp_dir().join(format!(
+            "efi-pack-boundaries-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let tree = temporary.join("tree");
+        fs::create_dir_all(tree.join("EFI/BOOT")).unwrap();
+        fs::write(tree.join("EFI/BOOT/BOOTX64.EFI"), b"test EFI").unwrap();
+        let payload = tree.join("payload.bin");
+        for (index, source_size, disk_size) in [
+            (0, 48 * MIB, 66 * MIB),
+            (1, 48 * MIB + 1, 130 * MIB),
+            (2, 64 * MIB, 130 * MIB),
+        ] {
+            let size = source_size - 8;
+            let mut source = File::create(&payload).unwrap();
+            source.set_len(size).unwrap();
+            source.write_all(b"PACK_BEGIN").unwrap();
+            source.seek(SeekFrom::End(-8)).unwrap();
+            source.write_all(b"PACK_END").unwrap();
+            drop(source);
+            let image = temporary.join(format!("disk-{index}.img"));
+            run(vec![
+                tree.to_string_lossy().into(),
+                image.to_string_lossy().into(),
+            ])
+            .unwrap();
+            assert_eq!(fs::metadata(&image).unwrap().len(), disk_size);
+            let saved = temporary.join(format!("saved-{index}"));
+            crate::boot::extract(&image, &saved).unwrap();
+            assert_eq!(
+                fs::read(saved.join("EFI/BOOT/BOOTX64.EFI")).unwrap(),
+                b"test EFI"
+            );
+            let mut original = File::open(&payload).unwrap();
+            let mut actual = File::open(saved.join("payload.bin")).unwrap();
+            assert_eq!(actual.metadata().unwrap().len(), size);
+            let mut expected = [0; 65536];
+            let mut received = [0; 65536];
+            loop {
+                let count = original.read(&mut expected).unwrap();
+                if count == 0 {
+                    assert_eq!(actual.read(&mut received).unwrap(), 0);
+                    break;
+                }
+                actual.read_exact(&mut received[..count]).unwrap();
+                assert_eq!(&received[..count], &expected[..count]);
+            }
+        }
+        File::options()
+            .write(true)
+            .open(payload)
+            .unwrap()
+            .set_len(64 * MIB - 7)
+            .unwrap();
+        let rejected = temporary.join("oversize.img");
+        let error = run(vec![
+            tree.to_string_lossy().into(),
+            rejected.to_string_lossy().into(),
+        ])
+        .unwrap_err();
+        assert!(error.to_string().contains("exceeds 64 MiB"));
+        assert!(!rejected.exists());
+        fs::remove_dir_all(temporary).unwrap();
+    }
 }

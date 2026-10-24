@@ -33,10 +33,11 @@ $sources = @((Join-Path $build 'quickjs.c'), (Join-Path $build 'dtoa.c'))
 foreach ($name in @('libregexp.c', 'libunicode.c', 'cutils.c')) {
     $sources += Join-Path $Source $name
 }
-$sources += 'guests/quickjs/main.c', 'guests/lib/process.c', 'guests/lib/shell.c'
+$sources += 'guests/quickjs/main.c', 'guests/lib/process.c', 'guests/lib/shell.c', 'guests/lib/cwd.c'
 $version = ([IO.File]::ReadAllText((Join-Path $Source 'VERSION'))).Trim()
 $compile = '--target=wasm32-wasip1', "--sysroot=$sysroot", '-O2', '-D_GNU_SOURCE',
     "-DCONFIG_VERSION=`"$version`"", "-I$Source", '-Iguests/include',
-    '-Wl,-z,stack-size=1048576', '-Wl,--max-memory=67108864', '-lm'
+    '-Wl,-z,stack-size=1048576', '-Wl,--max-memory=67108864',
+    '-Wl,--wrap=chdir', '-Wl,--wrap=getcwd', '-Wl,--undefined=chdir', '-lm'
 & $clang @compile @sources -o (Join-Path $Output 'quickjs.wasm')
 Copy-Item -LiteralPath (Join-Path $Source 'LICENSE') -Destination (Join-Path $Output 'quickjs.LICENSE')

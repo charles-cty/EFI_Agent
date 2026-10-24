@@ -1,5 +1,63 @@
 # Verification record
 
+## 2026-10-24: Shared C cwd adapter and application-relative files
+
+`guests/lib/cwd.c` now supplies constructor-time libc routing and standard
+chdir/getcwd wrappers to BusyBox, curl, QuickJS and WolfSSH. It uses the retained
+runtime directory anchor and sized snapshots, with ordinary WASI file operations
+unchanged. BusyBox no longer owns a separate cwd implementation. Curl links the
+adapter through its POSIX static archive and retains the initialization entry.
+All source-built ports explicitly retain the original libc chdir symbol.
+
+The real native integration in `artifacts/c-port-cwd-native.log` passes shared
+C buffer/allocation boundaries, 300 repeated snapshots per path, failed-chdir
+atomicity, inherited unsearchable cwd, ancestor rename, old-name reuse, waiting
+children, deleted cwd and physical paths longer than 4096 bytes. Actual curl
+reads a relative config, writes a relative download and uploads a relative
+file source. Actual WolfSSH reads a relative password file and authenticates
+against an independent AsyncSSH peer; stdout, stderr and remote exit 23 match
+independent expectations. QuickJS invokes actual ash from its inherited cwd.
+An independent namespace reader verifies payload bytes, decoys, deleted names
+and temporary-mount exclusion.
+
+All four guest builds and C fixtures pass in
+`artifacts/c-port-cwd-build-{busybox,curl,quickjs,wolfssh,fixtures}.log`.
+Native Python/ash cwd, permission/C-buffer, 17 CPython, 112 stream, curl
+HTTP/TLS/DNS, nine WolfSSH and QuickJS capture regressions pass in
+`artifacts/c-port-cwd-regression-*.log`.
+
+Both actual 512 MiB Windows WHPX model API flows pass the current tool sequence,
+shared C/application cwd checks, independent peer authentication and saved FAT
+byte checks in `artifacts/c-port-cwd-whpx-responses` and
+`artifacts/c-port-cwd-whpx-chat_completions`. QEMU's ignored interrupt-vector
+and missing host application manifest warnings remain nonfatal.
+
+Complete application staging exceeded the former 48 MiB boot-tree bound.
+Boot packaging and extraction now accept 64 MiB and choose a 64 or 128 MiB
+ESP with at least 16 MiB reserved before filesystem overhead. Logical workspace
+limits stay at 48 MiB. Actual FAT round trips check total source sizes of
+48 MiB, 48 MiB plus one byte and 64 MiB, compare every extracted payload byte
+and reject 64 MiB plus one before creating output. All 23 launcher tests,
+Clippy and Release build pass in `artifacts/c-port-cwd-launcher-tests.log`,
+`artifacts/c-port-cwd-launcher-clippy.log` and
+`artifacts/c-port-cwd-launcher-build.log`.
+
+Intermediate corrections:
+
+- Libtool rejects ordinary object files as library dependencies. The shared
+  adapter is now in the POSIX static archive, with its initializer retained.
+- The new fixture command needed quoted comma-containing linker arguments in
+  PowerShell. All edited build scripts pass parser checks.
+- wasm-ld emitted an invalid call to the original chdir when an application
+  itself never referenced that symbol. A minimal independent program reproduces
+  the validation failure and verifies that explicit symbol retention fixes it
+  in `artifacts/c-port-cwd-link-probe.log`. Actual application checks validate
+  and run the resulting modules.
+- Older curl checks read physical paths and added CA fixtures after namespace
+  initialization. They now inspect the saved logical namespace and stage all
+  CA inputs before the first guest execution. The actual TLS byte and trust
+  assertions are unchanged.
+
 ## 2026-10-24: Runtime cwd anchors and standard Python/ash routing
 
 Each process now owns a directory anchor. Children inherit it directly, including
