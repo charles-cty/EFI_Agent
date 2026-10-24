@@ -1,5 +1,54 @@
 # Verification record
 
+## 2026-10-24: Ash-only guest RAM measurements
+
+Actual Windows WHPX measurements use the current packaged Release EFI,
+OVMF_CODE_4M.fd / OVMF_VARS_4M.fd, q35, qemu64,+rdrand and the Responses
+tool API over verified HTTPS and local DNS. The model requests only shell
+tools. No Python interpreter is started. These numbers describe total guest
+RAM, including firmware and the application, rather than ash heap usage.
+
+The workload retains an exported variable across three tool calls; creates,
+copies, moves, links and removes files; runs cat/grep/tr and seq/awk pipelines,
+command substitutions, a subshell, find/sort and a one-MiB zero/tee/wc stream.
+The final call checks /proc command lines for an unexpected Python process.
+After clean firmware exit, an independent FAT namespace reader checks input
+bytes, the sum 5050, all one-MiB output bytes, the link target and deletion.
+
+With only ash.wasm installed, 64 MiB boots to the UI but the first shell tool
+fails to instantiate guest memory. At 96 MiB the first simple call passes,
+then the pipeline reports tr: Out of memory and Broken pipe. The same complete
+workload and independent saved bytes pass at 97, 98, 100, 104, 112 and 128 MiB.
+This is a workload boundary, not a guaranteed RAM requirement for arbitrary
+shell commands or an idle memory-usage measurement.
+
+With ash, Python and its standard library installed, but no Python calls,
+64, 96, 128 and 160 MiB disconnect the guest serial connection during the
+first shell call. The same workload passes at 192 and 256 MiB. This probe
+does not establish the cause of the serial disconnects. Code inspection
+shows that discover_programs reads and validates every installed module
+before launching ash. Python's initial 40-MiB instance memory is not allocated,
+but installation validation still has Python-dependent transient allocations.
+
+Evidence is under artifacts/ash-memory-probe. Each case retains result.json,
+serial.bin, screen.txt, qemu.log and its saved disk. The Python-installed
+cases above use root-discovered modules. The full shipped workspace, including
+programs.json and all declared modules/libraries/licenses, also disconnects at
+160 MiB and passes the same complete workload and saved-byte checks at 192 MiB.
+For the fixed ash-only workload, 97 MiB is the lowest passing integer-MiB
+configuration, with 96 MiB failing. Allow headroom at 128 MiB for the ash-only
+installation. The full package's measured passing configuration is 192 MiB;
+its exact boundary between 160 and 192 MiB was not measured.
+No production code, user workspace or vendor sources were changed. The
+temporary measurement driver was removed after collecting evidence.
+
+The host emitted an ignored interrupt-vector-0 warning and an unrelated
+GLib application-manifest warning on successful and failed runs. The probe
+used the existing provider in scripts/smoke_vm.py after a lookup found no
+separate vm_provider.py. No .cargo/config.toml exists at the checked path;
+no configuration was inferred from that missing file. Two documentation
+patches had incomplete line anchors and were reapplied with the full lines.
+
 ## 2026-10-24: Environment delivery acceptance
 
 The complete current 512 MiB Windows WHPX application combination passes in

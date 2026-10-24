@@ -21,7 +21,8 @@ agree across ash, env/xargs and Python subprocess. BusyBox date now uses upstrea
 musl timezone rules with validated TZif buffers and packaged IANA 2026e data.
 C stat/lstat/fstatat preserve retained cwd and original link/parent components.
 
-Each conversation retains one ash and one Python interpreter. Source/completion
+Each conversation creates ash and Python interpreters on first use and retains
+each started interpreter. Source/completion
 frames use a private bounded channel separate from finite empty command stdin.
 Variables, globals, environment and cwd persist. Exit/trap/cancel report resets;
 clear resets both sessions. Unfinished descendants are reaped without disturbing
@@ -43,6 +44,14 @@ artifacts/environment-applications-whpx-idle, including independent saved bytes,
 TCP/DNS/TLS/SSH, concurrent Python, pipelines, descriptors and here-documents.
 The C application sequence passes at 256 MiB; the larger session sequence fails
 when it starts an additional Python process. Use 512 MiB for the full environment.
+
+Actual WHPX shell-only RAM checks pass the fixed file/pipeline/session workload
+at 97 MiB with only ash installed; 96 MiB fails in a pipeline and 64 MiB fails
+the first ash instance. Use 128 MiB for headroom in that installation. With the
+full shipped package installed but no Python execution, 160 MiB disconnects
+and 192 MiB passes. Discovery still reads and validates unused installed
+modules, so unused Python has transient validation costs. Evidence is under
+artifacts/ash-memory-probe and the first section of docs/verification.md.
 
 Prepared default guests are current. Fresh VM/native packages are under
 artifacts/environment-final-package; hashes are in environment-final-builds.tsv.
