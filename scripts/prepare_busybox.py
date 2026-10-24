@@ -405,17 +405,18 @@ def prepare_du(source: Path, output: Path):
 
 def prepare_date(source: Path, output: Path):
     """Keep upstream date parsing/formatting and reject unavailable clock writes."""
+    helpers = (source / 'libbb/time.c').read_text(encoding='utf-8')
+    helpers = replace_once(helpers, '''\ttime_t t = mktime(ptm);
+\tif (t == (time_t) -1L) {''', '''    errno = 0;
+    time_t t = mktime(ptm);
+    if (t == (time_t)-1 && errno == EOVERFLOW) {''')
+    (output / 'time.c').write_text(helpers, encoding='utf-8')
     text = (source / "coreutils/date.c").read_text(encoding="utf-8")
     text = replace_once(text, '# include <sys/syscall.h>', '# include <locale.h>')
     text = replace_once(text, '\t\tclock_gettime(CLOCK_REALTIME, &ts);', '''        if (clock_gettime(CLOCK_REALTIME, &ts) < 0)
             bb_simple_perror_msg_and_die("clock_gettime");''')
     text = replace_once(text, '\tlocaltime_r(&ts.tv_sec, &tm_time);', '''    if (!localtime_r(&ts.tv_sec, &tm_time))
         bb_simple_perror_msg_and_die("localtime");''')
-    text = replace_once(text, '\tif (ENABLE_FEATURE_DATE_ISOFMT && (opt & OPT_ISO8601)) {', '''    const char *timezone = getenv("TZ");
-    if (timezone && *timezone && strcmp(timezone, "UTC") && strcmp(timezone, "UTC0"))
-        bb_simple_error_msg_and_die("non-UTC timezones are unavailable; use -u");
-
-\tif (ENABLE_FEATURE_DATE_ISOFMT && (opt & OPT_ISO8601)) {''')
     text = replace_once(text, '\t\t\tif (strptime(date_str, fmt_str2dt, &tm_time) == NULL)', '''            char *end = strptime(date_str, fmt_str2dt, &tm_time);
             if (end == NULL || *end != '\\0')''')
     text = replace_once(text, '''\t\tif ((opt & OPT_SET) && clock_settime(CLOCK_REALTIME, &ts) < 0) {

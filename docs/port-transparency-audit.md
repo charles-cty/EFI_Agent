@@ -189,3 +189,12 @@ renamed/deleted cwd and distinct decoy/target bytes. Both 512 MiB WHPX API
 flows pass actual BusyBox/curl/QuickJS/WolfSSH and saved FAT checks in
 artifacts/cwd-stat-whpx-final-responses and
 artifacts/cwd-stat-whpx-final-chat_completions.
+
+## BusyBox timezones
+
+The shared BusyBox image now uses upstream musl timezone rules, POSIX TZ
+strings and packaged IANA 2026e data. Validated bounded TZif buffers replace
+mmap. Native checks use an independent ZoneInfo parser and historical/DST/
+2038/2050 boundaries. Both 512 MiB WHPX API formats pass the expanded date
+sequence; independent FAT reads compare every packaged library and license.
+The unchanged CPython binary retains its distribution's time-module behavior.

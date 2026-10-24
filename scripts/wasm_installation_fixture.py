@@ -53,6 +53,14 @@ def verify_installation(workspace, prepared):
         assert workspace.entries[module['path']]['mode'] == 0o755
         for path in module['licenses']:
             assert workspace.read(path) == (prepared / path).read_bytes()
+        for library in module['libraries']:
+            root = prepared / library
+            for source in root.rglob('*'):
+                path = source.relative_to(prepared).as_posix()
+                if source.is_file():
+                    assert workspace.read(path) == source.read_bytes(), path
+                else:
+                    assert workspace.entries[path]['kind'] == 'Directory', path
     assert workspace.read('installation-result') == b'INSTALLATION_OK\n'
     assert workspace.read('installed-curl-version').startswith(b'curl ')
     assert workspace.read('lib/python3.14/site-packages/sitecustomize.py') == (

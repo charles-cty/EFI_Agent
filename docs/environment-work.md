@@ -22,8 +22,12 @@ Reload removes obsolete aliases and preserves explicit registrations. Standard
 packaging includes the declared assets without build caches or duplicate alias
 images. VM launch merges the packaged installation with the selected workspace,
 and content conflicts reject before staging. Native installation, actual FAT
-pack/extract and saved-asset checks pass. Non-UTC timezones and the final combined
-delivery gates remain incomplete.
+pack/extract and saved-asset checks pass. BusyBox non-UTC timezone support now
+passes native integration and both 512 MiB WHPX model APIs. All declared
+library files and licenses match independent saved FAT bytes in
+artifacts/environment-final-assets-responses and
+artifacts/environment-final-assets-chat_completions. The final combined
+application gate remains pending.
 Both actual 512 MiB WHPX API flows pass manifest-installed applications and
 independent saved FAT assets/modes in artifacts/installation-final-whpx-responses
 and artifacts/installation-final-whpx-chat_completions.
@@ -49,8 +53,12 @@ Upstream `stat` now reports file and symlink metadata, ownership, permissions,
 timestamps and custom/terse formats. Filesystem mode (`stat -f`) now uses the
 same capacity provider through a guest C statfs adapter. Standard statvfs
 interfaces now use measured native and firmware capacity and runtime mounts.
-Date currently supports UTC; other TZ values fail explicitly and timezone
-support remains pending.
+BusyBox date now uses the upstream musl timezone engine, packaged IANA 2026e
+data and POSIX TZ strings. Native checks include DST boundaries, historical
+second offsets, 2038/2050 dates, all packaged TZif files and malformed inputs.
+Both 512 MiB WHPX API formats pass the full expanded filesystem/date sequence
+in artifacts/environment-final-filesystem-responses and
+artifacts/environment-final-filesystem-chat_completions.
 Firmware monotonic waits now use a reported hardware-counter rate. General mount
 traversal, installation packaging and retained sessions have focused native and
 both WHPX API evidence; the final combined delivery audit remains incomplete.

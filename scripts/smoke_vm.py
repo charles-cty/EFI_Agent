@@ -625,6 +625,7 @@ def run(services):
                 for name in ("ash.wasm", "python.wasm"):
                     shutil.copyfile(args.code_workspace / name, tree / "work" / name)
                 shutil.copytree(args.code_workspace / "lib", tree / "work/lib")
+                shutil.copytree(args.code_workspace / "share", tree / "work/share")
             if args.c_port_cwd:
                 for name in ('curl', 'quickjs', 'wolfssh'):
                     shutil.copyfile(args.code_workspace / (name + '.wasm'), tree / 'work' / (name + '.wasm'))

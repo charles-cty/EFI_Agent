@@ -167,7 +167,12 @@ pub fn catalog(args: Vec<String>) -> Result<(), Error> {
     let manifest = Manifest {
         version: 1,
         modules: vec![
-            module("ash.wasm", ASH_APPLETS, &[], &["ash.LICENSE"]),
+            module(
+                "ash.wasm",
+                ASH_APPLETS,
+                &["share/zoneinfo"],
+                &["ash.LICENSE", "musl.COPYRIGHT", "tzdata.LICENSE"],
+            ),
             module(
                 "python.wasm",
                 &["python"],

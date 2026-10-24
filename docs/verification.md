@@ -1,5 +1,72 @@
 # Verification record
 
+## 2026-10-24: BusyBox timezone engine and independent date checks
+
+The shared BusyBox image now links upstream musl 1.2.5 timezone rules rather
+than WASI libc's UTC stub. A bounded file-buffer adapter replaces mmap and
+checks TZif section lengths, type/name indices, transition ordering, offsets
+and POSIX footer syntax. The generator adapts only platform interfaces and
+the version-1 NUL version byte. The catalog includes /share/zoneinfo from
+tzdata 2026.5 (IANA 2026e), musl copyright and tzdata licenses. The prebuilt
+CPython binary and upstream standard library are unchanged.
+
+Native date integration passes UTC, POSIX offsets/rules, IANA names, explicit
+paths, UTC override, DST edges, half-hour/45-minute offsets, historical times,
+2050 footer rules and the 2038 boundary in
+artifacts/timezone-date-native-complete.log. The independent ZoneInfo parser
+supplies 96 additional historical/boundary/seeded date comparisons. All 598
+packaged TZif files, a synthetic version-1 file and 17 malformed inputs pass
+the separate C loader checks. Evidence:
+artifacts/timezone-oracles-native-complete.log.
+
+The independent checks found BusyBox's valid epoch -1 sentinel defect. The
+staged upstream helper now requires EOVERFLOW before treating mktime's -1
+result as failure. Date tests cover both epoch -1 and its calendar fields.
+The first musl compilation exposed its internal index variable colliding
+with the SDK's GNU index() declaration; a private variable rename fixes it.
+The first host oracle used Windows fromtimestamp for pre-1970 dates, which
+the CRT rejected. UTC datetime arithmetic now avoids that host limitation.
+Python includes historical offset seconds in %z, while C strftime uses HHMM;
+the independent oracle now formats that field explicitly and retains seconds
+in the civil-time comparison.
+
+Full host tests, formatting and host Clippy pass in artifacts/timezone-*.log.
+Target Clippy, final formatting and Python byte checks pass in
+artifacts/environment-complete-{uefi-clippy,format,python-bytes}.log. The
+interpreter and all 537 upstream library files match the original ZIP bytes.
+Release launcher/catalog/package checks pass to artifacts/timezone-final-package.
+
+Both actual 512 MiB Windows WHPX APIs pass the complete expanded filesystem
+tool sequence, including 8 MiB writes, finite stdin, caches, permissions,
+mutations, inherited cwd/umask, monotonic waits and timezone date checks.
+Evidence: artifacts/environment-final-filesystem-responses and
+artifacts/environment-final-filesystem-chat_completions. Both installation
+flows additionally compare every declared library file and license against
+independently saved FAT bytes in artifacts/environment-final-assets-responses
+and artifacts/environment-final-assets-chat_completions.
+
+All 21 current native BusyBox suites and independent saved state pass in
+artifacts/environment-complete-native-test_busybox_*.log. Standard CPython
+(17 cases), retained sessions, cwd, mount paths and process files pass in
+artifacts/environment-complete-native-{cpython,sessions,cwd,mount_paths,process_files}.log.
+
+The actual 256 MiB WHPX C application/cwd sequence passes with saved FAT checks
+in artifacts/environment-final-c-ports-256. The larger retained-session sequence
+fails on its additional Python child with ENOMEM in
+artifacts/environment-final-sessions-256. This is a resource limit, not a
+passed 256 MiB session gate. The complete environment uses 512 MiB.
+
+The full application retry in artifacts/environment-applications-whpx-reset
+received a successful reap response but waited on an older collapsed panel.
+The harness now accepts specific control replies before opening old output.
+The next retry in artifacts/environment-applications-whpx-complete reached
+concurrent Python but its terminal shows concatenated/mutated input commands.
+The driver now waits for an empty editor and the Ready footer between commands,
+and sends no disclosure mouse events while text is being entered. Concurrent
+root output selection uses the actual root PID. These changes still require
+the final full WHPX application run; the earlier serial byte-loss diagnosis
+remains unproven.
+
 ## 2026-10-24: C cwd metadata correction
 
 Shared C stat/lstat/fstatat now pass original path components through an

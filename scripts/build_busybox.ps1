@@ -2,6 +2,7 @@ param(
     [string]$WasiSdk = $env:WASI_SDK_PATH,
     [Parameter(Mandatory)][string]$Binaryen,
     [string]$Source = 'artifacts/guest-sources/busybox-1.37.0',
+    [string]$MuslSource = 'artifacts/guest-sources/musl-1.2.5',
     [string]$Output = 'artifacts/wasm-guests',
     [switch]$BuildFixtures
 )
@@ -12,6 +13,7 @@ $PSNativeCommandArgumentPassing = 'Standard'
 if (-not $WasiSdk) { throw 'Set WASI_SDK_PATH or pass -WasiSdk.' }
 $build = Join-Path $Output 'ash-build'
 uv.exe run scripts/prepare_busybox.py --source $Source --output $build
+uv.exe run scripts/prepare_timezone.py --musl $MuslSource --output $Output
 $WasiSdk = (Resolve-Path -LiteralPath $WasiSdk).Path
 $clang = Join-Path $WasiSdk 'bin/clang.exe'
 $sysroot = Join-Path $WasiSdk 'share/wasi-sysroot'
@@ -99,13 +101,15 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $build 'mkdir.c'), (Join-Path $build 'rmdir.c'),
     (Join-Path $build 'rm.c'), (Join-Path $build 'touch.c'),
     (Join-Path $Source 'libbb/make_directory.c'), (Join-Path $build 'remove_file.c'),
-    (Join-Path $Source 'libbb/ask_confirmation.c'), (Join-Path $Source 'libbb/time.c'),
+    (Join-Path $Source 'libbb/ask_confirmation.c'), (Join-Path $build 'time.c'),
     (Join-Path $build 'date.c'), (Join-Path $Source 'libbb/compare_string_array.c'),
     (Join-Path $build 'sort.c'), (Join-Path $build 'uniq.c'), (Join-Path $build 'cut.c'),
     (Join-Path $Source 'coreutils/tr.c'), (Join-Path $Source 'libbb/xrealloc_vector.c'),
     'guests/busybox/text_support.c',
     'guests/busybox/main.c', 'guests/busybox/support.c', 'guests/busybox/awk_support.c', 'guests/busybox/applets.c', 'guests/busybox/exec.c',
-    'guests/lib/process.c', 'guests/lib/cwd.c', 'guests/sjlj/runtime.c', 'guests/sjlj/stack.s'
+    'guests/lib/process.c', 'guests/lib/cwd.c',
+    (Join-Path $build 'timezone.c'), 'guests/lib/timezone.c',
+    'guests/sjlj/runtime.c', 'guests/sjlj/stack.s'
 $raw = Join-Path $build 'ash.raw.wasm'
 try {
     & $clang @compile @sources -o $raw

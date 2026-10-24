@@ -22,8 +22,20 @@ Actual Windows packets show RST for the bound refusal peer; the harness now
 expects connection reset (WASI errno 15), distinct from refusal (14).
 Serial rendering now skips unchanged idle frames;
 actual WHPX output/disclosure/background cancellation checks pass. The earlier
-malformed serial frame remains recorded and is not proven resolved. Non-UTC
-timezones and final combined delivery remain incomplete.
+malformed serial frame remains recorded and is not proven resolved. Final
+combined delivery remains incomplete.
+
+BusyBox now links upstream musl timezone rules with validated TZif buffers and
+packaged IANA 2026e data. Native checks pass 96 independent historical/future
+oracles, all 598 packaged TZif files, a version-1 fixture and 17 malformed
+inputs. Both 512 MiB WHPX APIs pass the expanded filesystem/date sequence and
+independently compare all declared library and license bytes after save in
+artifacts/environment-final-filesystem-* and environment-final-assets-*.
+All 21 current native BusyBox suites and Python/session/cwd/mount/proc
+regressions pass. Prebuilt CPython and all 537 upstream library files remain
+byte-identical. The 256 MiB C application sequence passes, but the full session
+sequence fails when it starts an additional Python process. Use 512 MiB for
+the complete environment. Final full application verification is still running.
 
 Conversation-owned live ash/Python tool sessions now retain variables, globals,
 environment, cwd anchors, shell functions/aliases/options/status and user fds.
@@ -37,8 +49,8 @@ call stops/reaps unfinished descendants. Native sessions, standard Python,
 streams, PATH/proc regressions, host tests and Clippy pass. Both actual 512 MiB
 Windows WHPX APIs pass latest session lifecycle and independent saved FAT checks
 in artifacts/sessions-final-whpx-responses and
-artifacts/sessions-final-whpx-chat_completions. Non-UTC timezone support and the
-final combined environment audit remain incomplete.
+artifacts/sessions-final-whpx-chat_completions. The final combined environment
+audit remains incomplete.
 
 Root programs.json now declares unique module sources, shared aliases, libraries
 and licenses. Discovery validates bodies, supported import signatures and command
@@ -51,8 +63,8 @@ updates, and supports host export or logical firmware installation. Standard
 packaging includes all five prepared ports, Python libraries and linked licenses;
 VM startup retains that installation when staging the selected workspace.
 Host tests, actual FAT pack/extract, native application dispatch, both Clippy
-targets and Release packaging pass. Retained interpreter sessions, non-UTC
-timezones and final combined delivery remain incomplete.
+targets and Release packaging pass. The final combined delivery remains
+incomplete.
 Both actual 512 MiB Windows WHPX API flows pass logical guest installation,
 application dispatch and independent saved FAT module/license bytes and modes
 in artifacts/installation-final-whpx-responses and

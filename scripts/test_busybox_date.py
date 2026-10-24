@@ -30,6 +30,7 @@ def main():
         for name in ('ash', 'python'):
             shutil.copyfile(getattr(args, name), root / f'{name}.wasm')
         shutil.copytree(args.python.parent / 'lib', root / 'lib')
+        shutil.copytree(args.ash.parent / 'share/zoneinfo', root / 'share/zoneinfo')
         result = subprocess.run([str(args.runner.resolve()), str(root), 'python', '-c', DATE_CHECK],
                                 capture_output=True, timeout=180)
         print(result.stdout.decode('utf-8', 'replace'), end='', flush=True)

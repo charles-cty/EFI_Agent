@@ -251,11 +251,25 @@ an explicit /proc/self/cwd still reports its symlink with lstat. Link/parent
 ordering and trailing slashes survive libc routing. BusyBox, curl, QuickJS and
 WolfSSH use this shared adapter.
 
-Date uses upstream BusyBox UTC parsing and formatting, RFC/ISO output,
-nanosecond fields and file reference times. Invalid -D input tails, unavailable
-clock reads, oversized formatted output and closed stdout fail explicitly.
-Setting the system clock fails with ENOTSUP. WASI libc supplies UTC only;
-date rejects other TZ values and accepts -u to select UTC explicitly.
+Date uses upstream BusyBox parsing and formatting, RFC/ISO output, nanosecond
+fields and file reference times. The shared BusyBox image links musl 1.2.5's
+timezone rules engine above WASI libc's UTC implementation. POSIX TZ strings
+and IANA names resolve through /share/zoneinfo, including historical offsets,
+daylight-saving transitions and future POSIX footer rules. Unset TZ uses UTC;
+-u selects UTC explicitly. Invalid or unavailable timezone files fall back to
+UTC according to musl behavior. TZif input is bounded to 1 MiB and its blocks,
+indices, names and footer syntax are validated before upstream traversal.
+The upstream date helper now distinguishes a valid epoch -1 from EOVERFLOW.
+Invalid -D input tails, unavailable clock reads, oversized formatted output
+and closed stdout fail explicitly. Setting the system clock fails with ENOTSUP.
+This C timezone support is linked into BusyBox; the unchanged CPython binary
+retains its distribution's time-module behavior.
+
+BusyBox builds require the musl 1.2.5 source tree through -MuslSource
+(default artifacts/guest-sources/musl-1.2.5), in addition to BusyBox 1.37.0,
+WASI SDK and Binaryen. scripts/prepare_timezone.py uses uv to stage IANA 2026e
+from tzdata 2026.5. The installation catalog includes the timezone data and
+both musl and tzdata licenses as shared ash assets.
 
 Sort, uniq, cut and tr use upstream BusyBox parsers and algorithms. Sort and
 uniq retain record lengths across embedded NUL bytes; -z reads and writes NUL
