@@ -43,7 +43,11 @@ The complete 512 MiB WHPX application combination passes in
 artifacts/environment-applications-whpx-idle, including independent saved bytes,
 TCP/DNS/TLS/SSH, concurrent Python, pipelines, descriptors and here-documents.
 After the memory changes below, the complete application combination passes at
-256 MiB in artifacts/memory-applications-whpx-256. Both model API session flows
+198 MiB in two independent full runs; 197 MiB fails twice at Python subprocess
+startup, with explicit ENOMEM on repeat. This is the measured 1-MiB boundary for that fixed sequence, including
+explicit module registrations and concurrent Python, rather than a general
+Python/ash memory requirement. Evidence: artifacts/network-memory-boundary.
+The previous 256-MiB pass provides headroom. Both model API session flows
 pass at 192 MiB, including an additional Python process, clear and saved bytes.
 The 192 MiB cancellation flow preserves an independent background root.
 

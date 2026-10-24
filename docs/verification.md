@@ -1,5 +1,74 @@
 # Verification record
 
+## 2026-10-25: Complete network application RAM boundary
+
+The Release artifacts from memory optimization commit 893001f are tested with
+Windows QEMU/WHPX, q35, qemu64,+rdrand and the same OVMF 4-MiB firmware pair.
+Only guest RAM changes between runs. No runtime or guest code changes are made.
+Evidence is under artifacts/network-memory-boundary, with individual logs,
+serial captures, saved disks and results.tsv. RAM values are MiB of total guest
+memory, including firmware and UI.
+
+The complete existing application sequence enables TCP, DNS, POSIX networking,
+curl HTTP/TLS, WolfSSH, QuickJS, ash tasks, CPython and random checks. It tests
+held network peers and cancellation, language-to-ash-to-network chains, duplex
+Python subprocess capture, concurrent Python roots and independent saved FAT
+bytes. A successful run must exit zero and report all 20 PASS records. This
+sequence explicitly registers modules with /wasm load, including replacement
+loads while the previous registration remains live. Registered compiled images
+remain snapshots. Its peak differs from a single lazily loaded Python/ash tool
+session.
+
+| Guest RAM | Result | Evidence directory |
+| --- | --- | --- |
+| 208 MiB | Complete pass | 208-first |
+| 198 MiB | Complete pass twice, 257 and 265 seconds | 198-first, 198-repeat |
+| 197 MiB | Python child spawn fails twice; repeat explicitly reports ENOMEM | 197-first, 197-repeat |
+| 196 MiB | Python child spawn OSError; two other attempts hit transport errors | 196-retry, 196-first, 196-repeat |
+| 194 MiB | Python child spawn OSError | 194-first |
+| 192 MiB | Python child spawn ENOMEM on retry | 192-retry |
+| 176 MiB | Python child spawn ENOMEM | 176-first |
+
+The lowest complete pass is 198 MiB, with an adjacent failure at 197 MiB.
+This is an observed 1-MiB boundary for these artifacts and this workload;
+arbitrary programs and concurrency have different peaks. The earlier 256-MiB
+configuration provides headroom rather than defining the minimum.
+
+The 192-MiB retry and 197-MiB repeat report OSError: [Errno 48] Out of memory when
+python-standard.py starts its duplex Python subprocess. The 194-, 196- and
+first 197-MiB runs reach the same subprocess spawn and terminate with OSError and
+exit code 1; their displayed traceback omits the final error-code line. These
+are failed application runs, with the precise errno established only where
+the capture contains it.
+
+Separate transport failures are excluded from the RAM boundary: JSON view-frame
+decode failures at 192 and 196 MiB, and pyte cursor_position decoding failures
+at 196, 200 and 224 MiB. The 128- and 160-MiB attempts disconnect during Python
+loading without an explicit allocation diagnostic, so they do not establish an
+OOM cause. Repeated runs use fresh disks and independent peer ports. The parser
+and acceptance checks are unchanged.
+
+Reproduce in a Windows-local PowerShell working directory, replacing 198 and
+the output directory for each independent run:
+
+```powershell
+& artifacts/toolchains/uv-current/uv.exe run --no-project scripts/smoke_wasm.py --launcher target/release/efi-agent.exe --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --fixtures artifacts/wasm-fixtures --output artifacts/network-memory-boundary/198-first --memory 198 --command-timeout 90 --network --dns --posix-network --curl artifacts/wasm-guests/curl.wasm --curl-tls --wolfssh artifacts/wasm-guests/wolfssh.wasm --quickjs artifacts/wasm-guests/quickjs.wasm --ash artifacts/wasm-guests/ash.wasm --ash-child artifacts/wasm-fixtures/ash_child.wasm --ash-tasks --python artifacts/wasm-guests/python.wasm --random --qemu qemu-system-x86_64.exe
+```
+
+SHA256 of the tested EFI:
+8f69009d1996bbfab883480def42eeeb36aed02e93f97d47280f5efe6e0030e9.
+The unchanged Python SHA256 is
+d24bd98d3071af6b17d51d53a08700b9acef59172a0afcb6adb733645c2a1715;
+ash SHA256 is
+6fc2ad9e200ef38e524e29f173e5573b50b72c9f377615b245270a570e432916.
+
+Intermediate inspection issues: a nested PowerShell/Python command lost its
+quotes; a temporary script replaced it. Windows Python's GBK stdout rejected
+a Unicode terminal symbol; the decoded artifact was written directly as UTF-8.
+Two source-path lookups used nonexistent paths and did not affect the tests.
+QEMU interrupt-vector and GLib manifest warnings remain
+nonfatal. Temporary inspection and launch scripts are removed after testing.
+
 ## 2026-10-24: wasmi and Python allocation analysis
 
 docs/memory-analysis.md records isolated Windows-native Release measurements

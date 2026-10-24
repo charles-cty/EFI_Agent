@@ -242,3 +242,21 @@ well as Python and therefore are not an exact comparison with this single
 file-backed session. Actual WHPX passes the full concurrent application workload
 at 256 MiB and both model API session workloads at 192 MiB. These are measured
 passing configurations. The unchanged Python 40-MiB initial memory remains.
+
+## Complete network application RAM boundary (2026-10-25)
+
+With the same optimized Release artifacts, the complete Windows WHPX network
+application sequence passes twice at 198 MiB of total guest RAM. At 197 MiB,
+the standard Python script fails twice while spawning its duplex Python
+subprocess. The 192-MiB capture and 197-MiB repeat explicitly report ENOMEM.
+The first 197-MiB traceback omits the final errno line. See docs/verification.md and
+artifacts/network-memory-boundary for individual runs and exclusions.
+
+This establishes an observed boundary at 1-MiB resolution for the fixed sequence.
+It includes firmware/UI, registered curl/SSH/QuickJS/ash/Python images, replacement
+module loading and overlapping process instances. Registered snapshots retain
+compiled code; replacement loading can temporarily retain old and new images.
+It therefore measures a larger peak than the native Python-plus-ash session.
+256 MiB supplies 58 MiB above the lowest passing configuration. Larger scripts,
+more concurrent processes and growing output/history can need additional RAM.
+The previous ash-only boundary still requires a separate post-optimization run.
