@@ -4,6 +4,7 @@
 #include <alloca.h>
 #include <getopt.h>
 #include <sys/time.h>
+#include <sys/statfs.h>
 
 #define ALIGN4 __attribute__((aligned(4)))
 #define PACKED __attribute__((packed))
@@ -106,6 +107,7 @@ uint32_t crc32_block_endian0(uint32_t value, const void *buffer, unsigned length
     uint32_t *table);
 int parse_datestr(const char *text, struct tm *value);
 int index_in_substrings(const char *strings, const char *key);
+const char *nth_string(const char *strings, int n);
 time_t validate_tm_time(const char *text, struct tm *value);
 extern const char bb_msg_invalid_date[];
 extern const char bb_msg_invalid_arg_to[];

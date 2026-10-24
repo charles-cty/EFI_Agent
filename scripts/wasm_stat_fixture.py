@@ -84,7 +84,7 @@ STAT_CHECK = dedent(r'''
     print('PASS stat 64-bit timestamp boundaries', flush=True)
 
     for command in ('stat missing-stat-file', 'stat -Q stat-dir/file',
-                    'stat -f stat-dir/file', 'stat', 'stat stat-dir/file >&-'):
+                    'stat', 'stat stat-dir/file >&-'):
         result = run(command)
         assert result.returncode != 0 and result.stderr, (command, result)
     with open('stat-error-result', 'wb') as output:
@@ -93,3 +93,84 @@ STAT_CHECK = dedent(r'''
         output.write(payload)
     print('UPSTREAM_STAT_OK', flush=True)
 ''')
+
+
+STATFS_CHECK = dedent(r'''
+    import json
+
+    fs_format = '%i|%l|%t|%T|%s|%S|%b|%f|%a|%c|%d|%n'
+
+    def check_filesystem(path, kind, type_name):
+        before = os.statvfs(path)
+        result = subprocess.run(['stat', '-f', '-c', fs_format, path], capture_output=True)
+        after = os.statvfs(path)
+        assert result.returncode == 0 and not result.stderr, (path, result)
+        fields = result.stdout.decode().rstrip('\n').split('|')
+        assert len(fields) == 12, fields
+        fsid, name_max, type_hex, name, block, fragment, total, free, available, files, files_free, operand = fields
+        assert int(fsid, 16) == before.f_fsid, (path, fields, before)
+        assert int(name_max) == before.f_namemax, fields
+        assert int(type_hex, 16) == kind and name == type_name, fields
+        assert int(block) == before.f_bsize and int(fragment) == before.f_frsize, fields
+        assert int(total) == before.f_blocks and int(files) == before.f_files, fields
+        # Shared host-volume allocation need not change monotonically.
+        block_drift = 4 * 1024 * 1024 // before.f_frsize if before.f_fsid == 0 else 0
+        for value, first, last, drift in ((free, before.f_bfree, after.f_bfree, block_drift),
+                                          (available, before.f_bavail, after.f_bavail, block_drift),
+                                          (files_free, before.f_ffree, after.f_ffree, 0)):
+            assert min(first, last) - drift <= int(value) <= max(first, last) + drift, (path, fields, before, after)
+        assert operand == path, fields
+        print('PASS stat filesystem', repr(path), flush=True)
+        return fields
+
+    for path, kind, name in [('/', 0x45464941, 'efi-agent'),
+                              ('stat-dir/file', 0x45464941, 'efi-agent'),
+                              ('stat-dir/link', 0x45464941, 'efi-agent'),
+                              ('/bin/stat', 0x45464941, 'efi-agent'),
+                              ('/tmp', 0x01021994, 'tmpfs'),
+                              ('/dev/null', 0x1373, 'devfs'),
+                              ('/proc/uptime', 0x9fa0, 'proc')]:
+        check_filesystem(path, kind, name)
+    with open('/tmp/stat-quota', 'wb') as output:
+        output.write(b'x' * 65537)
+    fields = check_filesystem('/tmp/stat-quota', 0x01021994, 'tmpfs')
+    assert list(map(int, fields[6:11])) == [33554432, 33488895, 33488895, 4097, 4095], fields
+    os.unlink('/tmp/stat-quota')
+    fields = check_filesystem('/tmp', 0x01021994, 'tmpfs')
+    assert list(map(int, fields[6:11])) == [33554432, 33554432, 33554432, 4097, 4096], fields
+    result = run('stat -f /tmp')
+    assert result.returncode == 0 and not result.stderr, result
+    for text in (b'Type: tmpfs', b'Block size: 1 ', b'Blocks: Total: 33554432',
+                 b'Inodes: Total: 4097'):
+        assert text in result.stdout, result
+    result = run('stat -ft /tmp')
+    expected = b'/tmp 3 1024 1021994 1 33554432 33554432 33554432 4097 4096\n'
+    assert (result.returncode, result.stdout, result.stderr) == (0, expected, b''), result
+    with open('stat-filesystem-terse', 'wb') as output:
+        output.write(result.stdout)
+    result = run("stat -f -c '%i:%T' /tmp /dev/null /proc/uptime /")
+    assert (result.returncode, result.stdout, result.stderr) == (
+        0, b'3:tmpfs\n2:devfs\n4:proc\n0:efi-agent\n', b''), result
+    # One process exercises repeated snapshot allocation and release.
+    result = subprocess.run(['stat', '-f', '-c', '%i'] + ['/tmp'] * 140, capture_output=True)
+    assert (result.returncode, result.stdout, result.stderr) == (0, b'3\n' * 140, b''), result
+    result = run("cd stat-dir; stat -f -c '%T' link")
+    assert (result.returncode, result.stdout, result.stderr) == (0, b'efi-agent\n', b''), result
+    os.symlink('no-such-target', 'stat-dir/dangling')
+    os.symlink('loop', 'stat-dir/loop')
+    os.mkdir('stat-dir/denied', 0o000)
+    for command in ('stat -f stat-dir/absent', 'stat -f stat-dir/dangling',
+                    'stat -f stat-dir/loop', 'stat -f stat-dir/file/child',
+                    'stat -f stat-dir/denied/child', 'stat -f /tmp >&-'):
+        result = run(command)
+        assert result.returncode and result.stderr, (command, result)
+    os.chmod('stat-dir/denied', 0o700)
+    result = run("stat -f -c '%T' stat-dir/absent /tmp")
+    assert result.returncode and result.stdout == b'tmpfs\n' and result.stderr, result
+    fields = check_filesystem('/', 0x45464941, 'efi-agent')
+    with open('stat-filesystem-root', 'w') as output:
+        json.dump(fields, output)
+    print('UPSTREAM_STATFS_OK', flush=True)
+''')
+
+STAT_CHECK += STATFS_CHECK

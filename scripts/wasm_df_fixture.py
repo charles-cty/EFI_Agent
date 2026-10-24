@@ -27,9 +27,11 @@ DF_CHECK = dedent(r'''
         round_unit = lambda value: (value + unit // 2) // unit
         assert total == round_unit(before.f_blocks * before.f_frsize), (path, total, before)
         low, high = sorted([before.f_bavail * before.f_frsize, after.f_bavail * after.f_frsize])
-        assert round_unit(low) <= available <= round_unit(high), (path, available, before, after)
+        # Other host activity can allocate and release blocks between queries.
+        drift = 4 * 1024 * 1024 if before.f_fsid == 0 else 0
+        assert round_unit(low - drift) <= available <= round_unit(high + drift), (path, available, before, after)
         low, high = sorted([(s.f_blocks - s.f_bfree) * s.f_frsize for s in (before, after)])
-        assert round_unit(low) <= used <= round_unit(high), (path, used, before, after)
+        assert round_unit(low - drift) <= used <= round_unit(high + drift), (path, used, before, after)
         assert 0 <= int(percent.rstrip('%')) <= 100, lines
         assert mount in ('/', '/tmp', '/dev', '/proc')
         return before

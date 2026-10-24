@@ -40,7 +40,7 @@ ENABLED = {
     "SORT", "FEATURE_SORT_BIG", "UNIQ", "CUT", "FEATURE_CUT_REGEX",
     "TR", "FEATURE_TR_CLASSES", "FEATURE_TR_EQUIV",
     "OD", "HEXDUMP", "BASE64", "SHA256SUM", "FEATURE_MD5_SHA1_SUM_CHECK", "REALPATH",
-    "STAT", "FEATURE_STAT_FORMAT", "WHICH",
+    "STAT", "FEATURE_STAT_FORMAT", "FEATURE_STAT_FILESYSTEM", "WHICH",
     "FIND", "FEATURE_FIND_PRINT0", "FEATURE_FIND_MTIME", "FEATURE_FIND_ATIME",
     "FEATURE_FIND_CTIME", "FEATURE_FIND_MMIN", "FEATURE_FIND_AMIN",
     "FEATURE_FIND_CMIN", "FEATURE_FIND_PERM", "FEATURE_FIND_TYPE",
@@ -563,6 +563,8 @@ def main():
     prepare_base64(args.source, args.output)
     prepare_sha256sum(args.source, args.output)
     stat = (args.source / "coreutils/stat.c").read_text(encoding="utf-8")
+    stat = replace_once(stat, '#define FS_TYPE_LIST \\\n',
+                        '#define FS_TYPE_LIST \\\nFS_TYPE(0x45464941, "efi-agent") \\\nFS_TYPE(0x1373, "devfs") \\\n')
     # WASI time_t is 64-bit while long is 32-bit.
     stat = stat.replace('TYPE_SIGNED(time_t) ? "ld" : "lu"',
                         'TYPE_SIGNED(time_t) ? "lld" : "llu"')

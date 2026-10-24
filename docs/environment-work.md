@@ -9,8 +9,8 @@ false, od, hexdump, base64, sha256sum and realpath, plus mkdir, rmdir, rm,
 touch, date, sort, uniq, cut, tr, cp, mv, which, xargs, gzip, gunzip, zcat, unzip, du, ln and df. Other
 utility applets still need upstream replacement or addition.
 Upstream `stat` now reports file and symlink metadata, ownership, permissions,
-timestamps and custom/terse formats. Filesystem mode (`stat -f`) remains
-disabled pending its C statfs adaptation and verification. Standard statvfs
+timestamps and custom/terse formats. Filesystem mode (`stat -f`) now uses the
+same capacity provider through a guest C statfs adapter. Standard statvfs
 interfaces now use measured native and firmware capacity and runtime mounts.
 Date currently supports UTC; other TZ values fail explicitly and timezone
 support remains pending.

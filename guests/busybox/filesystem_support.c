@@ -1,5 +1,6 @@
 #include "libbb.h"
 #include <mntent.h>
+#include <sys/statfs.h>
 #include <sys/statvfs.h>
 
 int efi_filesystem_statistics(int fd, const char *path, uint64_t fields[12]);
@@ -34,6 +35,27 @@ int __wrap_statvfs(const char *path, struct statvfs *info)
 int __wrap_fstatvfs(int fd, struct statvfs *info)
 {
     return statistics(fd, NULL, info);
+}
+
+int statfs(const char *path, struct statfs *info)
+{
+    uint64_t fields[12];
+    if (efi_filesystem_statistics(AT_FDCWD, path, fields) < 0)
+        return -1;
+    memset(info, 0, sizeof(*info));
+    info->f_bsize = fields[0];
+    info->f_frsize = fields[1];
+    info->f_blocks = fields[2];
+    info->f_bfree = fields[3];
+    info->f_bavail = fields[4];
+    info->f_files = fields[5];
+    info->f_ffree = fields[6];
+    /* BusyBox reads fsid words most significant first. Runtime IDs are u32. */
+    info->f_fsid[1] = fields[8];
+    info->f_flags = fields[9];
+    info->f_namelen = fields[10];
+    info->f_type = fields[11];
+    return 0;
 }
 
 const char bb_path_mtab_file[] = "/proc/mounts";

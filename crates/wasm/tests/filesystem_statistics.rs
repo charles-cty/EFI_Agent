@@ -15,7 +15,11 @@ impl FileSystem for Statistics {
     }
     fn metadata(&self, path: &str) -> Result<Metadata, FileError> {
         match path {
-            "" | "dir" => Ok(Metadata::new(EntryType::Directory, 0)),
+            "" | "dir" => {
+                let mut metadata = Metadata::new(EntryType::Directory, 0);
+                metadata.allocated = Some(0);
+                Ok(metadata)
+            }
             _ => Err(FileError::NotFound),
         }
     }
@@ -185,4 +189,45 @@ fn statistics_reject_inconsistent_provider_values() {
         }
         assert_eq!(stats.encode(), Err(FileError::Invalid));
     }
+}
+
+#[test]
+#[ignore = "requires a built BusyBox image in EFI_AGENT_ASH"]
+fn upstream_statfs_preserves_large_counts_and_reserved_capacity() {
+    let path = std::env::var_os("EFI_AGENT_ASH").expect("set EFI_AGENT_ASH to the built ash.wasm");
+    let module = std::fs::read(path).unwrap();
+    let mut world = World::new();
+    world.set_filesystem(Rc::new(Statistics::default()));
+    world.register("ash", &module).unwrap();
+    let pid = world
+        .spawn(
+            vec![
+                "stat".into(),
+                "-f".into(),
+                "-c".into(),
+                "%i|%t|%T|%s|%S|%b|%f|%a|%c|%d|%l".into(),
+                "/".into(),
+            ],
+            vec![],
+        )
+        .unwrap();
+    for _ in 0..10000 {
+        if !world.status(pid).unwrap().is_live() {
+            break;
+        }
+        world.step();
+    }
+    let (stdout, stderr) = world.take_output(pid).unwrap();
+    assert_eq!(
+        world.status(pid).unwrap(),
+        &Status::Exited(0),
+        "{}",
+        String::from_utf8_lossy(&stderr)
+    );
+    assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
+    // Counts are computed independently from the provider's byte capacities.
+    assert_eq!(
+        stdout,
+        b"c1|45464941|efi-agent|4096|4096|1099511627778|536870913|268435457|8193|731|1024\n"
+    );
 }

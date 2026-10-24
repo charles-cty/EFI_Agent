@@ -9,6 +9,17 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Upstream BusyBox stat now enables filesystem mode with a guest statfs adapter
+over the measured capacity provider. Default, terse and custom output cover
+workspace/tmpfs/devfs/proc identities. Native guest and actual 512 MiB WHPX
+checks pass both model APIs, with independent saved FAT capacity and metadata
+checks in artifacts/statfs-whpx-responses and
+artifacts/statfs-whpx-chat_completions. The actual shared image passes a
+deterministic 2^52-byte capacity check with exact 64-bit output and distinct
+free/available counts. Host Clippy and formatting pass. Required commands remain
+47/48, with tar pending. General mounts, manifests, retained sessions and full
+environment delivery remain incomplete.
+
 Upstream BusyBox df now builds into the shared image. Standard C and Python
 statvfs/fstatvfs use measured workspace capacity, distinct free/available bytes,
 namespace slot counts and runtime mount statistics. Windows allocation units

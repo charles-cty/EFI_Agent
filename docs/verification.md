@@ -1,5 +1,51 @@
 # Verification record
 
+## 2026-10-24: Upstream stat filesystem output
+
+BusyBox stat -f now uses the measured filesystem-statistics provider through a
+guest statfs adapter. Counters retain 64 bits. Explicit fsid word order matches
+the upstream formatter; the type table adds the actual workspace and devfs
+identifiers. The upstream parser and default/terse/custom formatting remain.
+Buffered stdout failures use the previously verified stat error path.
+
+Native Release integration compares all numeric fields against standard Python
+statvfs before and after commands. It covers workspace files/symlinks, /bin,
+tmpfs/devfs/proc identities, exact 65537-byte temporary allocation and release,
+default and terse output, repeated snapshot descriptors, relative cwd, multiple
+operands, missing/dangling/looping links, denied parents, non-directory traversal
+and closed stdout. Independent saved bytes and host capacity are checked.
+Evidence: `artifacts/statfs-native.log`.
+
+The actual shared BusyBox image also runs against a deterministic provider with
+2^52+8192 total bytes, 2^41+4096 free bytes and 2^40+4096 available bytes.
+Exact output verifies 1099511627778 blocks without 32-bit truncation, independent
+free/available counts and fsid word order. All four statistics integration tests
+pass, including this explicitly selected guest test, in
+`artifacts/statfs-counter-tests.log`. Set EFI_AGENT_ASH to the built shared image
+and run the filesystem_statistics test with --include-ignored to reproduce it.
+
+Actual 512 MiB WHPX/OVMF passes both Responses and Chat Completions with the
+full file and filesystem stat fixture. Independent saved FAT checks verify
+capacity, file bytes, modes, timestamps, link targets and terse filesystem
+output. Evidence: `artifacts/statfs-whpx-responses` and
+`artifacts/statfs-whpx-chat_completions`. Host Clippy and format checks pass in
+`artifacts/statfs-clippy.log` and `artifacts/statfs-format.log`.
+Final native stat, df, ln and du regressions pass in
+`artifacts/statfs-test_busybox_*.log`; modified Python syntax passes in
+`artifacts/statfs-python-syntax.log`.
+
+The first new fixture expected 4096 total tmpfs inodes. The provider also counts
+the mount root, so the correct total is 4097 with 4096 free file slots. The
+fixture now distinguishes those values. Source inspection used an absent SDK
+statfs header; this platform supplies its explicit guest-only layout.
+The deterministic provider initially lacked measured directory allocation,
+which the actual BusyBox startup metadata path requires. Its metadata now
+reports zero allocated directory bytes. A native df regression exposed another
+test assumption: a shared host volume's free space can fall and rise between
+three queries. Workspace free-space comparisons now permit the same bounded
+4 MiB measurement drift as the independent saved-volume checks. Temporary
+mount counters and deterministic large-count checks remain exact.
+
 ## 2026-10-24: Upstream df and measured filesystem statistics
 
 BusyBox 1.37.0 df now builds into the shared image with its upstream parser,

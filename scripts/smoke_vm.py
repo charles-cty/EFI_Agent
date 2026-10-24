@@ -499,7 +499,7 @@ def main():
                   'PROGRAM_PATHS_OK' if args.program_paths else
                   'UPSTREAM_BASIC_APPLETS_OK' if args.find_applet else
                   'UPSTREAM_LS_OK' if args.ls_applet else
-                  'UPSTREAM_STAT_OK' if args.stat_applet else
+                  'UPSTREAM_STATFS_OK' if args.stat_applet else
                   'UPSTREAM_REALPATH_OK' if args.realpath_applet else
                   'UPSTREAM_SHA256_OK' if args.sha256_applet else
                   'UPSTREAM_BASE64_OK' if args.base64_applet else 'UPSTREAM_TEXT_APPLETS_OK')
@@ -650,7 +650,9 @@ def main():
                         assert workspace.entries['ls-tree/dir-link']['target'] == 'sub'
                         assert workspace.entries['ls-tree/dangling']['target'] == 'absent'
                     if args.stat_applet:
-                        verify_stat(workspace)
+                        clusters = (fs.total_sectors - fs.first_data_sector) // fs.bpb.BPB_SecPerClus
+                        free = sum(fs.fat.get(index) == 0 for index in range(2, clusters + 2)) * fs.cluster_size
+                        verify_stat(workspace, (clusters * fs.cluster_size, free, free))
                     elif args.copy_move_applets:
                         verify_copy_move(workspace)
                     elif args.xargs_applet:

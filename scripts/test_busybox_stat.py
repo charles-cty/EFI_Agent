@@ -3,6 +3,7 @@
 # ///
 """Verify upstream stat through real ash and independent saved metadata."""
 import argparse
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -10,9 +11,10 @@ import tempfile
 
 from wasm_namespace_fixture import DirectoryWorkspace
 from wasm_stat_fixture import STAT_CHECK
+from test_busybox_df import host_capacity
 
 
-def verify_stat(workspace):
+def verify_stat(workspace, capacity):
     source = workspace.entries['stat-dir/file']
     assert source['kind'] == 'File' and source['mode'] == 0o640, source
     assert source['accessed'] == source['modified'] == 1700000123000000000, source
@@ -36,6 +38,17 @@ def verify_stat(workspace):
         for value in (2147483647, 2147483648, 2200000000, 4294967296)
     )
     assert workspace.read('stat-input') == b'alpha\x00omega'
+    assert workspace.read('stat-filesystem-terse') == (
+        b'/tmp 3 1024 1021994 1 33554432 33554432 33554432 4097 4096\n'
+    )
+    fields = json.loads(workspace.read('stat-filesystem-root'))
+    block, fragment, total, free, available, files, files_free = map(int, fields[4:11])
+    host_total, host_free, host_available = capacity
+    assert block == fragment and total * fragment <= host_total < (total + 1) * fragment, fields
+    # Metadata and result files are committed after the statistics snapshot.
+    assert abs(free * fragment - host_free) < 4 * 1024 * 1024, (fields, capacity)
+    assert abs(available * fragment - host_available) < 4 * 1024 * 1024, (fields, capacity)
+    assert 0 <= files_free <= files == 8193, fields
 
 
 def main():
@@ -52,7 +65,7 @@ def main():
                                 capture_output=True, timeout=180)
         print(result.stdout.decode('utf-8', 'replace'), end='', flush=True)
         assert result.returncode == 0 and not result.stderr, result.stderr
-        verify_stat(DirectoryWorkspace(root))
+        verify_stat(DirectoryWorkspace(root), host_capacity(root))
         print('PASS independent saved stat metadata')
 
 

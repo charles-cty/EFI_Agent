@@ -717,8 +717,9 @@ filesystem ID, flags, name length and type. Invalid provider values fail before
 reply publication. Mount operation 27 returns a close-on-exec mount-table text
 snapshot with escaped fields. BusyBox statvfs/fstatvfs and private Python
 os.statvfs/os.fstatvfs adapters consume these snapshots through standard methods.
-Preview 1 stat-f filesystem output remains disabled pending its separate C
-interface adaptation and verification.
+BusyBox stat -f uses a guest statfs layout with 64-bit counters and explicit
+fsid word order. It reports workspace, tmpfs, devfs and proc types in default,
+terse and custom formats, retaining the upstream parser and formatting logic.
 Creation applies the process umask; changing a mode affects later opens and
 directory traversal while existing file handles retain their granted access.
 The single guest owner/group is uid/gid 1. Symlink mode mutation without
