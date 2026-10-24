@@ -51,7 +51,15 @@ the first ash instance. Use 128 MiB for headroom in that installation. With the
 full shipped package installed but no Python execution, 160 MiB disconnects
 and 192 MiB passes. Discovery still reads and validates unused installed
 modules, so unused Python has transient validation costs. Evidence is under
-artifacts/ash-memory-probe and the first section of docs/verification.md.
+artifacts/ash-memory-probe and docs/verification.md.
+
+Isolated native allocation analysis identifies avoidable wasmi custom-section
+retention, geometric linear-memory capacity growth and Engine-owned code
+retention. Ignoring custom sections lowers the real retained Python session
+from 103.73 to 69.04 MiB; compact IR further lowers it to 57.53 MiB. These
+experiments preserve the prebuilt Python bytes and exclude firmware/UI.
+Production configuration is unchanged. See docs/memory-analysis.md and
+artifacts/memory-analysis for evidence and proposed priorities.
 
 Prepared default guests are current. Fresh VM/native packages are under
 artifacts/environment-final-package; hashes are in environment-final-builds.tsv.

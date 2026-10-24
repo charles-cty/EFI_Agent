@@ -1,5 +1,43 @@
 # Verification record
 
+## 2026-10-24: wasmi and Python allocation analysis
+
+docs/memory-analysis.md records isolated Windows-native Release measurements
+of wasmi 2.0.0 using the production feature/configuration baseline. The
+counting allocator uses allocate-copy-free realloc like UEFI's default
+GlobalAlloc implementation. Measurements cover module construction, retained
+custom sections, real initial instance memory, one-page growth, Store/Module/
+Engine destruction, repeated same-Engine translations, compact IR and a
+real World retained Python session with a second Python process.
+
+With current settings, the initialized Python session uses 103.73 MiB of
+requested live allocations, excluding firmware/UI. Ignoring custom sections
+reduces it to 69.04 MiB. Adding indirect-dispatch reduces it to 57.53 MiB.
+The corresponding session-plus-second-instance values are 144.54, 109.85
+and 98.35 MiB. All three real execution cases print the expected session and
+child markers, have empty stderr and return successfully. The original
+CPython binary and library remain unchanged. Module-only probes use inert
+host imports and establish construction/growth behavior, not execution.
+
+The Python module contains 21.62 MiB of DWARF sections. Ignoring custom
+sections saves 33.90 MiB of module-probe live allocation. A one-page grow from
+40 MiB causes an 80-MiB backing allocation; the allocate-copy-free peak includes
+both buffers. Repeated Module drops leave translated code in the live Engine.
+No production optimization or new firmware resource acceptance is claimed.
+The 512-MiB full combination remains its previously verified configuration.
+
+Evidence: artifacts/memory-analysis/*.tsv and python-sections.json, plus the
+build logs. Temporary probes, copied runtime source and their build workspace
+were removed after measurement. Production changes are documentation only.
+
+The first real-World probe lacked host random/clock providers and Python
+terminated during startup. Installing the same provider interfaces as the
+native runner corrected the probe. Source lookup first used nonexistent
+module/parser.rs, slot.rs and executor/stack paths; the actual dependency
+tree supplied the correct source paths. An unavailable web lookup was replaced
+with inspection of the exact locally installed dependencies and the build's
+packaged sysconfig data. All builds used cached Windows dependencies offline.
+
 ## 2026-10-24: Ash-only guest RAM measurements
 
 Actual Windows WHPX measurements use the current packaged Release EFI,
