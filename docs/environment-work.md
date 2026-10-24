@@ -222,8 +222,16 @@ artifacts/c-port-cwd-whpx-responses and artifacts/c-port-cwd-whpx-chat_completio
 Installation manifests, retained
 sessions and final delivery gates remain incomplete. Executable lookup now
 canonicalizes cwd/descriptor routes before selecting cached modules or compiled
-command aliases. Same-physical-path executable changes still need cache/content
-validation as part of manifest delivery.
+command aliases. File-backed cache validation now includes inode/device identity,
+size and namespace content revisions, so same-size edits with restored times,
+replacement, truncate and unlink cannot select stale code. Unchanged aliases
+share the current compiled module. Live Stores retain their loaded image;
+explicit byte registrations remain snapshots. Native and real Python checks
+pass in artifacts/executable-revision-host-tests.log and
+artifacts/executable-revision-native.log. Manifest delivery remains incomplete.
+Both actual 512 MiB WHPX API flows pass the same live-image and independent
+saved FAT checks in artifacts/executable-revision-whpx-responses and
+artifacts/executable-revision-whpx-chat_completions.
 
 ## Delivery requirements
 

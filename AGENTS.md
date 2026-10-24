@@ -9,6 +9,20 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+File-backed command caches now use inode/device identity, size and a provider
+content revision. Namespace revisions change on write, resize and truncate,
+independently of timestamps, and follow hard links and detached open files.
+Unchanged installed aliases share compiled code without rereading the image.
+New launches read changed files; live Stores retain their original image.
+Providers without content revisions are read at each launch. Explicit byte
+registrations remain snapshots and replace their former file association.
+Full host tests, both Clippy targets, Release packaging and real Python
+same-size/same-time mutation and saved-byte checks pass. Manifest installation
+and retained interpreter sessions remain incomplete. Both actual 512 MiB Windows
+WHPX API flows pass live old-image, file mutation and independent saved FAT
+checks in artifacts/executable-revision-whpx-responses and
+artifacts/executable-revision-whpx-chat_completions.
+
 BusyBox, curl, QuickJS and WolfSSH now share guests/lib/cwd.c. Its constructor
 initializes libc routing; chdir/getcwd retain runtime directory identity and
 physical-path semantics. All ports explicitly retain the original libc chdir

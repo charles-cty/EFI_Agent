@@ -31,6 +31,7 @@ struct Inner {
     raw: Rc<dyn FileSystem>,
     state: RefCell<State>,
     generation: Cell<u64>,
+    content_revisions: RefCell<BTreeMap<u64, u64>>,
     dirty: Cell<bool>,
     uncertain: Cell<bool>,
     open: RefCell<BTreeMap<u64, usize>>,
@@ -185,6 +186,13 @@ impl Inner {
         self.stamp()?.ok_or(FileError::Unsupported)
     }
 
+    fn invalidate_content(&self, inode: u64) -> Result<(), FileError> {
+        let mut revisions = self.content_revisions.borrow_mut();
+        let revision = revisions.entry(inode).or_default();
+        *revision = revision.checked_add(1).ok_or(FileError::Overflow)?;
+        Ok(())
+    }
+
     fn commit(&self, candidate: State) -> Result<(), FileError> {
         self.check()?;
         if matches!(self.storage, Storage::Temporary { .. }) {
@@ -238,6 +246,9 @@ impl Inner {
                     .is_none()
             );
         }
+        self.content_revisions
+            .borrow_mut()
+            .retain(|inode, _| candidate.nodes.contains_key(inode));
         *self.state.borrow_mut() = candidate;
     }
 
@@ -400,6 +411,7 @@ impl Namespace {
             raw,
             state: RefCell::new(state),
             generation: Cell::new(generation),
+            content_revisions: RefCell::new(BTreeMap::new()),
             dirty: Cell::new(false),
             uncertain: Cell::new(false),
             open: RefCell::new(BTreeMap::new()),
@@ -424,6 +436,7 @@ impl Namespace {
                 raw: Rc::new(temporary::MemoryStore::new(bytes)),
                 state: RefCell::new(State::new(0)),
                 generation: Cell::new(0),
+                content_revisions: RefCell::new(BTreeMap::new()),
                 dirty: Cell::new(false),
                 uncertain: Cell::new(false),
                 open: RefCell::new(BTreeMap::new()),
@@ -904,7 +917,9 @@ impl FileSystem for Namespace {
         raw_options.exclusive = false;
         raw_options.append = false;
         let modified = if options.truncate {
-            self.inner().stamp()?
+            let now = self.inner().stamp()?;
+            self.inner().invalidate_content(id)?;
+            now
         } else {
             None
         };
@@ -1154,6 +1169,17 @@ struct OpenFile {
 }
 
 impl File for OpenFile {
+    fn content_revision(&mut self) -> Result<Option<u64>, FileError> {
+        self.inner.check()?;
+        Ok(Some(
+            *self
+                .inner
+                .content_revisions
+                .borrow()
+                .get(&self.inode)
+                .unwrap_or(&0),
+        ))
+    }
     fn filesystem_statistics(&self) -> Result<crate::FileSystemStatistics, FileError> {
         self.inner.filesystem_statistics()
     }
@@ -1193,6 +1219,7 @@ impl File for OpenFile {
         }
         let count = buffer.len().min((MAX_RESIZE_BYTES - position) as usize);
         let now = self.inner.stamp()?;
+        self.inner.invalidate_content(self.inode)?;
         let count = handle.write(&buffer[..count])?;
         if count != 0
             && let Some(now) = now
@@ -1235,6 +1262,7 @@ impl File for OpenFile {
             return Err(FileError::FileTooLarge);
         }
         let now = self.inner.stamp()?;
+        self.inner.invalidate_content(self.inode)?;
         self.handle.as_mut().unwrap().resize(size)?;
         if let Some(now) = now {
             self.inner

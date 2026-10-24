@@ -132,6 +132,12 @@ pub struct OpenOptions {
 
 /// A host-owned open file. Duplicated descriptors share this object's cursor.
 pub trait File {
+    /// A provider-owned content revision for this open file identity. Reads and
+    /// metadata changes must not change it; every possible data mutation must.
+    /// None requires consumers to read the current bytes instead of caching.
+    fn content_revision(&mut self) -> Result<Option<u64>, FileError> {
+        Ok(None)
+    }
     fn filesystem_statistics(&self) -> Result<FileSystemStatistics, FileError> {
         Err(FileError::Unsupported)
     }

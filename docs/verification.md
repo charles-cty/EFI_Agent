@@ -1,5 +1,53 @@
 # Verification record
 
+## 2026-10-24: File-backed executable content revisions
+
+Namespace open files now expose a provider-owned content revision, independent
+of persisted times. Write, resize and truncate invalidate it before possible
+effects; empty writes, reads and metadata changes preserve it. Hard links and
+detached handles share inode revisions. Removed inodes release their revision
+entries. The counter is runtime state; replacing a world's filesystem clears
+its compiled-file cache.
+
+File-backed command compilation is keyed by path plus device/inode identity,
+revision and size. Installed aliases share one current compilation. Explicit
+byte registrations remain snapshots and remove a prior file association.
+Providers without content revisions require a fresh read and compilation.
+Invalid or absent current files cannot fall back to an old cached image.
+
+Independent Rust cases verify persistent and temporary namespace revisions,
+restored timestamps, metadata-only changes, zero writes, resize/truncate, hard
+links and detached files. Counting-provider integration checks unchanged-image
+reuse, absent revision support, both alias names, equal-length edits, replacement,
+invalid images, deletion, repair and live old Stores. Full host tests, host and
+UEFI Clippy, Release runner and EFI/launcher packaging pass in
+`artifacts/executable-revision-host-tests.log`,
+`artifacts/executable-revision-clippy-{host,uefi}.log`,
+`artifacts/executable-revision-runner.log` and
+`artifacts/executable-revision-package.log`.
+
+The real Python fixture stages independently assembled WASI images. Binaryen
+validates all three images in `artifacts/executable-revision-oracle.log`.
+A child blocks on stdin while its image is rewritten to equal-length code and
+its exact old mtime is restored. New launches exit 9; the live old child remains
+blocked until released and exits 7. Replacement exits 13; the hard-link alias
+keeps 9. Empty and deleted images fail before execution. Recreation and saved
+byte/inode checks pass in `artifacts/executable-revision-native.log`.
+
+The final Release runner also passes C application cwd, Python/ash cwd, all 17
+CPython, program-path, process-file and 112 stream regressions with independent
+saved-state checks in `artifacts/executable-revision-regression-*.log`.
+Both actual 512 MiB Windows WHPX model API flows pass the current tool sequence,
+live old-image and same-size/time mutation fixture, plus independent saved FAT
+bytes and inode checks in `artifacts/executable-revision-whpx-responses` and
+`artifacts/executable-revision-whpx-chat_completions`. Existing QEMU interrupt
+vector and host application manifest warnings remain nonfatal.
+
+The previous module-discovery test explicitly required reuse after corrupting
+the source file. It now requires rejection, repairs the source and checks both
+installed aliases. Independent counting tests retain compilation-sharing
+coverage without asserting stale execution.
+
 ## 2026-10-24: Shared C cwd adapter and application-relative files
 
 `guests/lib/cwd.c` now supplies constructor-time libc routing and standard

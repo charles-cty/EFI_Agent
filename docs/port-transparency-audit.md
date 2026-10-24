@@ -40,8 +40,6 @@ Python options now determine shell use, decoding and nonzero-exit handling.
 | Medium | Installed commands now appear in `/bin`; ash uses upstream PATH lookup and the runtime supports executable files and shebangs. General mount-boundary/link traversal and persistent installation manifests remain incomplete. | Native and WHPX cover ordinary PATH ordering, modes, cwd and shebangs. Complete mount traversal and manifest validation before claiming full executable namespace coverage. |
 | Medium | `crates/uefi/src/wasm.rs` uses `split_whitespace`. | Quoted source code, filenames with spaces and empty arguments cannot pass through `/wasm run/start` normally. Add a defined quoting grammar without invoking a shell implicitly. Script-file invocation currently avoids source-code quoting. |
 | Medium | The Python adapter explicitly rejects distinct custom argv[0], pre-exec callbacks, process groups and credentials. Signals and timeouts are unavailable. | Standard per-child cwd/umask and virtual `/dev/null` work. Cwd anchors preserve rename/unlink identity below standard file interfaces. Infinite `communicate`/wait and `poll()` are supported. |
-| Medium | BusyBox and Python initialize libc's cwd routing and expose physical getcwd results. Other C application entry points have no verified equivalent bootstrap. A native curl probe returns 26 for a relative config in its child cwd; the absolute config reads independent file-URL bytes successfully. | Fix cwd initialization and verify inherited cwd and relative file arguments in curl, WolfSSH and QuickJS before claiming all application ports share cwd semantics. Evidence: artifacts/cwd-anchor-c-port-probe.log. |
-| Medium | File-backed WASM modules are cached by resolved physical path. Cwd aliases now resolve to that path, but replacement or editing at the same physical path has no content-based cache validation. | Add executable content or generation validation with installation manifests before completing lazy module delivery. |
 | Medium | Private Python scandir entry proxies expose the standard methods and correct modes, including fd anchors, but are not instances of built-in `os.DirEntry`. | Type identity remains an interface difference. Preserve the upstream binary and resolve the missing Preview 1 mode representation below the public API where feasible. |
 | Medium | The full standard library is packaged, but its OS-dependent operations require runtime support. Dynamic extensions and native threads remain unavailable. | Module presence alone does not establish every operation. Validate each required capability through standard imports and calls. |
 | Medium | WASI libc does not propagate CPython's internal close-on-exec setting for ordinary file opens. A native probe reports `os.get_inheritable(open(...).fileno()) == True`. | With `close_fds=False` or `os.system`, a file can cross spawn unless the caller clears inheritance with `os.set_inheritable(fd, False)`. Default `subprocess` descriptor filtering and explicit `pass_fds` are tested. Resolve default file inheritance below the standard API. |
@@ -50,6 +48,18 @@ The internal `efi_process`/`efi_net` WASM imports and ash task serialization are
 implementation details. Their names alone do not make an application interface
 nontransparent. Standard curl trust options and the SSH client's explicit trust
 input are also outside the interface defects above.
+
+File-backed command caches now validate inode/device identity, size and provider
+content revisions. Namespace data mutations change the revision independently
+of timestamps. Unchanged aliases reuse one compiled image; changes affect later
+launches while live Stores retain the original image. Providers without revision
+support require fresh reads. Explicit byte registrations remain snapshots.
+Native cache/read counters and real Python same-size/same-time, live-child,
+replacement, unlink and saved-byte checks pass in
+artifacts/executable-revision-host-tests.log and artifacts/executable-revision-native.log.
+Both 512 MiB WHPX API flows and independent saved FAT checks pass in
+artifacts/executable-revision-whpx-responses and
+artifacts/executable-revision-whpx-chat_completions.
 
 ## Verification boundary
 

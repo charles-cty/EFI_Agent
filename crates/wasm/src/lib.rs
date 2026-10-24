@@ -252,6 +252,11 @@ impl Process {
     }
 }
 
+struct CompiledFile {
+    revision: (u64, u64, u64, u64),
+    module: Module,
+}
+
 /// A single-threaded process world. Host code calls `step` between firmware polls.
 /// Each live process owns its store, memory and retained Wasm call stack.
 /// Terminal records keep status and output but release execution resources.
@@ -260,7 +265,7 @@ pub struct World {
     linker: wasmi::Linker<Context>,
     programs: BTreeMap<String, Module>,
     program_files: BTreeMap<String, String>,
-    compiled_files: BTreeMap<String, Module>,
+    compiled_files: BTreeMap<String, CompiledFile>,
     bin: Rc<RefCell<BTreeMap<String, Option<String>>>>,
     processes: BTreeMap<Pid, Process>,
     ready: VecDeque<Pid>,
@@ -321,8 +326,12 @@ impl World {
             return Err(Error::InvalidArguments);
         }
         let module = Module::new(&self.engine, wasm)?;
+        let previous_path = self.program_files.remove(name);
         let previous = self.programs.insert(name.into(), module);
         if let Err(error) = self.refresh_bin() {
+            if let Some(path) = previous_path {
+                self.program_files.insert(name.into(), path);
+            }
             if let Some(previous) = previous {
                 self.programs.insert(name.into(), previous);
             } else {
@@ -341,8 +350,8 @@ impl World {
                 && (self.programs.contains_key("ash") || self.program_files.contains_key("ash")))
     }
 
-    /// Discover workspace modules without compiling them. Existing installations
-    /// retain their loaded image when a workspace file changes.
+    /// Discover workspace modules without compiling them. Later launches use
+    /// the current file content while live processes retain their loaded image.
     pub fn discover_programs(&mut self) -> Result<(), filesystem::FileError> {
         use filesystem::{EntryType, FileError, OpenOptions};
         let fs = self.filesystem.as_ref().ok_or(FileError::Unsupported)?;
@@ -409,66 +418,71 @@ impl World {
         Ok(())
     }
 
-    fn load_program(&mut self, name: &str) -> Result<(), Error> {
+    fn load_program(&mut self, name: &str) -> Result<Module, Error> {
         use filesystem::{FileError, OpenOptions};
         let name = name.strip_prefix("/bin/").unwrap_or(name);
-        if self.programs.contains_key(name) {
-            return Ok(());
+        if let Some(module) = self.programs.get(name) {
+            return Ok(module.clone());
         }
         let path = self
             .program_files
             .get(name)
             .ok_or_else(|| Error::UnknownProgram(name.into()))?
             .clone();
-        let module = if let Some(module) = self.compiled_files.get(&path) {
-            module.clone()
-        } else {
-            let fs = self
-                .filesystem
-                .as_ref()
-                .expect("Program files require a filesystem");
-            let load = || {
-                let mut file = fs.open(
-                    &path,
-                    OpenOptions {
-                        read: true,
-                        write: false,
-                        create: false,
-                        exclusive: false,
-                        truncate: false,
-                        append: false,
-                    },
-                )?;
-                let size = file.metadata()?.size;
-                if size > filesystem::MAX_RESIZE_BYTES {
-                    return Err(FileError::FileTooLarge);
-                }
-                let mut bytes = vec![0; size as usize];
-                let mut used = 0;
-                while used < bytes.len() {
-                    let end = (used + io::PIPE_CAPACITY).min(bytes.len());
-                    let count = file.read(&mut bytes[used..end])?;
-                    if count == 0 {
-                        return Err(FileError::Io);
-                    }
-                    used += count;
-                }
-                Ok(bytes)
-            };
-            let module = Module::new(&self.engine, &load().map_err(Error::ProgramFile)?)?;
-            self.compiled_files.insert(path, module.clone());
-            module
-        };
-        let previous = self.programs.insert(name.into(), module);
-        if let Err(error) = self.refresh_bin() {
-            if let Some(previous) = previous {
-                self.programs.insert(name.into(), previous);
-            } else {
-                self.programs.remove(name);
-            }
-            return Err(Error::ProgramFile(error));
+        let fs = self
+            .filesystem
+            .as_ref()
+            .expect("Program files require a filesystem");
+        let mut file = fs
+            .open(
+                &path,
+                OpenOptions {
+                    read: true,
+                    write: false,
+                    create: false,
+                    exclusive: false,
+                    truncate: false,
+                    append: false,
+                },
+            )
+            .map_err(Error::ProgramFile)?;
+        let info = file.metadata().map_err(Error::ProgramFile)?;
+        if info.size > filesystem::MAX_RESIZE_BYTES {
+            return Err(Error::ProgramFile(FileError::FileTooLarge));
         }
-        Ok(())
+        let revision = file
+            .content_revision()
+            .map_err(Error::ProgramFile)?
+            .map(|revision| (info.device, info.inode, revision, info.size));
+        if let Some(revision) = revision
+            && let Some(cached) = self.compiled_files.get(&path)
+            && cached.revision == revision
+        {
+            return Ok(cached.module.clone());
+        }
+        let mut bytes = vec![0; info.size as usize];
+        let mut used = 0;
+        while used < bytes.len() {
+            let end = (used + io::PIPE_CAPACITY).min(bytes.len());
+            let count = file
+                .read(&mut bytes[used..end])
+                .map_err(Error::ProgramFile)?;
+            if count == 0 {
+                return Err(Error::ProgramFile(FileError::Io));
+            }
+            used += count;
+        }
+        let module = Module::new(&self.engine, &bytes)?;
+        if let Some(revision) = revision {
+            self.compiled_files.insert(
+                path,
+                CompiledFile {
+                    revision,
+                    module: module.clone(),
+                },
+            );
+        }
+        Ok(module)
     }
 
     /// Install the host clock before spawning. A live world's timer epochs must
@@ -541,6 +555,7 @@ impl World {
             filesystem.set_random(random.clone());
         }
         self.filesystem = Some(filesystem);
+        self.compiled_files.clear();
         Ok(())
     }
 
@@ -628,11 +643,7 @@ impl World {
         {
             return Err(Error::ArgumentsTooLarge);
         }
-        self.load_program(&module_name)?;
-        let module = self
-            .programs
-            .get(&module_name)
-            .ok_or_else(|| Error::UnknownProgram(module_name.clone()))?;
+        let module = self.load_program(&module_name)?;
         let pid = self.next_pid;
         let next_pid = pid
             .checked_add(1)
@@ -760,7 +771,7 @@ impl World {
         // Instantiation copies data segments but cannot execute guest code:
         // start sections are rejected by the engine configuration.
         store.set_fuel(u64::MAX)?;
-        let instance = self.linker.instantiate_and_start(&mut store, module)?;
+        let instance = self.linker.instantiate_and_start(&mut store, &module)?;
         let memory = instance
             .get_memory(&store, "memory")
             .ok_or_else(|| wasmi::Error::new("Missing memory export"))?;

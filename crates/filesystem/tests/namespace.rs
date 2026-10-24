@@ -41,6 +41,64 @@ fn options() -> OpenOptions {
 }
 
 #[test]
+fn content_revisions_follow_inode_data_without_using_timestamps() {
+    for temporary in [false, true] {
+        let work = Workspace::new();
+        let namespace = if temporary {
+            Namespace::temporary(4096, 16, 42, None)
+        } else {
+            work.open()
+        };
+        let mut writer = namespace.open("original", options()).unwrap();
+        writer.write(b"abcd").unwrap();
+        namespace.hard_link("original", "alias", false).unwrap();
+        let mut reader = namespace.open("alias", options()).unwrap();
+        let original = reader.content_revision().unwrap().unwrap();
+        let mut bytes = [0; 4];
+        reader.read(&mut bytes).unwrap();
+        namespace.set_mode("alias", 0o600).unwrap();
+        namespace
+            .set_times("alias", true, TimeUpdate::Set(0), TimeUpdate::Set(0))
+            .unwrap();
+        assert_eq!(reader.content_revision().unwrap(), Some(original));
+        assert_eq!(writer.write(b"").unwrap(), 0);
+        assert_eq!(writer.content_revision().unwrap(), Some(original));
+        writer.seek(0, 0).unwrap();
+        writer.write(b"WXYZ").unwrap();
+        let overwritten = reader.content_revision().unwrap().unwrap();
+        assert!(overwritten > original);
+        namespace
+            .set_times("alias", true, TimeUpdate::Set(0), TimeUpdate::Set(0))
+            .unwrap();
+        assert_eq!(reader.content_revision().unwrap(), Some(overwritten));
+        writer.resize(2).unwrap();
+        let resized = reader.content_revision().unwrap().unwrap();
+        assert!(resized > overwritten);
+        drop(
+            namespace
+                .open(
+                    "alias",
+                    OpenOptions {
+                        truncate: true,
+                        ..options()
+                    },
+                )
+                .unwrap(),
+        );
+        assert!(reader.content_revision().unwrap().unwrap() > resized);
+        namespace.rename("original", "renamed").unwrap();
+        namespace.unlink("renamed").unwrap();
+        namespace.unlink("alias").unwrap();
+        let detached = reader.content_revision().unwrap().unwrap();
+        writer.write(b"still open").unwrap();
+        assert!(reader.content_revision().unwrap().unwrap() > detached);
+        drop(writer);
+        drop(reader);
+        assert!(namespace.take_errors().is_empty());
+    }
+}
+
+#[test]
 fn namespace_statistics_report_capacity_and_retained_entry_quota() {
     let work = Workspace::new();
     let namespace = work.open();

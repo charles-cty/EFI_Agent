@@ -40,8 +40,13 @@ ancestry before reap. BusyBox, curl, QuickJS and WolfSSH link the same adapter
 from guests/lib/cwd.c. Source-built ports retain the original libc chdir
 symbol explicitly, including when the application itself never calls chdir.
 Executable lookup derives the physical path of routed directory views before
-module-cache and installed-alias selection. Same-physical-path executable edits
-still need content/generation validation with manifest delivery.
+module-cache and installed-alias selection. File-backed caches use inode/device
+identity, size and provider content revisions. Namespace writes, resize and
+truncate invalidate the revision even when timestamps are restored; hard links
+share it. Metadata changes and reads preserve it. New launches use current code,
+while live Stores retain their original image. A provider without content
+revisions requires a fresh read and compilation. Explicit byte registrations
+are snapshots. Manifest installation remains incomplete.
 
 `namespace::read_snapshot` reads the committed logical tree without recovery
 writes or garbage collection. It exposes validated backing paths to host
@@ -844,8 +849,11 @@ bytes paths and fd lifetime, but their private proxy type differs from DirEntry.
 Before model code runs, the firmware discovers root workspace `.wasm` files.
 It validates command names, binary headers and the 48 MiB module size bound.
 Discovered names appear as executable entries in `/bin` before compilation.
-First spawn reads and compiles the module; later spawns reuse it. The `qjs` alias
-shares `quickjs.wasm`'s compiled module. Explicit registrations take precedence.
+First spawn reads and compiles the module; later spawns reuse it while the file
+identity and content revision remain unchanged. The `qjs` alias
+shares `quickjs.wasm`'s current compiled module. Explicit registrations take
+precedence and remove their former file association. Replacing a world's root
+filesystem clears its file compilation cache.
 File-backed `/bin` entries expose symlink metadata and the underlying WASM bytes;
 compiled-only host registrations expose executable metadata but cannot be read
 as files. Installed entries are read-only. An existing workspace `/bin` directory

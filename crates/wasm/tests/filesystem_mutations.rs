@@ -477,12 +477,12 @@ fn virtual_wrapper_preserves_symlink_walk_and_anchored_cross_directory_rename() 
 }
 
 #[test]
-fn workspace_modules_load_on_demand_and_aliases_share_the_compiled_image() {
+fn workspace_modules_load_on_demand_and_aliases_follow_current_source() {
     let workspace = Workspace::new();
     let module =
         wat::parse_str("(module (memory (export \"memory\") 1) (func (export \"_start\")))")
             .unwrap();
-    fs::write(workspace.0.join("quickjs.wasm"), module).unwrap();
+    fs::write(workspace.0.join("quickjs.wasm"), &module).unwrap();
     let mut world = World::new();
     world
         .set_filesystem(Rc::new(native_fs::NativeFileSystem(workspace.0.clone())))
@@ -525,6 +525,8 @@ fn workspace_modules_load_on_demand_and_aliases_share_the_compiled_image() {
     assert_eq!(world.status(first).unwrap(), &Status::Exited(0));
     fs::write(workspace.0.join("quickjs.wasm"), b"changed on disk").unwrap();
     world.discover_programs().unwrap();
+    assert!(world.spawn(vec!["/bin/qjs".into()], vec![]).is_err());
+    fs::write(workspace.0.join("quickjs.wasm"), &module).unwrap();
     let alias = world.spawn(vec!["/bin/qjs".into()], vec![]).unwrap();
     world.step();
     assert_eq!(world.status(alias).unwrap(), &Status::Exited(0));
