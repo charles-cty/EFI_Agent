@@ -342,10 +342,18 @@ fn persistent_namespace_wasi_mutations_keep_directory_and_file_identity() {
 
 #[test]
 fn virtual_mounts_supply_devices_and_ephemeral_tmp_files() {
-    use efi_agent_wasm::filesystem::{FileSystem, OpenOptions, VirtualFileSystem};
+    use efi_agent_wasm::filesystem::{
+        FileSystem, OpenOptions, VirtualFileSystem, namespace::Namespace,
+    };
     let workspace = Workspace::new();
-    let virtual_fs =
-        VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(workspace.0.clone()))).unwrap();
+    let virtual_fs = VirtualFileSystem::new(Rc::new(
+        Namespace::open(
+            Rc::new(native_fs::NativeFileSystem(workspace.0.clone())),
+            None,
+        )
+        .unwrap(),
+    ))
+    .unwrap();
     assert!(virtual_fs.metadata("bin").unwrap().is_directory());
     assert!(virtual_fs.metadata("dev").unwrap().is_directory());
     assert!(virtual_fs.metadata("proc").unwrap().is_directory());
@@ -397,9 +405,9 @@ fn virtual_mounts_supply_devices_and_ephemeral_tmp_files() {
     assert!(tmp.write(b"overflow").is_err());
     tmp.seek(0, 2).unwrap();
     assert_eq!(tmp.read(&mut bytes).unwrap(), 0);
-    let mut uptime = virtual_fs
+    let mut mounts = virtual_fs
         .open(
-            "proc/uptime",
+            "proc/mounts",
             OpenOptions {
                 read: true,
                 write: false,
@@ -410,8 +418,8 @@ fn virtual_mounts_supply_devices_and_ephemeral_tmp_files() {
             },
         )
         .unwrap();
-    uptime.seek(4096, 0).unwrap();
-    assert_eq!(uptime.read(&mut bytes).unwrap(), 0);
+    mounts.seek(4096, 0).unwrap();
+    assert_eq!(mounts.read(&mut bytes).unwrap(), 0);
     assert!(!workspace.0.join("tmp").exists());
 }
 

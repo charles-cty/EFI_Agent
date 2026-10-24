@@ -9,6 +9,23 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Process files now expose actual PID/parent/dispatcher state, startup cmdline and
+environment, cwd/exe links, fd links and mounts. Proc self views bind per process,
+including inherited directory views. Descriptor tables publish weak references;
+introspection retains no endpoints or Stores. Zombie records release startup
+vectors/descriptors before reap removes their names. Device fd/stdin/stdout/stderr
+aliases duplicate existing descriptions with shared cursors/status and no
+truncation. Directory aliases route through inode anchors after rename, with
+one 40-link budget across routing boundaries. Runtime uptime measures monotonic
+elapsed time and scheduler idle time, with explicit clock failures. Path/fd
+stream metadata agree. Native integration, independent saved-state checks, full
+host tests, host/UEFI Clippy, formatting and Release packaging pass. Counting
+allocation checks cover large argv/environment vectors and all terminal paths.
+Both actual 512 MiB WHPX model API flows and independent saved FAT checks pass
+in artifacts/procfs-release-whpx-responses and
+artifacts/procfs-release-whpx-chat_completions. Proc cwd still reflects path-based
+cwd; anchored cwd tracking, manifests, retained sessions and final delivery remain.
+
 Null/zero/random/urandom now expose character metadata, distinct inodes and
 fixed 0666 modes. Discard writes, seek, explicit sync/truncate failures,
 shared descriptor flags and non-terminal unchanged Python stdin pass native

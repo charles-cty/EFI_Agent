@@ -106,8 +106,20 @@ WASI libc's character-device-as-terminal assumption; filestat retains the
 character type. Standard isatty and unchanged Python stdin remain noninteractive.
 Seek returns zero; truncate and explicit sync fail with EINVAL, while mode/time
 mutations fail with EROFS. BusyBox mount selection omits the Linux UBI character
-device special case and uses the containing filesystem. Descriptor aliases and
-actual process information remain incomplete.
+device special case and uses the containing filesystem.
+Process files now expose actual PID/parent/state, NUL-separated startup
+arguments/environment, cwd/exe links, descriptors and mounts. /proc/self is
+bound per process; descriptor tables publish weak references, so introspection
+retains no execution Stores or endpoints. Zombie records release startup data
+and descriptors; reaping removes their directory. /proc/uptime measures runtime
+monotonic elapsed time and scheduler idle time. Its clock failures are explicit.
+Files are snapshots captured at open and report zero filestat size.
+Descriptor aliases use fdescfs duplication semantics, with shared offsets/status
+and no O_TRUNC effect. Their link text uses stream labels or device/inode pairs.
+Directory aliases retain anchors after rename and share the global link budget.
+Cooperative stream aliases use the guest ABI; model file helpers can open
+regular-file aliases. Proc cwd links still reflect path-based cwd, so ancestor
+rename/unlink tracking remains incomplete.
 
 The 2026-10-22 filesystem expansion connects directory creation to native and
 firmware providers, and rename to the native provider. File writes now use

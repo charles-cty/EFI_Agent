@@ -349,6 +349,7 @@ pub enum EntryType {
     CharacterDevice = 2,
     Directory = 3,
     File = 4,
+    SocketStream = 6,
     Symlink = 7,
 }
 

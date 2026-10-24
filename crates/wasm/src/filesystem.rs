@@ -11,6 +11,7 @@ fn virtual_metadata(kind: EntryType, size: u64) -> Metadata {
 }
 
 mod device;
+pub(crate) mod process;
 mod walk;
 use device::{Device, DeviceFile, Entropy};
 use walk::Follow;
@@ -25,7 +26,7 @@ fn special_statistics(device: u32) -> FileSystemStatistics {
             available: 0,
             block_size: 1,
         },
-        files: if device == 2 { 5 } else { 3 },
+        files: if device == 2 { 9 } else { 4 },
         files_free: 0,
         id: device,
         kind: if device == 2 { 0x1373 } else { 0x9fa0 },
@@ -66,22 +67,36 @@ pub struct VirtualFileSystem {
     identity: usize,
     programs: Programs,
     entropy: Entropy,
+    process: Option<crate::Pid>,
+    process_files: Rc<process::Registry>,
 }
 
 impl VirtualFileSystem {
     pub(crate) fn executable_path(&self, path: &str) -> Result<(String, Metadata), FileError> {
         let resolved = self.walk(path, Follow::Final, false)?;
-        let metadata = self.metadata_raw(&resolved)?;
-        Ok((resolved, metadata))
+        let metadata = resolved.owner(self).metadata_raw(&resolved)?;
+        Ok((
+            if resolved.filesystem.is_some() {
+                path.into()
+            } else {
+                resolved.path
+            },
+            metadata,
+        ))
     }
 
     pub fn new(base: Rc<dyn FileSystem>) -> Result<Rc<Self>, MountError> {
-        Self::with_programs(base, Rc::new(RefCell::new(BTreeMap::new())))
+        Self::with_programs(
+            base,
+            Rc::new(RefCell::new(BTreeMap::new())),
+            Rc::new(process::Registry::default()),
+        )
     }
 
     pub(crate) fn with_programs(
         base: Rc<dyn FileSystem>,
         programs: Programs,
+        process_files: Rc<process::Registry>,
     ) -> Result<Rc<Self>, MountError> {
         for path in ["dev", "tmp", "proc"] {
             let error = match base.symlink_metadata(path) {
@@ -108,6 +123,8 @@ impl VirtualFileSystem {
             identity,
             programs,
             entropy: Rc::new(RefCell::new(None)),
+            process: None,
+            process_files,
         }))
     }
 
@@ -174,7 +191,6 @@ impl VirtualFileSystem {
             return Some(EntryType::CharacterDevice);
         }
         match path {
-            "proc/self" | "proc/uptime" => Some(EntryType::File),
             "dev" | "tmp" | "proc" | "bin" => Some(EntryType::Directory),
             _ => None,
         }
@@ -184,7 +200,9 @@ impl VirtualFileSystem {
 struct VirtualFile {
     data: Vec<u8>,
     offset: usize,
-    device: u32,
+    read: bool,
+    metadata: Metadata,
+    process_files: Rc<process::Registry>,
 }
 
 struct ProgramFile(Box<dyn File>);
@@ -217,9 +235,12 @@ impl File for ProgramFile {
 
 impl File for VirtualFile {
     fn filesystem_statistics(&self) -> Result<FileSystemStatistics, FileError> {
-        Ok(special_statistics(self.device))
+        Ok(self.process_files.statistics())
     }
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize, FileError> {
+        if !self.read {
+            return Err(FileError::Access);
+        }
         let count = buffer
             .len()
             .min(self.data.len().saturating_sub(self.offset));
@@ -251,13 +272,15 @@ impl File for VirtualFile {
     }
 
     fn metadata(&mut self) -> Result<Metadata, FileError> {
-        let mut metadata = virtual_metadata(EntryType::File, self.data.len() as u64);
-        metadata.device = u64::from(self.device);
-        Ok(metadata)
+        Ok(self.metadata)
     }
 
     fn flush(&mut self) -> Result<(), FileError> {
         Ok(())
+    }
+
+    fn sync(&mut self, _data_only: bool) -> Result<(), FileError> {
+        Err(FileError::Invalid)
     }
 
     fn resize(&mut self, _size: u64) -> Result<(), FileError> {
@@ -272,31 +295,38 @@ impl FileSystem for VirtualFileSystem {
         } else {
             Follow::Final
         };
-        self.open_raw(&self.walk(path, follow, options.create)?, options)
+        let path = self.walk(path, follow, options.create)?;
+        path.owner(self).open_raw(&path, options)
     }
 
     fn metadata(&self, path: &str) -> Result<Metadata, FileError> {
-        self.metadata_raw(&self.walk(path, Follow::Final, false)?)
+        let path = self.walk(path, Follow::Final, false)?;
+        path.owner(self).metadata_raw(&path)
     }
 
     fn symlink_metadata(&self, path: &str) -> Result<Metadata, FileError> {
-        self.symlink_metadata_raw(&self.walk(path, Follow::Inspect, false)?)
+        let path = self.walk(path, Follow::Inspect, false)?;
+        path.owner(self).symlink_metadata_raw(&path)
     }
 
     fn read_directory(&self, path: &str) -> Result<DirectoryEntries, FileError> {
-        self.read_directory_raw(&self.walk(path, Follow::Final, false)?)
+        let path = self.walk(path, Follow::Final, false)?;
+        path.owner(self).read_directory_raw(&path)
     }
 
     fn create_directory(&self, path: &str) -> Result<(), FileError> {
-        self.create_directory_raw(&self.walk(path, Follow::Parent, true)?)
+        let path = self.walk(path, Follow::Parent, true)?;
+        path.owner(self).create_directory_raw(&path)
     }
 
     fn unlink(&self, path: &str) -> Result<(), FileError> {
-        self.unlink_raw(&self.walk(path, Follow::Parent, false)?)
+        let path = self.walk(path, Follow::Parent, false)?;
+        path.owner(self).unlink_raw(&path)
     }
 
     fn remove_directory(&self, path: &str) -> Result<(), FileError> {
-        self.remove_directory_raw(&self.walk(path, Follow::Parent, false)?)
+        let path = self.walk(path, Follow::Parent, false)?;
+        path.owner(self).remove_directory_raw(&path)
     }
 
     fn rename(&self, source: &str, destination: &str) -> Result<(), FileError> {
@@ -314,15 +344,23 @@ impl FileSystem for VirtualFileSystem {
             Some(other) => other.walk(destination, Follow::Parent, true)?,
             None => destination.into(),
         };
-        self.rename_to_raw(&source, other, &destination)
+        let other = destination
+            .filesystem
+            .as_deref()
+            .map_or(other, |owner| owner as &dyn FileSystem);
+        source
+            .owner(self)
+            .rename_to_raw(&source, other, &destination)
     }
 
     fn symlink(&self, target: &str, path: &str) -> Result<(), FileError> {
-        self.symlink_raw(target, &self.walk(path, Follow::Parent, true)?)
+        let path = self.walk(path, Follow::Parent, true)?;
+        path.owner(self).symlink_raw(target, &path)
     }
 
     fn read_link(&self, path: &str) -> Result<String, FileError> {
-        self.read_link_raw(&self.walk(path, Follow::Inspect, false)?)
+        let path = self.walk(path, Follow::Inspect, false)?;
+        path.owner(self).read_link_raw(&path)
     }
 
     fn hard_link(&self, source: &str, destination: &str, follow: bool) -> Result<(), FileError> {
@@ -349,11 +387,18 @@ impl FileSystem for VirtualFileSystem {
             Some(other) => other.walk(destination, Follow::Parent, true)?,
             None => destination.into(),
         };
-        self.hard_link_to_raw(&source, other, &destination, follow)
+        let other = destination
+            .filesystem
+            .as_deref()
+            .map_or(other, |owner| owner as &dyn FileSystem);
+        source
+            .owner(self)
+            .hard_link_to_raw(&source, other, &destination, follow)
     }
 
     fn set_mode(&self, path: &str, mode: u16) -> Result<(), FileError> {
-        self.set_mode_raw(&self.walk(path, Follow::Final, false)?, mode)
+        let path = self.walk(path, Follow::Final, false)?;
+        path.owner(self).set_mode_raw(&path, mode)
     }
 
     fn set_times(
@@ -363,24 +408,22 @@ impl FileSystem for VirtualFileSystem {
         access: TimeUpdate,
         modify: TimeUpdate,
     ) -> Result<(), FileError> {
-        self.set_times_raw(
-            &self.walk(
-                path,
-                if follow {
-                    Follow::Final
-                } else {
-                    Follow::Inspect
-                },
-                false,
-            )?,
-            follow,
-            access,
-            modify,
-        )
+        let path = self.walk(
+            path,
+            if follow {
+                Follow::Final
+            } else {
+                Follow::Inspect
+            },
+            false,
+        )?;
+        path.owner(self)
+            .set_times_raw(&path, follow, access, modify)
     }
 
     fn directory_view(&self, path: &str) -> Result<Option<Rc<dyn FileSystem>>, FileError> {
-        self.directory_view_raw(&self.walk(path, Follow::Final, false)?)
+        let path = self.walk(path, Follow::Final, false)?;
+        path.owner(self).directory_view_raw(&path)
     }
 
     fn resolve_path(&self, base: &str, path: &str) -> Result<String, FileError> {
@@ -406,7 +449,8 @@ impl FileSystem for VirtualFileSystem {
     }
 
     fn filesystem_statistics(&self, path: &str) -> Result<FileSystemStatistics, FileError> {
-        self.filesystem_statistics_raw(&self.walk(path, Follow::Final, false)?)
+        let path = self.walk(path, Follow::Final, false)?;
+        path.owner(self).filesystem_statistics_raw(&path)
     }
 
     fn mounts(&self) -> Result<Vec<Mount>, FileError> {
@@ -422,6 +466,15 @@ impl VirtualFileSystem {
     fn open_raw(&self, path: &str, options: OpenOptions) -> Result<Box<dyn File>, FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
+        let process_node = match self.process_node(path) {
+            Err(FileError::NotFound) if options.create && self.read_only_mount(path) => {
+                return Err(FileError::ReadOnly);
+            }
+            result => result?,
+        };
+        if let Some(node) = process_node {
+            return self.process_open(node, options);
+        }
         if let Some(source) = self.program(path) {
             if options.write || options.create || options.truncate || options.append {
                 return Err(FileError::ReadOnly);
@@ -459,15 +512,7 @@ impl VirtualFileSystem {
             if options.write || options.create || options.truncate || options.append {
                 return Err(FileError::ReadOnly);
             }
-            let data = match path {
-                "proc/uptime" => b"0.00 0.00\n".to_vec(),
-                _ => Vec::new(),
-            };
-            return Ok(Box::new(VirtualFile {
-                data,
-                offset: 0,
-                device: if path.starts_with("dev/") { 2 } else { 4 },
-            }));
+            return Err(FileError::Unsupported);
         }
         if self.read_only_mount(path) {
             return Err(
@@ -484,6 +529,9 @@ impl VirtualFileSystem {
     fn metadata_raw(&self, path: &str) -> Result<Metadata, FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
+        if let Some(node) = self.process_node(path)? {
+            return self.process_metadata(node, true);
+        }
         if let Some(metadata) = self.program_metadata(path) {
             return Ok(metadata);
         }
@@ -514,6 +562,14 @@ impl VirtualFileSystem {
     fn read_directory_raw(&self, path: &str) -> Result<DirectoryEntries, FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
+        if let Some(node) = self.process_node(path)? {
+            if let Some(crate::io::Descriptor::Directory(directory)) =
+                self.process_descriptor(node)?
+            {
+                return directory.filesystem.read_directory(&directory.path);
+            }
+            return self.process_directory(node);
+        }
         if let Some(path) = self.temporary_path(path) {
             return self.tmp.read_directory(path);
         }
@@ -552,9 +608,9 @@ impl VirtualFileSystem {
                 for name in ["null", "zero", "random", "urandom"] {
                     entries.push(name.into(), EntryType::CharacterDevice)?;
                 }
-            } else if path == "proc" {
-                entries.push("self".into(), EntryType::File)?;
-                entries.push("uptime".into(), EntryType::File)?;
+                for name in ["fd", "stdin", "stdout", "stderr"] {
+                    entries.push(name.into(), EntryType::Symlink)?;
+                }
             }
         }
         Ok(entries)
@@ -619,6 +675,9 @@ impl VirtualFileSystem {
 
     fn read_link_raw(&self, path: &str) -> Result<String, FileError> {
         let path = self.mounted(path);
+        if let Some(node) = self.process_node(&path)? {
+            return self.process_link(node);
+        }
         if let Some(path) = self.temporary_path(&path) {
             return self.tmp.read_link(path);
         }
@@ -680,6 +739,9 @@ impl VirtualFileSystem {
     fn symlink_metadata_raw(&self, path: &str) -> Result<Metadata, FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
+        if let Some(node) = self.process_node(path)? {
+            return self.process_metadata(node, false);
+        }
         if let Some(path) = self.temporary_path(path) {
             return self.tmp.symlink_metadata(path);
         }
@@ -717,6 +779,18 @@ impl VirtualFileSystem {
     ) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
+        if let Some(node) = self.process_node(path)? {
+            return match self.process_descriptor(node)? {
+                Some(crate::io::Descriptor::File { handle, .. }) => {
+                    handle.borrow_mut().set_times(access, modify)
+                }
+                Some(crate::io::Descriptor::Directory(directory)) => directory
+                    .filesystem
+                    .set_times(&directory.path, follow, access, modify),
+                Some(_) => Err(FileError::Unsupported),
+                None => Err(FileError::ReadOnly),
+            };
+        }
         if let Some(path) = self.temporary_path(path) {
             return self.tmp.set_times(path, follow, access, modify);
         }
@@ -729,6 +803,18 @@ impl VirtualFileSystem {
     fn set_mode_raw(&self, path: &str, mode: u16) -> Result<(), FileError> {
         let path = self.mounted(path);
         let path = path.as_str();
+        if let Some(node) = self.process_node(path)? {
+            return match self.process_descriptor(node)? {
+                Some(crate::io::Descriptor::File { handle, .. }) => {
+                    handle.borrow_mut().set_mode(mode)
+                }
+                Some(crate::io::Descriptor::Directory(directory)) => {
+                    directory.filesystem.set_mode(&directory.path, mode)
+                }
+                Some(_) => Err(FileError::Unsupported),
+                None => Err(FileError::ReadOnly),
+            };
+        }
         if let Some(path) = self.temporary_path(path) {
             return self.tmp.set_mode(path, mode);
         }
@@ -752,12 +838,25 @@ impl VirtualFileSystem {
             return self.base.filesystem_statistics(path);
         }
         let path = self.mounted(path);
+        if let Some(node) = self.process_node(&path)?
+            && let Some(descriptor) = self.process_descriptor(node)?
+        {
+            return match descriptor {
+                crate::io::Descriptor::File { handle, .. } => {
+                    handle.borrow().filesystem_statistics()
+                }
+                crate::io::Descriptor::Directory(directory) => {
+                    directory.filesystem.filesystem_statistics(&directory.path)
+                }
+                _ => Ok(special_statistics(4)),
+            };
+        }
         match path.split('/').next() {
             Some("tmp") => self
                 .tmp
                 .filesystem_statistics(self.temporary_path(&path).unwrap()),
             Some("dev") => Ok(special_statistics(2)),
-            Some("proc") => Ok(special_statistics(4)),
+            Some("proc") => Ok(self.process_files.statistics()),
             _ => self.base.filesystem_statistics(""),
         }
     }
@@ -839,6 +938,12 @@ impl VirtualFileSystem {
         }
         let path = self.mounted(path);
         let path = path.as_str();
+        if let Some(node) = self.process_node(path)?
+            && let Some(crate::io::Descriptor::Directory(directory)) =
+                self.process_descriptor(node)?
+        {
+            return directory.filesystem.directory_view(&directory.path);
+        }
         if let Some(path) = self.temporary_path(path) {
             let view = self
                 .tmp
@@ -855,9 +960,15 @@ impl VirtualFileSystem {
                 identity: self.identity,
                 programs: self.programs.clone(),
                 entropy: self.entropy.clone(),
+                process: self.process,
+                process_files: self.process_files.clone(),
             })));
         }
-        if self.virtual_directory(path) {
+        if self.virtual_directory(path)
+            || self
+                .process_node(path)?
+                .is_some_and(|node| node.kind() == EntryType::Directory)
+        {
             return Ok(Some(Rc::new(VirtualFileSystem {
                 base: self.base.clone(),
                 tmp: self.tmp.clone(),
@@ -865,6 +976,8 @@ impl VirtualFileSystem {
                 identity: self.identity,
                 programs: self.programs.clone(),
                 entropy: self.entropy.clone(),
+                process: self.process,
+                process_files: self.process_files.clone(),
             })));
         }
         Ok(self.base.directory_view(path)?.map(|base| {
@@ -875,6 +988,8 @@ impl VirtualFileSystem {
                 identity: self.identity,
                 programs: self.programs.clone(),
                 entropy: self.entropy.clone(),
+                process: self.process,
+                process_files: self.process_files.clone(),
             }) as Rc<dyn FileSystem>
         }))
     }
@@ -897,6 +1012,7 @@ impl VirtualFileSystem {
     }
 
     pub(crate) fn set_clock(&self, clock: Rc<dyn crate::clock::Clock>) {
+        self.process_files.set_clock(clock.clone());
         self.tmp.set_clock(Some(Rc::new(move || {
             clock
                 .now(crate::clock::ClockId::Realtime)

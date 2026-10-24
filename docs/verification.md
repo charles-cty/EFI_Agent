@@ -1,5 +1,105 @@
 # Verification record
 
+## 2026-10-24: Process files and descriptor links
+
+The mounted root now binds /proc/self to each process, including inherited
+directory views. Numeric process directories expose status, startup cmdline
+and environ, cwd/exe links, fd links and the mount table. Status uses actual
+dispatcher state and parent identity. Argument/environment files use NUL
+separators. Exited records retain zombie status until reaping, release their
+argument/environment data and expose no live descriptors. Reaping removes the
+directory. Snapshot files report read-only modes and zero filestat size; their
+content is captured at open. Executable links identify the installed module's
+source file, or its /bin entry for compiled-only registrations.
+
+Descriptor tables publish weak references. Queries and directory listings do
+not retain pipe endpoints, sockets, file handles or execution Stores. The
+private process control endpoint is excluded. /dev/fd and stdin/stdout/stderr
+link to the calling process's descriptor directory. Opening a descriptor link
+duplicates the existing description, with fdescfs semantics: cursors, status
+flags and lifetime remain shared, and O_TRUNC does not truncate the source.
+Requested APPEND/NONBLOCK open flags do not change existing status flags.
+Unsupported synchronization flags fail before insertion. File and directory
+rights are bounded by the source descriptor. Regular descriptor aliases also
+work through model file helpers; cooperative stream aliases use the guest ABI.
+Descriptor link text uses stream-kind labels or device/inode identities rather
+than fabricating a persistent path for anonymous or detached objects.
+
+Directory descriptor links route the remaining path through the retained
+directory anchor. The walk returns its provider as well as its path, so reads,
+metadata, mutations and bidirectional rename/hard-link operations use that
+anchor after rename. Symlinks and descriptor links share one 40-link budget;
+capability bounds remain enforced. Devices now report nine namespace inodes,
+including the four descriptor aliases. Process mount inode counts reflect the
+current records and visible descriptors.
+
+/proc/uptime measures elapsed time from installation of the runtime monotonic
+clock and idle intervals in the cooperative scheduler. It does not invent CPU
+idle measurements. Missing clocks fail explicitly. A failed clock sample at
+a scheduler state transition makes subsequent idle accounting unavailable.
+
+Initial native Python/ash integration passes identity, startup data, mount
+content, stdout aliases, pipe EOF/EPIPE, shared file cursors, unlinked file
+lifetime, renamed-directory routing, child isolation/reaping and independent
+saved bytes/link identity in `artifacts/procfs-native-current.log`. The extended
+fixture also checks private endpoint exclusion, NOFOLLOW/exclusive/access
+failures before effects, path stat versus stream fstat, explicit sync errors,
+append redirection and exact 40/41 link boundaries across a root-fd route.
+It passes on the final Release runner in `artifacts/procfs-release-native.log`.
+
+Full host tests pass on the final source in
+`artifacts/procfs-release-all-rust-tests.log`. Three
+focused process-file tests verify spawn/yield/zombie/reap and independently
+derive elapsed/idle centiseconds from a nonzero clock epoch, missing clocks
+and failed-transition accounting. A counting allocator also checks 32,769
+arguments and 8,000 distinct environment entries. Normal return/proc_exit
+release their startup-vector storage before reap; all terminal paths release
+at least 60 MiB of execution memory and preserve output. Final focused
+evidence: `artifacts/procfs-terminal-memory-final.log`.
+
+Host/UEFI Clippy and formatting pass in
+`artifacts/procfs-terminal-clippy-host.log`,
+`artifacts/procfs-terminal-clippy-uefi.log` and
+`artifacts/procfs-terminal-format.log`. Release runner and packaging pass in
+`artifacts/procfs-terminal-runner.log` and `artifacts/procfs-release-package.log`.
+Native mount-path, temporary storage and df regressions pass in
+`artifacts/procfs-final-mount_paths.log`,
+`artifacts/procfs-final-temporary_mount.log` and
+`artifacts/procfs-final-busybox_df.log`. The metadata correction passes character
+devices, all 17 CPython cases, permissions/persistence and stream regressions
+in `artifacts/procfs-metadata-final-*.log`.
+
+Both actual 512 MiB Windows WHPX/OVMF model API flows pass the basic applet and
+extended process-file sequences on the final Release package. Independent
+saved FAT checks verify exact data bytes, retained hard-link identity and
+absence of persistent dev/proc entries. Evidence:
+`artifacts/procfs-release-whpx-responses` and
+`artifacts/procfs-release-whpx-chat_completions`, plus their adjacent logs.
+Earlier procfs-whpx and procfs-final-whpx runs also pass but precede the final
+startup-vector capacity release. The full network/application combination was
+not rerun for this change.
+
+Check corrections: the native runner starts roots with an empty environment;
+the fixture checks actual supplied entries and uses an explicit nonempty child
+environment. The first WAT fixture named a nonexistent efi_process yield import;
+it now uses WASI sched_yield. A generic workspace check incorrectly compiled
+the firmware crate for the Windows host and hit duplicate panic handlers;
+host default members and the explicit UEFI target are checked separately.
+The earlier generic virtual-file seek fixture used placeholder uptime without
+a clock. It now uses the real mount snapshot over the same namespace provider
+as runtime installation. The full regression caught proc creation returning
+NotFound before its read-only-mount check; that error classification is fixed.
+Independent metadata review caught stream path modes being derived from access
+flags while fd modes remained 0666; both now report the same object mode.
+Terminal cleanup initially cleared startup vectors while retaining their
+capacity; assigning empty vectors releases that storage and the counting
+allocator verifies the result. Early log reads preceded file creation, and
+some read-only source inspections named absent files; later checks used the
+actual files and completed process handles.
+
+Anchored cwd tracking, installation manifests, retained interpreter sessions
+and final environment delivery remain incomplete.
+
 ## 2026-10-24: Non-terminal character devices
 
 The null, zero, random and urandom paths now expose character filestat and

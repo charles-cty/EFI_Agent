@@ -167,7 +167,28 @@ because WASI libc equates CHARACTER_DEVICE with a terminal; filestat keeps the
 character type and unchanged CPython treats these descriptors as non-terminals.
 BusyBox mount lookup uses the containing device filesystem instead of its
 Linux UBI character-device branch, since Preview 1 has no st_rdev or UBI volumes.
-Descriptor aliases and actual process-information files remain incomplete.
+The runtime binds /proc/self to each process. Numeric process directories expose
+status, NUL-separated startup cmdline/environ, cwd/exe links, fd links and mounts.
+Status records follow dispatcher waiting/exit states, parent adoption and reaping.
+Exited records retain zombie status until reap, with no live descriptors.
+Process files capture their content at open, have read-only modes and report
+zero filestat size. /proc/mounts exposes the same mount snapshot as the C adapter.
+/proc/uptime reports runtime monotonic elapsed time and cooperative scheduler
+idle time; missing clocks and failed transition measurements fail explicitly.
+
+/dev/fd and stdin/stdout/stderr resolve through the calling process's fd table.
+Tables publish weak references, so introspection does not keep endpoints or
+Stores alive. Private control descriptors stay hidden. Opening a descriptor
+link uses fdescfs duplication semantics: it shares cursor, status flags and
+lifetime, preserves existing status flags, and does not truncate the source.
+Read/write access and file/directory rights remain bounded by the source.
+Descriptor link text identifies a stream kind or a device/inode pair instead
+of claiming a persistent pathname for anonymous or detached objects. Regular
+descriptor aliases work through model file helpers; cooperative stream aliases
+use the guest ABI. Directory descriptor paths retain their inode anchor after
+rename. The remaining path uses that provider, with the same shared 40-link
+budget and capability bounds. Cwd inheritance and proc cwd links remain path
+based; ancestor rename/unlink tracking is still pending.
 
 Ln uses upstream option parsing, hard/symbolic link creation, destination
 directory handling, backups and verbose output. Force and backup operations

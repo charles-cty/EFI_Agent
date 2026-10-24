@@ -228,6 +228,8 @@ struct Process {
     stderr: Rc<RefCell<Vec<u8>>>,
     status: Status,
     execution: Option<Execution>,
+    command: String,
+    executable: String,
 }
 
 struct Execution {
@@ -264,6 +266,7 @@ pub struct World {
     next_pid: Pid,
     clock: Option<Rc<dyn clock::Clock>>,
     filesystem: Option<Rc<dyn filesystem::FileSystem>>,
+    process_files: Rc<filesystem::process::Registry>,
     random: Option<Rc<dyn random::Random>>,
     network: Option<Rc<dyn network::Network>>,
     dns_server: Option<([u8; 4], u16)>,
@@ -305,6 +308,7 @@ impl World {
             next_pid: 1,
             clock: None,
             filesystem: None,
+            process_files: Rc::new(filesystem::process::Registry::default()),
             random: None,
             network: None,
             dns_server: None,
@@ -524,8 +528,11 @@ impl World {
             self.processes.is_empty(),
             "Cannot replace a live world's filesystem"
         );
-        let filesystem =
-            filesystem::VirtualFileSystem::with_programs(filesystem, self.bin.clone())?;
+        let filesystem = filesystem::VirtualFileSystem::with_programs(
+            filesystem,
+            self.bin.clone(),
+            self.process_files.clone(),
+        )?;
         if let Some(clock) = &self.clock {
             filesystem.set_clock(clock.clone());
         }
@@ -678,11 +685,22 @@ impl World {
             }
             inherited
         };
+        for descriptor in descriptors.values_mut() {
+            if let io::Descriptor::Directory(directory) = descriptor
+                && let Some(filesystem) = (directory.filesystem.as_ref() as &dyn core::any::Any)
+                    .downcast_ref::<filesystem::VirtualFileSystem>()
+            {
+                directory.filesystem = filesystem.for_process(pid);
+            }
+        }
         if let Some(filesystem) = &self.filesystem {
             descriptors.insert(
                 3,
                 io::Descriptor::Directory(filesystem::Directory {
-                    filesystem: filesystem.clone(),
+                    filesystem: (filesystem.as_ref() as &dyn core::any::Any)
+                        .downcast_ref::<filesystem::VirtualFileSystem>()
+                        .expect("World installs the virtual root filesystem")
+                        .for_process(pid),
                     path: String::new(),
                     preopen: true,
                     rights: io::DIRECTORY_RIGHTS,
@@ -692,6 +710,12 @@ impl World {
                 }),
             );
         }
+        let command = args[0].rsplit('/').next().unwrap().to_string();
+        let executable = self
+            .program_files
+            .get(&module_name)
+            .map(|path| format!("/{}", path.trim_start_matches('/')))
+            .unwrap_or_else(|| format!("/bin/{module_name}"));
         let context = Context {
             pid,
             parent,
@@ -700,7 +724,7 @@ impl World {
             stdin,
             stdout: stdout.clone(),
             stderr: stderr.clone(),
-            descriptors,
+            descriptors: descriptors.into(),
             close_on_exec: BTreeSet::new(),
             creation_mode: None,
             umask: settings.umask.unwrap_or(if parent == 0 {
@@ -746,6 +770,8 @@ impl World {
                 stdout,
                 stderr,
                 status: Status::Ready,
+                command,
+                executable,
                 execution: Some(Execution {
                     store,
                     memory,
@@ -759,6 +785,8 @@ impl World {
             },
         );
         self.ready.push_back(pid);
+        self.sync_process_files();
+        self.process_files.activity(false);
         Ok(pid)
     }
 
@@ -815,6 +843,8 @@ impl World {
             self.wake_parent(pid);
             self.wake_io();
         }
+        self.sync_process_files();
+        self.process_files.activity(self.ready.is_empty());
         Ok(())
     }
 
@@ -824,6 +854,7 @@ impl World {
             return Err(Error::NotExited(pid));
         }
         self.processes.remove(&pid);
+        self.sync_process_files();
         Ok(status)
     }
 
@@ -831,6 +862,7 @@ impl World {
     /// Fuel is a host responsiveness guard; explicit host calls provide cooperation.
     pub fn step(&mut self) -> Option<Pid> {
         self.wake_io();
+        self.process_files.activity(self.ready.is_empty());
         let pid = self.ready.pop_front()?;
         let process = self.processes.get_mut(&pid).expect("Ready process exists");
         assert_eq!(process.status, Status::Ready);
@@ -887,6 +919,8 @@ impl World {
             self.wake_parent(pid);
         }
         self.wake_io();
+        self.sync_process_files();
+        self.process_files.activity(self.ready.is_empty());
         Some(pid)
     }
 

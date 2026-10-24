@@ -357,6 +357,55 @@ fn open(
                 Err(error) => return Err(error.errno()),
             }
         }
+        if let Some(filesystem) = (directory.filesystem.as_ref() as &dyn core::any::Any)
+            .downcast_ref::<crate::filesystem::VirtualFileSystem>()
+            && let Some(mut descriptor) = filesystem
+                .descriptor_path(&path)
+                .map_err(FileError::errno)?
+        {
+            if oflags & 5 == 5 {
+                return Err(20);
+            }
+            if oflags & 2 != 0 && !matches!(descriptor, Descriptor::Directory(_)) {
+                return Err(54);
+            }
+            if rights & (1 << 1) != 0
+                && !descriptor.readable()
+                && !matches!(descriptor, Descriptor::Directory(_))
+            {
+                return Err(2);
+            }
+            if rights & (1 << 6) != 0 && !descriptor.writable() {
+                return Err(2);
+            }
+            // Descriptor links have fdescfs duplication semantics. Status flags
+            // belong to the existing description; open does not change them.
+            if flags & !5 != 0 {
+                return Err(58);
+            }
+            match &mut descriptor {
+                Descriptor::File {
+                    rights: available,
+                    read,
+                    write,
+                    ..
+                } => {
+                    *available &= rights;
+                    *read &= rights & (1 << 1) != 0;
+                    *write &= rights & (1 << 6) != 0;
+                }
+                Descriptor::Directory(directory) => {
+                    directory.rights &= rights;
+                    directory.inheriting &= inheriting;
+                }
+                _ => (),
+            }
+            caller.data_mut().descriptors.insert(available, descriptor);
+            memory
+                .write(&mut caller, opened as usize, &available.to_le_bytes())
+                .map_err(|_| 21)?;
+            return Ok(());
+        }
         let (target_exists, target_kind) = match directory.filesystem.metadata(&path) {
             Ok(metadata) => (true, metadata.kind),
             Err(FileError::NotFound) if oflags & 1 != 0 && oflags & 2 == 0 => {

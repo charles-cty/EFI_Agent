@@ -186,6 +186,20 @@ artifacts/character-devices-whpx-chat_completions-final. Descriptor aliases,
 process information, anchored cwd tracking, manifests, sessions and final
 delivery gates remain incomplete.
 
+Process files now expose actual identity, parent/state, startup arguments and
+environment, cwd/exe links, fd links and mounts. /proc/self follows each caller,
+and zombie records lose their descriptors before reaping removes their names.
+The runtime monotonic clock supplies elapsed and scheduler idle time through
+/proc/uptime. /dev/fd and standard-descriptor aliases use weak table views and
+fdescfs duplication semantics. Directory aliases route through retained anchors
+after rename, including mutations and cross-directory rename/hard-link calls;
+one link budget covers the full walk. Native integration and independent saved
+state checks pass. Both actual 512 MiB WHPX model API flows and independent FAT
+checks pass in artifacts/procfs-release-whpx-responses and
+artifacts/procfs-release-whpx-chat_completions. Host/target checks and Release
+packaging pass. Anchored cwd tracking, installation manifests, retained sessions
+and final delivery gates remain.
+
 ## Delivery requirements
 
 - One namespace shared by shell, Python, C, model files and module resolution.

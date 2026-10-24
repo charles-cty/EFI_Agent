@@ -1,7 +1,7 @@
 use alloc::{
     boxed::Box,
     collections::{BTreeMap, VecDeque},
-    rc::Rc,
+    rc::{Rc, Weak},
     vec::Vec,
 };
 use core::cell::{Cell, RefCell};
@@ -85,6 +85,50 @@ pub(crate) enum Descriptor {
 }
 
 impl Descriptor {
+    pub(crate) fn metadata(&self) -> Result<crate::filesystem::Metadata, FileError> {
+        match self {
+            Self::File { handle, .. } => handle.borrow_mut().metadata(),
+            Self::Directory(directory) => directory.filesystem.metadata(&directory.path),
+            _ => {
+                let mut metadata = crate::filesystem::Metadata::new(
+                    if matches!(self, Self::Socket { .. }) {
+                        EntryType::SocketStream
+                    } else {
+                        EntryType::Unknown
+                    },
+                    0,
+                );
+                // Access mode belongs to the descriptor, not the object's mode.
+                metadata.mode = 0o666;
+                metadata.allocated = Some(0);
+                Ok(metadata)
+            }
+        }
+    }
+
+    pub(crate) fn description(&self) -> Result<alloc::string::String, FileError> {
+        Ok(match self {
+            Self::Input(_) => "input".into(),
+            Self::Output(_) => "output".into(),
+            Self::Pipe(_) => "pipe".into(),
+            Self::Socket { .. } => "socket".into(),
+            Self::Control(_) => return Err(FileError::NotFound),
+            Self::Directory(_) | Self::File { .. } => {
+                let metadata = self.metadata()?;
+                alloc::format!(
+                    "{}:[{}:{}]",
+                    if metadata.is_directory() {
+                        "directory"
+                    } else {
+                        "file"
+                    },
+                    metadata.device,
+                    metadata.inode
+                )
+            }
+        })
+    }
+
     /// Descriptor duplication shares the underlying stream and socket status.
     pub(crate) fn duplicate(&self) -> Self {
         self.clone()
@@ -493,7 +537,61 @@ pub(crate) const DIRECTORY_RIGHTS: u64 = (1 << 9)
     | (1 << 25)
     | (1 << 26);
 
-pub(crate) type Table = BTreeMap<u32, Descriptor>;
+/// Proc views can inspect descriptors without retaining their endpoints.
+pub(crate) type TableView = Weak<RefCell<BTreeMap<u32, Weak<Descriptor>>>>;
+
+#[derive(Default)]
+pub(crate) struct Table {
+    entries: BTreeMap<u32, Rc<Descriptor>>,
+    view: Rc<RefCell<BTreeMap<u32, Weak<Descriptor>>>>,
+}
+
+impl Table {
+    pub(crate) fn view(&self) -> TableView {
+        Rc::downgrade(&self.view)
+    }
+
+    pub(crate) fn get(&self, fd: &u32) -> Option<&Descriptor> {
+        self.entries.get(fd).map(Rc::as_ref)
+    }
+
+    pub(crate) fn contains_key(&self, fd: &u32) -> bool {
+        self.entries.contains_key(fd)
+    }
+
+    pub(crate) fn insert(&mut self, fd: u32, descriptor: Descriptor) {
+        let descriptor = Rc::new(descriptor);
+        self.view
+            .borrow_mut()
+            .insert(fd, Rc::downgrade(&descriptor));
+        self.entries.insert(fd, descriptor);
+    }
+
+    pub(crate) fn remove(&mut self, fd: &u32) -> Option<Descriptor> {
+        self.view.borrow_mut().remove(fd);
+        self.entries
+            .remove(fd)
+            .map(|descriptor| descriptor.duplicate())
+    }
+}
+
+impl From<BTreeMap<u32, Descriptor>> for Table {
+    fn from(entries: BTreeMap<u32, Descriptor>) -> Self {
+        let mut table = Self::default();
+        for (fd, descriptor) in entries {
+            table.insert(fd, descriptor);
+        }
+        table
+    }
+}
+
+impl core::ops::Index<&u32> for Table {
+    type Output = Descriptor;
+
+    fn index(&self, fd: &u32) -> &Descriptor {
+        self.get(fd).expect("Descriptor exists")
+    }
+}
 
 pub(crate) fn pipe(table: &mut Table) -> Result<[u32; 2], i32> {
     let mut available = (0..MAX_DESCRIPTORS).filter(|fd| !table.contains_key(fd));

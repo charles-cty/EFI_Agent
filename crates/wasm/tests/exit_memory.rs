@@ -48,6 +48,11 @@ static ALLOCATOR: CountingAllocator = CountingAllocator;
 #[test]
 fn all_terminal_paths_release_execution_memory_before_reap_and_keep_output() {
     let mut world = World::new();
+    world
+        .set_filesystem(std::rc::Rc::new(
+            efi_agent_wasm::filesystem::namespace::Namespace::temporary(1024 * 1024, 128, 0, None),
+        ))
+        .unwrap();
     for (name, ending) in [
         ("return", ""),
         ("exit", "(call $exit (i32.const 29))"),
@@ -77,7 +82,20 @@ fn all_terminal_paths_release_execution_memory_before_reap_and_keep_output() {
     let mut zombies = Vec::new();
     for name in ["return", "exit", "trap", "cancel"] {
         let baseline = LIVE_BYTES.load(Ordering::Relaxed);
-        let pid = world.spawn(vec![name.into()], vec![]).unwrap();
+        let mut arguments = if name == "return" {
+            vec![String::new(); 32_769]
+        } else {
+            vec![String::new()]
+        };
+        arguments[0] = name.into();
+        let environment = if name == "exit" {
+            (0..8_000).map(|index| format!("V{index}=")).collect()
+        } else {
+            Vec::new()
+        };
+        let pid = world
+            .spawn_with_environment(arguments, environment, vec![])
+            .unwrap();
         world.step();
         assert_eq!(world.status(pid).unwrap(), &Status::Ready);
         let running = LIVE_BYTES.load(Ordering::Relaxed);
@@ -98,6 +116,13 @@ fn all_terminal_paths_release_execution_memory_before_reap_and_keep_output() {
             terminal + 60 * 1024 * 1024 < running,
             "{name} kept execution memory"
         );
+        if matches!(name, "return" | "exit") {
+            assert!(
+                terminal < baseline + 128 * 1024,
+                "{name} kept startup-vector storage: {} bytes",
+                terminal.saturating_sub(baseline)
+            );
+        }
         match name {
             "return" => assert_eq!(world.status(pid).unwrap(), &Status::Exited(0)),
             "exit" => assert_eq!(world.status(pid).unwrap(), &Status::Exited(29)),
