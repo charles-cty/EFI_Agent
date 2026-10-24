@@ -112,7 +112,13 @@ STATFS_CHECK = dedent(r'''
         assert int(name_max) == before.f_namemax, fields
         assert int(type_hex, 16) == kind and name == type_name, fields
         assert int(block) == before.f_bsize and int(fragment) == before.f_frsize, fields
-        assert int(total) == before.f_blocks and int(files) == before.f_files, fields
+        assert int(total) == before.f_blocks, fields
+        if kind == 0x9fa0:
+            # The child and capture descriptors exist during stat's snapshot.
+            # Their entries must disappear after the child has been reaped.
+            assert int(files) > before.f_files and after.f_files == before.f_files, (fields, before, after)
+        else:
+            assert int(files) == before.f_files, fields
         # Shared host-volume allocation need not change monotonically.
         block_drift = 4 * 1024 * 1024 // before.f_frsize if before.f_fsid == 0 else 0
         for value, first, last, drift in ((free, before.f_bfree, after.f_bfree, block_drift),

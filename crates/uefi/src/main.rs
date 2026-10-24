@@ -364,9 +364,13 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
                 event_loop::idle(core::time::Duration::from_millis(10))
                     .map_err(|_| terminal::Error(Status::DEVICE_ERROR))?;
             }
+            let mut draw_needed = true;
             while !app.quit {
                 let wasm_progress = wasm.poll(&mut app);
-                draw_serial(&mut terminal, &mut app)?;
+                if draw_needed || wasm.output_changed() {
+                    draw_serial(&mut terminal, &mut app)?;
+                }
+                draw_needed = false;
                 let mut bytes = [0; 128];
                 let count = terminal.backend_mut().sink.read(&mut bytes)?;
                 if count == 0
@@ -382,6 +386,7 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
                 while !app.quit
                     && let Some(key) = deferred.pop_front()
                 {
+                    draw_needed = true;
                     if let Key::Resize(w, h) = key {
                         terminal.backend_mut().dimensions = Size::new(w.min(300), h.min(120));
                         terminal.autoresize()?;

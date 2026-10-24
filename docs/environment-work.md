@@ -3,6 +3,14 @@
 Status: in progress. The checks below define completion of the environment
 expansion. Initial native/firmware interfaces do not establish full completion.
 
+The final native regression found a retained-cwd integration regression:
+BusyBox `find .` and `tar -C DIR ... .` see the cwd route as a symlink and omit
+its children. `ls .` still lists those children. This correction and its C
+stat/lstat/fstatat boundary checks are required before final delivery. The full
+WHPX application harness now uses logical module paths and independently reads
+saved namespace generations. Its Windows refusal peer sent TCP RST rather than
+the timeout expected by the old fixture; the final network run remains pending.
+
 Installation manifests now declare module sources, shared command aliases,
 libraries and licenses in root programs.json. Discovery validates binaries,
 supported imports and command exports before transactional alias publication.

@@ -9,6 +9,19 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Final regression work found a retained-cwd bug: find . and tar creation from .
+omit children, while ls . succeeds. Libc path normalization can collapse the
+relative dot onto the /proc/self/cwd symlink before no-follow metadata lookup;
+the raw file type and private metadata then describe different objects.
+Fix and verify standard C stat/lstat/fstatat routing before final delivery.
+The WHPX application harness now uses logical workspace paths and independent
+saved namespace readers, and reaps initial ABI roots before concurrent tests.
+Actual Windows packets show RST for the bound refusal peer; the old timeout
+expectation must be corrected. Serial rendering now skips unchanged idle frames;
+actual WHPX output/disclosure/background cancellation checks pass. The earlier
+malformed serial frame remains recorded and is not proven resolved. Non-UTC
+timezones and final combined delivery remain incomplete.
+
 Conversation-owned live ash/Python tool sessions now retain variables, globals,
 environment, cwd anchors, shell functions/aliases/options/status and user fds.
 Bounded private frames are separate from finite command stdin and output. The

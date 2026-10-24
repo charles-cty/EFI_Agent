@@ -1,7 +1,7 @@
 # /// script
 # dependencies = ["pyte>=0.8.2,<0.9", "dissect.fat>=3,<4", "cryptography>=44", "asyncssh>=2.21"]
 # ///
-"""Verify the actual UEFI wasmi dispatcher, child waits, traps and cancellation."""
+"""Verify the UEFI wasmi dispatcher and applications with Windows WHPX."""
 import argparse
 import hashlib
 import json
@@ -25,6 +25,7 @@ from test_wolfssh import SshPeer, STDOUT as SSH_STDOUT, STDERR as SSH_STDERR
 from wasm_heredoc_fixture import heredoc_cases, stage_heredocs
 from wasm_math_fixture import math_cases, stage_math
 from wasm_descriptor_fixture import descriptor_cases, stage_descriptors
+from wasm_namespace_fixture import FatWorkspace
 
 PROGRAMS = ("child", "parent", "loop", "trap", "producer", "copy", "pipeline", "capture", "poll", "clock", "dual", "shell_capture", "environment")
 
@@ -33,7 +34,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("launcher", "efi", "code", "vars", "fixtures", "output"):
         parser.add_argument(f"--{name}", type=Path, required=True)
-    parser.add_argument("--qemu", default="qemu-system-x86_64")
+    parser.add_argument("--qemu", default="qemu-system-x86_64.exe")
     parser.add_argument("--memory", type=int, default=256, help="QEMU RAM in MiB.")
     parser.add_argument("--command-timeout", type=float, default=45,
                         help="Maximum seconds for each firmware command.")
@@ -197,7 +198,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
     if args.filesystem:
         shutil.copyfile(args.fixtures / "filesystem.wasm", tree / "work/filesystem.wasm")
         (tree / "work/subdir").mkdir()
-        (tree / "work/subdir/位.txt").write_bytes(b"xyz")
+        (tree / "work/subdir/λ.txt").write_bytes(b"xyz")
     if args.directories:
         shutil.copyfile(args.fixtures / "directory.wasm", tree / "work/directory.wasm")
         directory_entries = stage_directory(tree / "work")
@@ -222,7 +223,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
     console.bind(("127.0.0.1", 0))
     console.listen()
     console.settimeout(45)
-    command = [args.qemu, "-machine", "q35,accel=tcg", "-cpu", "max,-rdrand" if args.no_rdrand else "max", "-m", str(args.memory),
+    command = [args.qemu, "-machine", "q35,accel=whpx", "-cpu", "qemu64,-rdrand" if args.no_rdrand else "qemu64,+rdrand", "-m", str(args.memory),
                "-display", "none", "-serial", "none", "-monitor", "none", "-no-reboot",
                "-net", "none",
                "-drive", f"if=pflash,format=raw,readonly=on,file={args.code.resolve()}",
@@ -318,6 +319,8 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
     frame_bytes = bytearray()
     view_prefix = b"\x1b]778;efi-agent;view;"
     latest_view = {}
+    terminal_pids = set()
+    reaped_pids = set()
 
     def feed_frames(data):
         nonlocal latest_view
@@ -337,7 +340,11 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                 screen.resize(lines=height, columns=width)
             stream.feed(bytes(frame_bytes[:start]))
             del frame_bytes[:end + 1]
-            if "NETWORK_PEER_PROGRESS" in "\n".join(screen.display):
+            visible = "\n".join(screen.display)
+            terminal_pids.update(int(pid) for pid in
+                                 re.findall(r'PID (\d+): (?:Completed|Failed|Cancelled)', visible)
+                                 if int(pid) not in reaped_pids)
+            if "NETWORK_PEER_PROGRESS" in visible:
                 network_progress.set()
 
     connection = None
@@ -414,8 +421,15 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                 raise TimeoutError(f"Missing {marker}:\n{text}")
 
             def send(text, marker, complete_line=False):
+                print(f"RUN {text[:120]}", flush=True)
                 connection.sendall(text.encode() + b"\r")
-                return wait(marker, complete_line)
+                visible = wait(marker, complete_line)
+                if text.startswith('/wasm reap '):
+                    pid = int(text.split()[-1])
+                    if f'Reaped {pid}:' in visible:
+                        reaped_pids.add(pid)
+                        terminal_pids.discard(pid)
+                return visible
 
             def wait_event(event, message):
                 # Keep draining the terminal while the guest handshakes.
@@ -488,7 +502,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                 return
             module_paths = [
                 "child.wasm", "./child.wasm", ".\\child.wasm",
-                "/work/child.wasm", "\\work\\child.wasm", "/work\\child.wasm",
+                "/child.wasm", "\\child.wasm", "/./child.wasm",
             ]
             for path in module_paths:
                 send("/clear", "Conversation cleared")
@@ -497,12 +511,12 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
             send("/wasm load child.variant.WASM", "Loaded child.variant")
             send("/wasm load extensionless", "Loaded extensionless")
             send("/wasm load missing-module.wasm",
-                 "Cannot load \\work\\missing-module.wasm:")
-            send("/wasm load fs0:child.wasm", "Invalid native workspace path")
-            send("/wasm load ../child.wasm", "Native path must stay inside the workspace")
+                 "Open 'missing-module.wasm': NotFound")
+            send("/wasm load fs0:child.wasm", "Invalid workspace path:")
+            send("/wasm load ../child.wasm", "Invalid workspace path:")
             send("/wasm load .wasm", "Module path must include a program name")
             send("/clear", "Conversation cleared")
-            send("/wasm load /work/", "Module path must include a program name")
+            send("/wasm load /", "Module path must include a program name")
             send("/wasm load", "Usage: /wasm load PATH")
             send("/clear", "Conversation cleared")
             send("/wasm load a b c", "Usage: /wasm load PATH")
@@ -552,14 +566,14 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                 assert any(line.strip() == "QUICKJS_ENGINE_OK" for line in text.splitlines())
             if args.sjlj:
                 pid = 26 if args.quickjs else 25
-                send("/wasm load sjlj \\work\\sjlj.wasm", "Loaded sjlj")
+                send("/wasm load sjlj \\sjlj.wasm", "Loaded sjlj")
                 text = send("/wasm run sjlj", f"PID {pid}: Completed (exit code 0)")
                 assert any(line.strip() == "SJLJ_MULTI_INSTANCE_OK" for line in text.splitlines())
                 for child in (pid + 1, pid + 2):
                     send(f"/wasm reap {child}", f"WASM: Unknown WASM process: {child}")
             if args.ash_exec:
                 pid = 25 + int(bool(args.quickjs)) + 3 * int(bool(args.sjlj))
-                send("/wasm load ash_exec \\work\\ash_exec.wasm", "Loaded ash_exec")
+                send("/wasm load ash_exec \\ash_exec.wasm", "Loaded ash_exec")
                 text = send("/wasm run ash_exec", f"PID {pid}: Failed (exit code 37)")
                 assert any(line.strip() == "ASH_EXEC_FRESH_INSTANCE_OK" for line in text.splitlines())
                 child = pid + 1
@@ -579,7 +593,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                         send(f"/wasm reap {child}", f"WASM: Unknown WASM process: {child}")
                 if args.ash_child:
                     pid += 4 if args.quickjs else 1
-                    send("/wasm load ash_child \\work\\ash_child.wasm", "Loaded ash_child")
+                    send("/wasm load ash_child \\ash_child.wasm", "Loaded ash_child")
                     script = "ash_child${IFS}exit${IFS}17;echo${IFS}ASH_EXTERNAL_STATUS:$?"
                     text = send(f"/wasm run ash -c {script}", f"PID {pid}: Completed (exit code 0)")
                     assert any(line.strip() == "ASH_EXTERNAL_STATUS:17" for line in text.splitlines())
@@ -652,7 +666,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                                 assert any(line.strip() == "UEFI_QUICKJS_PRINTF_BINARY_OK" for line in text.splitlines())
                                 send(f"/wasm reap {pid + 1}", f"WASM: Unknown WASM process: {pid + 1}")
             if args.filesystem:
-                send("/wasm load filesystem \\work\\filesystem.wasm", "Loaded filesystem")
+                send("/wasm load filesystem \\filesystem.wasm", "Loaded filesystem")
                 send("/wasm run filesystem", "WASM_FILESYSTEM_OK", complete_line=True)
                 if args.ash:
                     script = ("printf${IFS}'%s\\n'${IFS}first>shell.txt;"
@@ -667,7 +681,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                                   r"'first')throw(Error('file'));print('UEFI_QUICKJS_FILES_OK')")
                         send(f"/wasm run quickjs -e {script}", "UEFI_QUICKJS_FILES_OK", complete_line=True)
             if args.directories:
-                send("/wasm load directory \\work\\directory.wasm", "Loaded directory")
+                send("/wasm load directory \\directory.wasm", "Loaded directory")
                 send("/wasm run directory", "WASM_DIRECTORY_OK", complete_line=True)
                 if args.ash:
                     script = ("printf${IFS}'<%s>\\n'${IFS}directory-fixture/*.txt>glob-list.txt;"
@@ -679,9 +693,13 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                                   f"if(r.stdout!=={expected}||r.stderr!=='')throw(Error('glob'));"
                                   "print('UEFI_QUICKJS_DIRECTORY_OK')")
                         send(f"/wasm run quickjs -e {script}", "UEFI_QUICKJS_DIRECTORY_OK", complete_line=True)
+            # The initial ABI cases keep roots for explicit status/reap checks.
+            # Release their terminal records before concurrent application tests.
+            for pid in sorted(terminal_pids):
+                send(f'/wasm reap {pid}', f'Reaped {pid}:')
             if args.network:
                 network_thread.start()
-                send("/wasm load network \\work\\network.wasm", "Loaded network")
+                send("/wasm load network \\network.wasm", "Loaded network")
                 send(f"/wasm run network 10.0.2.2 {network_port}", "NETWORK_EXCHANGE_OK", complete_line=True)
                 connection.sendall(f"/wasm run network 10.0.2.2 {network_port} blocked\r".encode())
                 wait("NETWORK_BLOCKED_READ", complete_line=True)
@@ -692,7 +710,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                 send(f"/wasm run network 10.0.2.2 {network_port} nonblocking", "NETWORK_NONBLOCKING_OK", complete_line=True)
                 send(f"/wasm run network 10.0.2.2 {network_port} async", "NETWORK_ASYNC_OK", complete_line=True)
                 if args.posix_network:
-                    send("/wasm load posix_network \\work\\posix_network.wasm", "Loaded posix_network")
+                    send("/wasm load posix_network \\posix_network.wasm", "Loaded posix_network")
                     send(f"/wasm run posix_network 10.0.2.2 {network_port}", "POSIX_NETWORK_OK", complete_line=True)
                     failure_marker = "POSIX_TIMEOUT_OK" if args.posix_connect_error == "timeout" else "POSIX_REFUSED_OK"
                     send(f"/wasm run posix_network 10.0.2.2 {refused_listener.getsockname()[1]} {args.posix_connect_error}", failure_marker, complete_line=True)
@@ -713,7 +731,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                 if args.posix_network:
                     cases += [('posix_network', variant, 0 if errno == 0 else -2 if errno == 44 else -4, 'POSIX_DNS_OK') for variant, errno in variants]
                 if args.curl:
-                    send("/wasm load curl \\work\\curl.wasm", "Loaded curl")
+                    send("/wasm load curl \\curl.wasm", "Loaded curl")
                     cases += [('curl', variant, 0 if errno == 0 else 6, 'exit code ') for variant, errno in variants]
                 def dns_server():
                     try:
@@ -747,7 +765,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                 dns_thread.join(timeout=5)
                 assert not dns_thread.is_alive() and not dns_errors, dns_errors
             if args.curl:
-                send("/wasm load curl \\work\\curl.wasm", "Loaded curl")
+                send("/wasm load curl \\curl.wasm", "Loaded curl")
                 base = f"http://10.0.2.2:{curl_server.server_port}"
                 send("/clear", "Conversation cleared")
                 text = send(f"/wasm start curl --silent --show-error --noproxy * {base}/blocked", ": Running")
@@ -819,7 +837,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                         assert server.tls_versions == ["TLSv1.2" if name == "tls12" else "TLSv1.3"], server.tls_versions
                     assert not errors, errors
             if args.wolfssh:
-                send("/wasm load wolfssh \\work\\wolfssh.wasm", "Loaded wolfssh")
+                send("/wasm load wolfssh \\wolfssh.wasm", "Loaded wolfssh")
                 ssh_arguments = (f"--host 10.0.2.2 --port {ssh_peer.port} --user guest "
                                  f"--host-key-sha256 {ssh_peer.pin} --password-file ssh-password.txt --")
 
@@ -869,7 +887,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                         root = min(map(int, re.findall(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code 0\)', text)))
                         send(f'/wasm reap {root}', f'Reaped {root}: Exited(0)')
                     if args.python:
-                        send("/wasm load \\work\\python.wasm", "Loaded python")
+                        send("/wasm load \\python.wasm", "Loaded python")
                         code = ("import subprocess\n"
                                 f"r=subprocess.run('wolfssh {ssh_arguments} nonzero',shell=True,capture_output=True)\n"
                                 "assert r.returncode==23 and r.stdout==b'remote-output\\n' and r.stderr==b'remote-error\\n'\n"
@@ -885,7 +903,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                     send(f"/wasm reap {held[1]}", f"Reaped {held[1]}: Exited(130)")
                 assert ssh_peer.errors == [], ssh_peer.errors
             if args.python:
-                send("/wasm load \\work\\python.wasm", "Loaded python")
+                send("/wasm load \\python.wasm", "Loaded python")
                 send("/wasm run python python-standard.py", "UEFI_PYTHON_STANDARD_SCRIPT_OK", complete_line=True)
                 code = r"""
 import sys, math, os, subprocess
@@ -981,20 +999,20 @@ print('UEFI_CPYTHON_SHELL_OK')
                     send(f'/wasm reap {root}', f'Reaped {root}: Exited({status})')
             if args.ash_task_input:
                 send("/clear", "Conversation cleared")
-                send("/wasm load ash_task_input \\work\\ash_task_input.wasm", "Loaded ash_task_input")
+                send("/wasm load ash_task_input \\ash_task_input.wasm", "Loaded ash_task_input")
                 send("/wasm run ash_task_input", "ASH_TASK_BINARY_REJECTION_OK", complete_line=True)
                 text = wait("Ready")
                 root = min(map(int, re.findall(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code 0\)', text)))
                 send(f'/wasm reap {root}', f'Reaped {root}: Exited(0)')
             if args.descriptor_mapping:
                 send("/clear", "Conversation cleared")
-                send("/wasm load descriptor_mapping \\work\\descriptor_mapping.wasm", "Loaded descriptor_mapping")
+                send("/wasm load descriptor_mapping \\descriptor_mapping.wasm", "Loaded descriptor_mapping")
                 send("/wasm run descriptor_mapping", "UEFI_DESCRIPTOR_MAPPING_OK", complete_line=True)
                 text = wait("Ready")
                 root = min(map(int, re.findall(r'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code 0\)', text)))
                 send(f'/wasm reap {root}', f'Reaped {root}: Exited(0)')
             if args.random:
-                send("/wasm load random \\work\\random.wasm", "Loaded random")
+                send("/wasm load random \\random.wasm", "Loaded random")
                 if args.no_rdrand:
                     send("/wasm run random unavailable", "WASM_RANDOM_UNAVAILABLE_OK", complete_line=True)
                 else:
@@ -1009,14 +1027,16 @@ print('UEFI_CPYTHON_SHELL_OK')
             if args.network:
                 with image.open("rb") as disk:
                     filesystem = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
-                    assert filesystem.get("/work/network-response.bin").open().read() == bytes((i * 53 + i // 239 + 7) % 256 for i in range(131089))
-                    assert filesystem.get("/work/network-peer.txt").open().read() == b"PEER_PROGRESS"
+                    workspace = FatWorkspace(filesystem)
+                    assert workspace.read("network-response.bin") == bytes((i * 53 + i // 239 + 7) % 256 for i in range(131089))
+                    assert workspace.read("network-peer.txt") == b"PEER_PROGRESS"
                 print("PASS actual UEFI TCP4 WASM transfer, child handshake, EOF, cancellation, graceful close, nonblocking flags and saved-byte oracle")
             if args.wolfssh:
                 with image.open("rb") as disk:
                     filesystem = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
+                    workspace = FatWorkspace(filesystem)
                     def ssh_file(name, suffix):
-                        return filesystem.get(f"/work/ssh-{name}.{suffix}").open().read()
+                        return workspace.read(f"ssh-{name}.{suffix}")
                     if args.no_rdrand:
                         assert ssh_file("entropy", "out") == b""
                     else:
@@ -1042,16 +1062,17 @@ print('UEFI_CPYTHON_SHELL_OK')
             if args.curl:
                 with image.open("rb") as disk:
                     filesystem = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
-                    assert filesystem.get("/work/curl-download.bin").open().read() == CURL_BODY
-                    assert filesystem.get("/work/curl-chunked.bin").open().read() == CURL_BODY
-                    assert filesystem.get("/work/curl-digest.txt").open().read() == hashlib.sha256(CURL_UPLOAD).hexdigest().encode()
+                    workspace = FatWorkspace(filesystem)
+                    assert workspace.read("curl-download.bin") == CURL_BODY
+                    assert workspace.read("curl-chunked.bin") == CURL_BODY
+                    assert workspace.read("curl-digest.txt") == hashlib.sha256(CURL_UPLOAD).hexdigest().encode()
                     if args.curl_tls and not args.no_rdrand:
                         for name in ["tls12", "tls13"]:
-                            assert filesystem.get(f"/work/curl-{name}.bin").open().read() == CURL_BODY
+                            assert workspace.read(f"curl-{name}.bin") == CURL_BODY
                     if args.dns:
                         offset = 12 if args.posix_network else 6
                         for index in [offset, offset + 1]:
-                            assert filesystem.get(f"/work/curl-dns-{index}.bin").open().read() == CURL_BODY
+                            assert workspace.read(f"curl-dns-{index}.bin") == CURL_BODY
                 assert not curl_errors, curl_errors
                 print("PASS actual UEFI upstream curl HTTP redirect, chunked transfer and binary upload with exact FAT bytes")
                 assert curl_server.blocked_started.is_set() and curl_server.blocked_closed.is_set()
@@ -1068,16 +1089,18 @@ print('UEFI_CPYTHON_SHELL_OK')
             if args.python:
                 with image.open("rb") as disk:
                     filesystem = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
-                    assert filesystem.get("/work/python-shell.txt").open().read() == b"PYTHON_SHELL_FILE"
-                    assert filesystem.get("/work/python-alpha.txt").open().read() == b"alpha"
-                    assert filesystem.get("/work/python-beta.txt").open().read() == b"beta"
+                    workspace = FatWorkspace(filesystem)
+                    assert workspace.read("python-shell.txt") == b"PYTHON_SHELL_FILE"
+                    assert workspace.read("python-alpha.txt") == b"alpha"
+                    assert workspace.read("python-beta.txt") == b"beta"
                     expected = bytes((i * 37 + i // 251 + 19) % 256 for i in range(196613))
-                    assert filesystem.get("/work/python-standard.bin").open().read() == expected
+                    assert workspace.read("python-standard.bin") == expected
                 print("PASS actual UEFI CPython standard CLI, script imports, file interfaces, duplex subprocess capture, concurrent Python roots and persisted bytes")
             if args.random and not args.no_rdrand:
                 with image.open("rb") as disk:
                     filesystem = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
-                    records = filesystem.get("/work/wasm-random.bin").open().read()
+                    workspace = FatWorkspace(filesystem)
+                    records = workspace.read("wasm-random.bin")
                     assert len(records) == 768
                     assert len({records[index:index + 256] for index in range(0, 768, 256)}) == 3
                 print("PASS UEFI actual libc getentropy, guarded output and persisted distinct records")
@@ -1086,7 +1109,8 @@ print('UEFI_CPYTHON_SHELL_OK')
             if args.directories:
                 with image.open("rb") as disk:
                     filesystem = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
-                    read_file = lambda name: filesystem.get(f"/work/{name}").open().read()
+                    workspace = FatWorkspace(filesystem)
+                    read_file = lambda name: workspace.read(f"{name}")
                     verify_directory_artifacts(read_file, directory_entries)
                     if args.ash:
                         assert read_file("glob-list.txt") == expected_glob(directory_entries)
@@ -1094,15 +1118,16 @@ print('UEFI_CPYTHON_SHELL_OK')
             if args.filesystem:
                 with image.open("rb") as disk:
                     filesystem = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
-                    assert filesystem.get("/work/wasm-file.bin").open().read() == b"a\0b\xffz!"
+                    workspace = FatWorkspace(filesystem)
+                    assert workspace.read("wasm-file.bin") == b"a\0b\xffz!"
                     expected = bytearray(257)
                     for index in range(97):
                         expected[(index * 73 + 11) % 257] = (index * 19 + 7) % 256
-                    assert filesystem.get("/work/wasm-cursor.bin").open().read() == expected
-                    assert filesystem.get("/work/wasm-resize.bin").open().read() == b"\0\0\0\0!"
-                    assert filesystem.get("/work/wasm-resize-oracle.bin").open().read() == resize_contents()
+                    assert workspace.read("wasm-cursor.bin") == expected
+                    assert workspace.read("wasm-resize.bin") == b"\0\0\0\0!"
+                    assert workspace.read("wasm-resize-oracle.bin") == resize_contents()
                     if args.ash:
-                        assert filesystem.get("/work/shell.txt").open().read() == b"first\nsecond\n"
+                        assert workspace.read("shell.txt") == b"first\nsecond\n"
                 print("PASS UEFI actual WASI files, shared/independent cursors, rights, path errors and persisted FAT bytes")
             print("PASS UEFI wasmi: processes, pipes, concurrent C capture, readiness, and firmware timed wait")
             print("PASS UEFI process environments: explicit, inherited, cleared, isolated, rejected invalid entries")
@@ -1125,9 +1150,10 @@ print('UEFI_CPYTHON_SHELL_OK')
             if args.ash_heredocs:
                 with image.open("rb") as disk:
                     filesystem = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
+                    workspace = FatWorkspace(filesystem)
                     for name, _, stdout, stderr, status in heredoc_cases():
-                        actual_out = filesystem.get(f"/work/heredoc-{name}.out").open().read()
-                        actual_err = filesystem.get(f"/work/heredoc-{name}.err").open().read()
+                        actual_out = workspace.read(f"heredoc-{name}.out")
+                        actual_err = workspace.read(f"heredoc-{name}.err")
                         assert actual_out == stdout, (name, len(actual_out), len(stdout))
                         if status:
                             assert b"cannot create here-document input" in actual_err, (name, actual_err)
@@ -1138,17 +1164,19 @@ print('UEFI_CPYTHON_SHELL_OK')
             if args.ash_descriptors:
                 with image.open("rb") as disk:
                     filesystem = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
+                    workspace = FatWorkspace(filesystem)
                     for name, _, expected in descriptor_cases():
-                        actual = filesystem.get(f"/work/fd-{name}.out").open().read()
-                        errors = filesystem.get(f"/work/fd-{name}.err").open().read()
+                        actual = workspace.read(f"fd-{name}.out")
+                        errors = workspace.read(f"fd-{name}.err")
                         assert actual == expected and errors == b"", (name, actual, errors)
                 print("PASS actual UEFI ash user descriptors: subshell, substitution, pipeline, external command, fd 4, close isolation, output, closed stdin and repeated cleanup")
             if args.ash_math:
                 with image.open("rb") as disk:
                     filesystem = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
+                    workspace = FatWorkspace(filesystem)
                     for name, _, stdout, diagnostic, _ in math_cases():
-                        actual_out = filesystem.get(f"/work/math-{name}.out").open().read()
-                        actual_err = filesystem.get(f"/work/math-{name}.err").open().read()
+                        actual_out = workspace.read(f"math-{name}.out")
+                        actual_err = workspace.read(f"math-{name}.err")
                         assert actual_out == stdout, (name, actual_out[-512:], stdout[-512:])
                         if diagnostic:
                             assert diagnostic in actual_err, (name, actual_err)

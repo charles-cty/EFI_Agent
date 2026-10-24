@@ -211,6 +211,10 @@ impl Runtime {
         progressed
     }
 
+    pub fn output_changed(&self) -> bool {
+        self.output_changed
+    }
+
     fn ensure_program(&mut self, name: &str) -> Result<(), String> {
         if !self.world.has_program(name) {
             let path = format!("{name}.wasm");
@@ -449,7 +453,7 @@ impl Runtime {
                 }
             }
             _ => Ok(String::from(
-                "/wasm load PATH (name from filename)\n/wasm load NAME PATH (explicit name)\n/wasm start NAME [ARGS...]\n/wasm run NAME [ARGS...] (Esc cancels)\n/wasm ps\n/wasm kill PID\n/wasm reap PID\nRelative module paths use the workspace. / or \\ starts at the boot volume root.\nArguments are split on whitespace.",
+                "/wasm load PATH (name from filename)\n/wasm load NAME PATH (explicit name)\n/wasm start NAME [ARGS...]\n/wasm run NAME [ARGS...] (Esc cancels)\n/wasm ps\n/wasm kill PID\n/wasm reap PID\nModule paths use the workspace. / or \\ starts at the workspace root.\nArguments are split on whitespace.",
             )),
         };
         Ok(result.unwrap_or_else(|error| format!("WASM: {error}")))

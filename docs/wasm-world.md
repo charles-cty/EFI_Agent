@@ -337,6 +337,8 @@ Then load and run Python in the firmware UI:
 ```
 
 Each `run` or `start` creates one output disclosure, collapsed by default.
+The serial idle loop redraws after input or a visible process-output change.
+A running background process without new output does not repeat unchanged frames.
 Its header shows the command, process ID and a readable running/completed/
 failed/cancelled status. Expand it with a click or Tab/Enter to read the
 command, status, standard output and standard error as plain text. Stream

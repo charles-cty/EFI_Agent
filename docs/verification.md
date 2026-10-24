@@ -1,5 +1,60 @@
 # Verification record
 
+## 2026-10-24: Final environment regression corrections and open failures
+
+The full application harness now runs Windows WHPX with qemu64 and explicit
+RDRAND selection. Module paths use the logical workspace root. Saved byte checks
+read checksummed namespace generations through the independent FAT reader.
+The initial source fixture's Unicode filename now matches the C consumer.
+Current C fixtures rebuild and their native file/directory checks and independent
+saved bytes pass in artifacts/environment-final-fixtures-{build,native}.log.
+An initial temporary native probe copied a second binary after namespace import;
+the corrected probe stages both binaries before initialization.
+
+The first full run stopped on obsolete /work module paths in
+artifacts/sessions-applications-whpx. The next run stopped on a malformed serial
+view frame in artifacts/environment-applications-whpx. Raw bytes prove that its
+JSON prefix is missing; 1196 of 1272 valid frames repeated their previous view.
+Serial idle rendering now requires an input or visible-output change. The
+512 MiB WHPX output-panel test passes plain stdout/stderr, collapsed disclosures,
+child grouping, keyboard expansion, errors/traps and cancellation of an
+independent background root in artifacts/environment-output-whpx-final.
+This reduces redundant traffic; resolution of the intermittent byte loss is
+not yet proven. Format, target Clippy and Release EFI build pass in
+artifacts/environment-final-{format,uefi-clippy,efi-build}.log.
+
+The pre-correction retry reached TCP but exhausted the 32-process quota because
+the initial ABI sequence retained its terminal roots. The harness now tracks and
+reaps those records before concurrent application checks. The new run passes
+TCP transfer, graceful close, nonblocking/asynchronous connect and ordinary
+POSIX networking. It stops at the obsolete POSIX timeout expectation in
+artifacts/environment-applications-whpx-final. Independent packet decoding
+shows SYN retries followed by TCP RST from the bound host port. Diagnostic
+evidence is in artifacts/environment-regression-diagnostics.log. The final full
+network/application gate remains incomplete.
+
+The stat regression incorrectly required proc inode counts to stay constant
+while running a child with capture descriptors. It now requires the child's
+snapshot to grow and the count to recover after reaping. Stable mounts retain
+exact count comparisons. The native stat suite and independent saved metadata
+pass in artifacts/environment-final-native-stat.log.
+
+The tar regression exposes an actual retained-cwd integration bug: tar archives
+only its dot operand, and find . omits children although ls . lists them.
+The diagnosis points to libc normalization of the private cwd routing path before
+a no-follow stat. The raw filestat can describe the proc symlink while the
+private mode query describes the directory. Evidence:
+artifacts/environment-final-native-tar.log and
+artifacts/environment-regression-diagnostics.log. This defect remains open;
+earlier per-command verification does not prove the current combined delivery.
+
+All 21 BusyBox native regression scripts were run with the current prepared
+images. Twenty pass, including independent saved metadata/bytes, in
+artifacts/environment-final-native-*.log; tar is the open failure above.
+An oversized recursive search caused by an empty command-substitution argument
+was interrupted; subsequent searches use explicit paths. No source files in
+the pre-existing submodule or user workspace were changed.
+
 ## 2026-10-24: Retained shell and Python tool sessions
 
 Each conversation owns two live WASM roots. Ash evaluates successive sources in
