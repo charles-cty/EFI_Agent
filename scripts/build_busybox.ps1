@@ -20,7 +20,7 @@ $compile = '--target=wasm32-wasip1', "--sysroot=$sysroot", '-O2',
     '-fno-optimize-sibling-calls', '-fwrapv', '-D_GNU_SOURCE', '-Iguests/busybox/include',
     '-Iguests/sjlj/include', '-Iguests/include', '-Iguests/busybox', "-I$build", "-I$Source/include", '-iquote', "$Source/shell", '-iquote', "$Source/coreutils",
     '-Werror=return-type', '-Werror=implicit-function-declaration', '-Wl,-z,stack-size=1048576', '-Wl,--max-memory=67108864'
-foreach ($symbol in @('stat', 'lstat', 'fstat', 'fstatat', 'chmod', 'fchmod', 'open', 'mkdir', 'chdir')) {
+foreach ($symbol in @('stat', 'lstat', 'fstat', 'fstatat', 'chmod', 'fchmod', 'open', 'mkdir', 'chdir', 'symlink')) {
     $compile += "-Wl,--wrap=$symbol"
 }
 $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-Path $Source 'shell/ash_ptr_hack.c'),
@@ -62,6 +62,11 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $build 'gzip.c'), (Join-Path $build 'bbunzip.c'),
     (Join-Path $build 'decompress_gunzip.c'), (Join-Path $build 'transformer.c'),
     (Join-Path $Source 'libbb/crc32.c'),
+    (Join-Path $build 'unzip.c'), 'guests/busybox/archive_support.c',
+    (Join-Path $Source 'archival/libarchive/find_list_entry.c'),
+    (Join-Path $Source 'archival/libarchive/unsafe_prefix.c'),
+    (Join-Path $Source 'archival/libarchive/unsafe_symlink_target.c'),
+    (Join-Path $Source 'libbb/chomp.c'),
     (Join-Path $Source 'libbb/replace.c'),
     (Join-Path $build 'ls.c'), (Join-Path $Source 'libbb/human_readable.c'),
     (Join-Path $Source 'libbb/auto_string.c'), (Join-Path $Source 'libbb/printable_string.c'),

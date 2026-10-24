@@ -42,6 +42,7 @@ const ASH_APPLETS: &[&str] = &[
     "gzip",
     "gunzip",
     "zcat",
+    "unzip",
     "cat",
     "cp",
     "date",

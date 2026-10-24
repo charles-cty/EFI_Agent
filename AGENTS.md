@@ -9,6 +9,22 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Upstream unzip now builds into the shared image with stored/DEFLATE members,
+central-directory parsing, filters, overwrite policies and symlinks. Dynamic
+archive descriptors preserve workspace fd 3. Extraction uses an anchored
+destination directory, including metadata and symlink operations; outside
+ancestor links cannot redirect writes. Staged fixes check stored CRC, output
+lengths, local/central signatures, names and maximum-comment end records.
+Regular files restore modes/times and directory restoration is deferred.
+Native integration and both 512 MiB WHPX model API flows pass, with independent
+saved bytes/modes/times/containment checks in artifacts/unzip-whpx-responses
+and artifacts/unzip-whpx-chat_completions. Metadata, Python, command and
+descriptor regressions, all host tests, host/UEFI Clippy and formatting pass.
+ZIP64, encryption
+and compression methods other than stored/DEFLATE remain unsupported.
+The remaining required applets are du, df, tar and ln. Mount, manifest and
+retained-session gates remain incomplete.
+
 Upstream gzip/gunzip/zcat now build into the shared image with CRC32 and
 direct stream transformers. Native Release integration and both 512 MiB WHPX
 model APIs pass independent gzip/zlib stored/fixed/dynamic inputs, concatenated
@@ -21,7 +37,7 @@ enter the existing Asyncify jump driver. Native awk/sed/grep/streams/basic/text/
 xargs/copy-move/mutation/PATH/CPython regressions, all host tests, host/UEFI
 Clippy, format and syntax checks pass. Compression levels and long options are
 enabled; upstream maps levels 1-3 to 4. Seamless non-gzip formats are disabled.
-The remaining required applets are du, df, tar, unzip and ln. Mount, manifest
+The remaining required applets are du, df, tar and ln. Mount, manifest
 and retained-session gates remain incomplete.
 
 Upstream xargs now uses cooperative spawn/wait with exact argument vectors,

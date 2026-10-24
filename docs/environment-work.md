@@ -6,7 +6,7 @@ expansion. Initial native/firmware interfaces do not establish full completion.
 The shared image currently uses upstream ls, find, awk, sed, grep, chmod, cat, head,
 tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true,
 false, od, hexdump, base64, sha256sum and realpath, plus mkdir, rmdir, rm,
-touch, date, sort, uniq, cut, tr, cp, mv, which, xargs, gzip, gunzip and zcat. Other
+touch, date, sort, uniq, cut, tr, cp, mv, which, xargs, gzip, gunzip, zcat and unzip. Other
 utility applets still need upstream replacement or addition.
 Upstream `stat` now reports file and symlink metadata, ownership, permissions,
 timestamps and custom/terse formats. Filesystem mode (`stat -f`) remains
@@ -78,7 +78,18 @@ Asyncify jump driver so decompressor recovery does not trap.
 The same checks and independent saved FAT decoding pass both 512 MiB WHPX
 model APIs in artifacts/compression-whpx-responses and
 artifacts/compression-whpx-chat_completions.
-The missing required applets are du, df, tar, unzip and ln.
+Unzip now uses upstream ZIP32 central-directory parsing with stored and DEFLATE
+members, listing/testing/filtering, overwrite policies and stored/deflated
+symlinks. Extraction syscalls use a retained destination directory anchor;
+outside ancestor links fail before writes. Modes and DOS timestamps are
+restored, with directory attributes deferred until children are complete.
+Stored CRC, decompressed lengths, member names, local/central signatures and
+end-record bounds are checked. Native integration and both 512 MiB WHPX model
+APIs pass, with independent saved FAT bytes, modes, timestamps and containment
+checks in artifacts/unzip-whpx-responses and unzip-whpx-chat_completions.
+ZIP64, encryption and other
+compression methods remain unsupported.
+The missing required applets are du, df, tar and ln.
 
 ## Delivery requirements
 

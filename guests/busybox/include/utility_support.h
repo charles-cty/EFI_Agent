@@ -23,6 +23,19 @@
 #define MAX(left, right) ((left) > (right) ? (left) : (right))
 #define SET_PTR_TO_GLOBALS(value) (ptr_to_globals = (void *)(value))
 int gunzip_main(int argc, char **argv);
+extern int efi_archive_root_fd;
+void efi_archive_begin(void);
+void efi_archive_end(void);
+void efi_archive_file_attributes(int fd, mode_t mode, unsigned date, unsigned time);
+void efi_archive_remember_attributes(const char *path, mode_t mode,
+    unsigned date, unsigned time);
+uint32_t efi_archive_crc(const void *data, size_t size);
+int xopen3(const char *path, int flags, int mode);
+void xread(int fd, void *data, size_t size);
+void xchdir(const char *path);
+void xdup2(int source, int destination);
+void bb_copyfd_exact_size(int input, int output, off_t size);
+void chomp(char *text);
 typedef uint64_t uoff_t;
 #define OFF_FMT "ll"
 #define HUMAN_READABLE_MAX_WIDTH_STR "7"
@@ -121,6 +134,8 @@ typedef uint64_t bb__aliased_uint64_t FIX_ALIASING;
 #define ALIGN8 __attribute__((aligned(8)))
 #define bb_bswap_64(value) __builtin_bswap64(value)
 #define SWAP_LE32(value) (value)
+#define SWAP_LE16(value) (value)
+#define SWAP_BE16(value) __builtin_bswap16(value)
 #define SWAP_BE32(value) __builtin_bswap32(value)
 #define SWAP_LE64(value) (value)
 #define SWAP_BE64(value) __builtin_bswap64(value)
@@ -218,6 +233,7 @@ int recursive_action(const char *path, unsigned flags,
     void *data);
 char *concat_subpath_file(const char *path, const char *name);
 char *last_char_is(const char *text, int value);
+const char *printable_string(const char *text);
 char *bb_get_last_path_component_strip(char *path);
 char *bb_get_last_path_component_nostrip(const char *path);
 char *single_argv(char **arguments);

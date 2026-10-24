@@ -8,6 +8,7 @@ import re
 from prepare_text_applets import prepare_text_applets
 from prepare_xargs import prepare_xargs
 from prepare_compression import prepare_compression
+from prepare_unzip import prepare_unzip
 
 
 ENABLED = {
@@ -32,6 +33,7 @@ ENABLED = {
     "FEATURE_XARGS_SUPPORT_ARGS_FILE", "ECHO",
     "GZIP", "GUNZIP", "ZCAT", "FEATURE_GZIP_DECOMPRESS",
     "FEATURE_GZIP_LONG_OPTIONS", "FEATURE_GUNZIP_LONG_OPTIONS", "FEATURE_GZIP_LEVELS",
+    "UNZIP", "FEATURE_UNZIP_CDF",
     "MONOTONIC_SYSCALL",
     "DATE", "FEATURE_DATE_ISOFMT", "FEATURE_DATE_NANO",
     "SORT", "FEATURE_SORT_BIG", "UNIQ", "CUT", "FEATURE_CUT_REGEX",
@@ -430,6 +432,7 @@ def main():
              args.source / "archival/gzip.c", args.source / "archival/bbunzip.c",
              args.source / "archival/libarchive/decompress_gunzip.c",
              args.source / "include/bb_archive.h",
+             args.source / "archival/unzip.c",
              args.source / "coreutils/od.c", args.source / "util-linux/hexdump.c",
              args.source / "libbb/dump.c", args.source / "libbb/xatonum.c",
              args.source / "coreutils/uudecode.c", args.source / "libbb/uuencode.c",
@@ -471,6 +474,7 @@ def main():
     prepare_mutations(args.source, args.output)
     prepare_xargs(args.source, args.output, replace_once)
     prepare_compression(args.source, args.output, replace_once)
+    prepare_unzip(args.source, args.output, replace_once)
     prepare_date(args.source, args.output)
     prepare_text_applets(args.source, args.output, replace_once)
     prepare_dump(args.source, args.output)

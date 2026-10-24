@@ -1,5 +1,60 @@
 # Verification record
 
+## 2026-10-24: Upstream unzip with anchored extraction
+
+The shared image uses BusyBox 1.37.0 unzip, ZIP32 central-directory parsing and
+the upstream DEFLATE decoder. Stored and deflated symlinks, stdout/test/list
+modes, filters, path flattening, suffix lookup, overwrite prompts and policies
+pass native Release integration. Independent host Python ZIP inputs and saved
+workspace checks verify binary contents, executable modes, directory modes,
+symlink targets and 2040 leap-day timestamps. Stored boundaries cover
+65535/65536/65537 and 524287/524288/524289 bytes. End-record comments cover
+0/65513/65514/65535 bytes. Empty archives and finite stdin pass.
+
+Containment checks distinguish safe internal links from relative and absolute
+ancestor links outside the extraction directory. Leaf-link replacement and
+deferred outside-link pivots fail while independent saved bytes remain intact.
+Upstream lexical prefix removal is retained. Each extraction uses a retained
+directory descriptor for path opens, directory creation, stat, modes, times
+and symlink creation. Deferred directory attributes are restored deepest first.
+ZIP64, encryption and methods other than stored/DEFLATE remain unsupported.
+
+Corrupt stored CRC, stored/deflated sizes, local/central signatures, embedded
+NUL names, truncated inputs, unsupported methods, missing files and closed
+stdout return failure. Evidence: `artifacts/unzip-native.log` and
+`artifacts/unzip-build.log`. Native permissions/C metadata, copy/move,
+mutations, PATH, compression, 17 CPython cases, ten ash descriptor cases,
+awk/sed/grep, streams, basic/text and xargs regressions pass in
+`artifacts/unzip-regression-*.log`. All host workspace tests, host/UEFI Clippy,
+Rust format and modified Python syntax pass. Release EFI/launcher packaging
+passes in `artifacts/unzip-package.log`.
+
+Actual Windows WHPX/OVMF at 512 MiB passes Responses and Chat Completions,
+including the preceding basic command suite and independent saved FAT checks.
+Evidence: `artifacts/unzip-whpx-responses` and
+`artifacts/unzip-whpx-chat_completions`. Saved bytes are checked with a separate
+host namespace reader and the host standard ZIP decoder.
+
+Integration corrections and execution issues:
+
+- The upstream fixed archive fd 3 would replace the workspace preopen. Archive
+  input now uses its actual opened descriptor or a duplicate of finite stdin.
+- Stored entries now check CRC and exact sizes; deflated length errors fail
+  instead of printing a warning with successful exit. Write/close errors fail.
+- Central-directory and local signatures, real end-record bytes, maximum ZIP
+  comments and offset arithmetic are checked before trusting their fields.
+- The build initially lacked chomp's declaration and then had an incorrect
+  return type. The declaration now matches the upstream void function. A
+  duplicate copy helper was removed in favor of the existing upstream helper.
+  Extraction state is defined in metadata.c so the separate C fixture links.
+- An initial uv syntax probe omitted the Python executable. The corrected
+  invocation passes. The descriptor regression initially used the general
+  Python arguments and then the wrong fixture directory; the corrected call
+  uses its dedicated child fixture in artifacts/wasm-fixtures and passes.
+
+General mounts, remaining commands, installation manifests and retained tool
+sessions remain incomplete. Complete networking regression remains pending.
+
 ## 2026-10-24: Upstream gzip, gunzip and zcat
 
 The shared image now builds BusyBox 1.37.0 gzip, bbunzip, DEFLATE decompression,

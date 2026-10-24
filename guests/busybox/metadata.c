@@ -1,6 +1,9 @@
 #include "libbb.h"
 #include <wasi/api.h>
 
+/* Each applet Store owns its extraction directory anchor. */
+int efi_archive_root_fd = -1;
+
 /* Preview 1 does not carry POSIX permissions. Share the private endpoint
  * used by the unchanged Python distribution instead of changing its ABI. */
 int __real_open(const char *path, int flags, ...);
@@ -10,6 +13,19 @@ int __real_fstat(int fd, struct stat *info);
 int __real_fstatat(int fd, const char *path, struct stat *info, int flags);
 int __real_mkdir(const char *path, mode_t mode);
 int __real_chdir(const char *path);
+int __real_symlink(const char *target, const char *path);
+int __wrap_fstatat(int fd, const char *path, struct stat *info, int flags);
+
+static int path_fd(int fd, const char *path)
+{
+    if (efi_archive_root_fd < 0)
+        return fd;
+    if (path[0] == '/') {
+        errno = ENOTCAPABLE;
+        return -1;
+    }
+    return fd == AT_FDCWD ? efi_archive_root_fd : fd;
+}
 
 static int request(uint32_t *words, size_t count, const char *path, uint32_t response[2])
 {
@@ -97,6 +113,9 @@ static int metadata(uint32_t operation, int fd, const char *path, int follow, mo
 {
     char *absolute = NULL;
     if (path) {
+        fd = path_fd(fd, path);
+        if (fd == -1)
+            return -1;
         if (*path == '/') {
             fd = 3;
         } else if (fd == AT_FDCWD) {
@@ -148,11 +167,15 @@ static int patch_stat(int result, int fd, const char *path, int follow, struct s
 
 int __wrap_stat(const char *path, struct stat *info)
 {
+    if (efi_archive_root_fd >= 0)
+        return __wrap_fstatat(AT_FDCWD, path, info, 0);
     return patch_stat(__real_stat(path, info), AT_FDCWD, path, 1, info);
 }
 
 int __wrap_lstat(const char *path, struct stat *info)
 {
+    if (efi_archive_root_fd >= 0)
+        return __wrap_fstatat(AT_FDCWD, path, info, AT_SYMLINK_NOFOLLOW);
     return patch_stat(__real_lstat(path, info), AT_FDCWD, path, 0, info);
 }
 
@@ -163,6 +186,9 @@ int __wrap_fstat(int fd, struct stat *info)
 
 int __wrap_fstatat(int fd, const char *path, struct stat *info, int flags)
 {
+    fd = path_fd(fd, path);
+    if (fd == -1)
+        return -1;
     return patch_stat(__real_fstatat(fd, path, info, flags), fd, path,
         !(flags & AT_SYMLINK_NOFOLLOW), info);
 }
@@ -199,8 +225,11 @@ static uint32_t creation_mode(uint32_t mode)
 
 int __wrap_mkdir(const char *path, mode_t mode)
 {
+    int fd = path_fd(AT_FDCWD, path);
+    if (fd == -1)
+        return -1;
     uint32_t previous = creation_mode(mode & 07777);
-    int result = __real_mkdir(path, mode);
+    int result = fd == AT_FDCWD ? __real_mkdir(path, mode) : mkdirat(fd, path, mode);
     int error = errno;
     creation_mode(previous);
     errno = error;
@@ -209,6 +238,9 @@ int __wrap_mkdir(const char *path, mode_t mode)
 
 int __wrap_open(const char *path, int flags, ...)
 {
+    int directory = path_fd(AT_FDCWD, path);
+    if (directory == -1)
+        return -1;
     mode_t mode = 0;
     if (flags & O_CREAT) {
         va_list arguments;
@@ -216,11 +248,21 @@ int __wrap_open(const char *path, int flags, ...)
         mode = va_arg(arguments, mode_t);
         va_end(arguments);
         uint32_t previous = creation_mode(mode & 07777);
-        int fd = __real_open(path, flags, mode);
+        int fd = directory == AT_FDCWD ? __real_open(path, flags, mode)
+            : openat(directory, path, flags, mode);
         int error = errno;
         creation_mode(previous);
         errno = error;
         return fd;
     }
-    return __real_open(path, flags, mode);
+    return directory == AT_FDCWD ? __real_open(path, flags, mode)
+        : openat(directory, path, flags, mode);
+}
+
+int __wrap_symlink(const char *target, const char *path)
+{
+    int fd = path_fd(AT_FDCWD, path);
+    if (fd == -1)
+        return -1;
+    return fd == AT_FDCWD ? __real_symlink(target, path) : symlinkat(target, fd, path);
 }
