@@ -173,6 +173,9 @@ extern const char bb_banner[];
 #define bb_default_path "/bin"
 #define major(device) ((unsigned)(((device) >> 8) & 0xfff))
 #define minor(device) ((unsigned)(((device) & 0xff) | (((device) >> 12) & 0xffffff00)))
+#define makedev(major_value, minor_value) \
+    (((dev_t)((major_value) & 0xfff) << 8) | ((minor_value) & 0xff) \
+     | ((dev_t)((minor_value) & 0xffffff00) << 12))
 #define DEV_FD_PREFIX "/dev/fd/"
 #define getpid efi_process_getpid
 #define getppid efi_process_getppid

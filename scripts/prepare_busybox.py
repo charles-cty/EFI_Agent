@@ -9,6 +9,7 @@ from prepare_text_applets import prepare_text_applets
 from prepare_xargs import prepare_xargs
 from prepare_compression import prepare_compression
 from prepare_unzip import prepare_unzip
+from prepare_tar import prepare_tar
 
 
 ENABLED = {
@@ -34,6 +35,9 @@ ENABLED = {
     "GZIP", "GUNZIP", "ZCAT", "FEATURE_GZIP_DECOMPRESS",
     "FEATURE_GZIP_LONG_OPTIONS", "FEATURE_GUNZIP_LONG_OPTIONS", "FEATURE_GZIP_LEVELS",
     "UNZIP", "FEATURE_UNZIP_CDF",
+    "TAR", "FEATURE_TAR_CREATE", "FEATURE_TAR_LONG_OPTIONS", "FEATURE_TAR_FROM",
+    "FEATURE_TAR_GNU_EXTENSIONS", "FEATURE_TAR_NOPRESERVE_TIME",
+    "FEATURE_SEAMLESS_GZ", "FEATURE_TAR_AUTODETECT",
     "DU", "FEATURE_DU_DEFAULT_BLOCKSIZE_1K", "DF", "FEATURE_DF_FANCY",
     "MONOTONIC_SYSCALL",
     "DATE", "FEATURE_DATE_ISOFMT", "FEATURE_DATE_NANO",
@@ -511,6 +515,10 @@ def main():
              args.source / "archival/libarchive/decompress_gunzip.c",
              args.source / "include/bb_archive.h",
              args.source / "archival/unzip.c",
+             args.source / "archival/tar.c",
+             args.source / "archival/libarchive/get_header_tar.c",
+             args.source / "archival/libarchive/data_extract_all.c",
+             args.source / "archival/libarchive/header_verbose_list.c",
              args.source / "coreutils/od.c", args.source / "util-linux/hexdump.c",
              args.source / "libbb/dump.c", args.source / "libbb/xatonum.c",
              args.source / "coreutils/uudecode.c", args.source / "libbb/uuencode.c",
@@ -553,6 +561,7 @@ def main():
     prepare_xargs(args.source, args.output, replace_once)
     prepare_compression(args.source, args.output, replace_once)
     prepare_unzip(args.source, args.output, replace_once)
+    prepare_tar(args.source, args.output, replace_once)
     prepare_du(args.source, args.output)
     df = (args.source / "coreutils/df.c").read_text(encoding="utf-8")
     df = replace_once(df, '\treturn status;', '\tfflush_stdout_and_exit(status);')

@@ -1,10 +1,13 @@
 #include "libbb.h"
+#include "bb_archive.h"
 
 struct archive_attributes {
     struct archive_attributes *next;
     char *path;
     mode_t mode;
-    unsigned date, time, depth;
+    unsigned depth;
+    bool restore_time;
+    struct timespec times[2];
 };
 
 static struct archive_attributes *deferred;
@@ -41,8 +44,7 @@ void efi_archive_file_attributes(int fd, mode_t mode, unsigned date, unsigned ti
         bb_simple_perror_msg_and_die("archive file mode");
 }
 
-void efi_archive_remember_attributes(const char *path, mode_t mode,
-    unsigned date, unsigned time)
+static struct archive_attributes *remember_attributes(const char *path, mode_t mode)
 {
     struct archive_attributes *entry;
     char *normalized = xstrdup(path);
@@ -62,8 +64,29 @@ void efi_archive_remember_attributes(const char *path, mode_t mode,
     } else
         free(normalized);
     entry->mode = mode;
-    entry->date = date;
-    entry->time = time;
+    return entry;
+}
+
+void efi_archive_remember_attributes(const char *path, mode_t mode,
+    unsigned date, unsigned time)
+{
+    struct archive_attributes *entry = remember_attributes(path, mode);
+    entry->restore_time = date != 0;
+    if (entry->restore_time)
+        archive_times(entry->times, date, time);
+}
+
+void efi_tar_attributes(const char *path, const file_header_t *header, unsigned flags)
+{
+    mode_t mode = header->mode;
+    if (flags & ARCHIVE_DONT_RESTORE_PERM) {
+        mode_t mask = umask(0);
+        umask(mask);
+        mode &= ~mask;
+    }
+    struct archive_attributes *entry = remember_attributes(path, mode);
+    entry->restore_time = (flags & ARCHIVE_RESTORE_DATE) != 0;
+    entry->times[0] = entry->times[1] = (struct timespec){.tv_sec = header->mtime};
 }
 
 void efi_archive_begin(void)
@@ -83,10 +106,8 @@ void efi_archive_end(void)
                 selected = item;
         struct archive_attributes *entry = *selected;
         *selected = entry->next;
-        if (entry->date) {
-            struct timespec times[2];
-            archive_times(times, entry->date, entry->time);
-            if (utimensat(efi_archive_root_fd, entry->path, times, AT_SYMLINK_NOFOLLOW) < 0)
+        if (entry->restore_time) {
+            if (utimensat(efi_archive_root_fd, entry->path, entry->times, AT_SYMLINK_NOFOLLOW) < 0)
                 bb_simple_perror_msg_and_die(entry->path);
         }
         if (!S_ISLNK(entry->mode) && chmod(entry->path, entry->mode & 07777) < 0)

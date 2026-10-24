@@ -20,7 +20,7 @@ $compile = '--target=wasm32-wasip1', "--sysroot=$sysroot", '-O2',
     '-fno-optimize-sibling-calls', '-fwrapv', '-D_GNU_SOURCE', '-Iguests/busybox/include',
     '-Iguests/sjlj/include', '-Iguests/include', '-Iguests/busybox', "-I$build", "-I$Source/include", '-iquote', "$Source/shell", '-iquote', "$Source/coreutils",
     '-Werror=return-type', '-Werror=implicit-function-declaration', '-Wl,-z,stack-size=1048576', '-Wl,--max-memory=67108864'
-foreach ($symbol in @('stat', 'lstat', 'fstat', 'fstatat', 'chmod', 'fchmod', 'open', 'mkdir', 'chdir', 'symlink')) {
+foreach ($symbol in @('stat', 'lstat', 'fstat', 'fstatat', 'chmod', 'fchmod', 'open', 'mkdir', 'chdir', 'symlink', 'unlink', 'link')) {
     $compile += "-Wl,--wrap=$symbol"
 }
 $compile += '-Wl,--wrap=statvfs', '-Wl,--wrap=fstatvfs'
@@ -69,6 +69,22 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $build 'decompress_gunzip.c'), (Join-Path $build 'transformer.c'),
     (Join-Path $Source 'libbb/crc32.c'),
     (Join-Path $build 'unzip.c'), 'guests/busybox/archive_support.c',
+    (Join-Path $build 'tar.c'), (Join-Path $build 'get_header_tar.c'),
+    'guests/busybox/tar_support.c',
+    (Join-Path $Source 'archival/chksum_and_xwrite_tar_header.c'),
+    (Join-Path $build 'data_extract_all.c'),
+    (Join-Path $Source 'archival/libarchive/init_handle.c'),
+    (Join-Path $Source 'archival/libarchive/common.c'),
+    (Join-Path $Source 'archival/libarchive/data_skip.c'),
+    (Join-Path $Source 'archival/libarchive/data_extract_to_stdout.c'),
+    (Join-Path $Source 'archival/libarchive/filter_accept_all.c'),
+    (Join-Path $Source 'archival/libarchive/filter_accept_reject_list.c'),
+    (Join-Path $Source 'archival/libarchive/header_skip.c'),
+    (Join-Path $Source 'archival/libarchive/header_list.c'),
+    (Join-Path $Source 'archival/libarchive/header_verbose_list.c'),
+    (Join-Path $Source 'archival/libarchive/seek_by_read.c'),
+    (Join-Path $Source 'archival/libarchive/seek_by_jump.c'),
+    (Join-Path $Source 'archival/libarchive/data_align.c'),
     (Join-Path $Source 'archival/libarchive/find_list_entry.c'),
     (Join-Path $Source 'archival/libarchive/unsafe_prefix.c'),
     (Join-Path $Source 'archival/libarchive/unsafe_symlink_target.c'),

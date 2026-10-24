@@ -9,6 +9,21 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Upstream BusyBox tar now builds into the shared image with create/list/extract,
+GNU long names/links, PAX names, filters, strip-components and cooperative gzip
+streams. Explicit fd maps support closed standard fds and empty environments.
+Extraction anchors unlink and hard links as well as creation and metadata;
+directory modes/times are restored after children. Staged fixes check PAX
+lengths before pointer movement, read skipped data to detect truncation and
+propagate metadata, close and output errors. Native integration, independent
+saved archive/namespace checks and both actual 512 MiB WHPX model API flows
+pass in artifacts/tar-native-final.log, artifacts/tar-whpx-responses and
+artifacts/tar-whpx-chat_completions. Host tests, host/UEFI Clippy, formatting,
+Release packaging, Python 17-case and native command/permission/stream
+regressions pass. Required commands now number 48/48. General mounts/link
+traversal, installation manifests, retained sessions and full environment
+delivery remain incomplete.
+
 Upstream BusyBox stat now enables filesystem mode with a guest statfs adapter
 over the measured capacity provider. Default, terse and custom output cover
 workspace/tmpfs/devfs/proc identities. Native guest and actual 512 MiB WHPX

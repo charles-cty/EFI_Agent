@@ -1,5 +1,62 @@
 # Verification record
 
+## 2026-10-24: Upstream tar and cooperative gzip archives
+
+BusyBox tar now builds into the shared image with upstream creation, parsing,
+listing, extraction, GNU long names/links, PAX names, filters and strip-components.
+Gzip -z and automatic filename detection use real gzip/gunzip children with
+explicit fd maps. The cooperative adapter replaces the fork/compressor boundary;
+it waits for the exact child and propagates nonzero status. Existing user fds
+retain their inheritance rules. Closed standard descriptors and empty
+environments are covered. Other compression formats remain disabled.
+
+Extraction shares the existing directory anchor. Unlink and hard-link wrappers
+now honor that anchor as open/mkdir/stat/chmod/symlink already do. File and
+directory attributes are deferred in depth order, so restrictive directories
+permit extraction before their final permissions and times are restored.
+Ownership stays at the environment's fixed uid/gid. Special-node failures,
+directory-creation errors, buffered output and close failures return failure.
+Skipped member data is read rather than seeking past missing bytes. PAX lengths
+are checked against remaining bytes before pointer arithmetic; malformed lengths,
+embedded NULs and missing record newlines fail explicitly.
+
+Native Release integration passes binary files, zero/one-byte and 511/512/513
+record boundaries, 65535/65536/65537 streams, 524289-byte pipelines, archive
+creation/extraction, long and PAX names, forward hard links, symlinks, modes,
+times, include/exclude lists, strip-components, closed stdout, missing inputs,
+truncation, checksum failures and malformed PAX records. Gzip is verified with
+explicit and automatic detection, finite stdin, corrupt CRC/lengths, each closed
+standard descriptor and an empty environment. Independent host tarfile parsing
+checks saved archive content; a separate namespace reader checks bytes, inode
+groups, modes/times and unchanged outside files. Evidence:
+`artifacts/tar-native-final.log` and `artifacts/tar-build.log`.
+
+Actual 512 MiB WHPX/OVMF passes both Responses and Chat Completions, including
+the preceding basic applet suite. Independent saved FAT/namespace inspection
+verifies extracted binary bytes, hard-link inode groups, symlink targets,
+permissions and timestamps, containment, and host tarfile decoding of ordinary
+and gzip archives. Evidence: `artifacts/tar-whpx-responses` and
+`artifacts/tar-whpx-chat_completions`, with completed host logs beside them.
+
+All host workspace tests, host/UEFI Clippy, formatting and Release packaging
+pass in `artifacts/tar-rust-tests.log`, `artifacts/tar-clippy-host.log`,
+`artifacts/tar-clippy-uefi.log`, `artifacts/tar-format.log` and
+`artifacts/tar-package.log`. Modified Python syntax passes in
+`artifacts/tar-python-syntax.log`. Native regressions pass unzip, gzip/gunzip,
+ln, copy/move, stat, basic and mutation commands, all 17 CPython cases,
+permissions/C wrappers and all 112 stream cases in `artifacts/tar-regression-*`.
+
+The required command inventory is now 48/48. General mounts/link traversal,
+installation manifests, retained sessions and full environment verification
+remain incomplete.
+
+Build corrections: the source scanner needed the newly linked translation units
+to generate their disabled feature macros. Missing shared declarations were
+added. A duplicate xfstat definition was removed after the linker identified
+the existing helper staged with dump. Intermediate reads of unfinished or
+not-yet-created logs returned no data or missing-file errors; test handles were
+retained until terminal status.
+
 ## 2026-10-24: Upstream stat filesystem output
 
 BusyBox stat -f now uses the measured filesystem-statistics provider through a

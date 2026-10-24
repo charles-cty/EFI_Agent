@@ -108,6 +108,18 @@ Workspace inode counts report the shared namespace entry-slot quota, including
 aliases and detached open inodes. The read-only dev/proc mounts have no data
 capacity and are shown with -a or explicit operands. The /bin overlay uses the
 workspace filesystem. Upstream -H currently uses the same binary scaling as -h.
+Tar uses upstream archive creation, header parsing, listing and extraction,
+including GNU long names, PAX names, include/exclude filters, strip-components,
+hard links and symlinks. Gzip -z and filename auto-detection run real gzip/gunzip
+children through bounded cooperative pipes. Explicit descriptor maps retain
+correct input/output when a standard descriptor was closed. Child failures
+propagate. Extraction opens one directory anchor; file creation, mutation,
+hard links and deferred metadata stay below it. Directory modes/times are
+restored after children. Listing reads skipped member bytes so truncation is
+observable. PAX lengths are checked before pointer movement. Ownership remains
+the environment's fixed uid/gid; unsupported special nodes fail explicitly.
+Other compression formats and extended PAX metadata retain the upstream
+configuration limits.
 The /tmp data quota is 32 MiB across all processes, plus 4096 live file objects.
 Writes return normal short writes at the quota boundary; resize fails without
 changing data. Detached open files and replaced open targets retain their

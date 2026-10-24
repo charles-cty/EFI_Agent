@@ -14,6 +14,8 @@ int __real_fstatat(int fd, const char *path, struct stat *info, int flags);
 int __real_mkdir(const char *path, mode_t mode);
 int __real_chdir(const char *path);
 int __real_symlink(const char *target, const char *path);
+int __real_unlink(const char *path);
+int __real_link(const char *source, const char *destination);
 int __wrap_fstatat(int fd, const char *path, struct stat *info, int flags);
 
 static int path_fd(int fd, const char *path)
@@ -362,4 +364,22 @@ int __wrap_symlink(const char *target, const char *path)
     if (fd == -1)
         return -1;
     return fd == AT_FDCWD ? __real_symlink(target, path) : symlinkat(target, fd, path);
+}
+
+int __wrap_unlink(const char *path)
+{
+    int fd = path_fd(AT_FDCWD, path);
+    if (fd == -1)
+        return -1;
+    return fd == AT_FDCWD ? __real_unlink(path) : unlinkat(fd, path, 0);
+}
+
+int __wrap_link(const char *source, const char *destination)
+{
+    int source_fd = path_fd(AT_FDCWD, source);
+    int destination_fd = path_fd(AT_FDCWD, destination);
+    if (source_fd == -1 || destination_fd == -1)
+        return -1;
+    return source_fd == AT_FDCWD ? __real_link(source, destination)
+        : linkat(source_fd, source, destination_fd, destination, 0);
 }

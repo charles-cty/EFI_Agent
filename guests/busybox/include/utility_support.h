@@ -9,6 +9,7 @@
 #define ALIGN4 __attribute__((aligned(4)))
 #define PACKED __attribute__((packed))
 #define USE_FOR_NOMMU(...)
+#define USE_FOR_MMU(...) __VA_ARGS__
 #define SEAMLESS_COMPRESSION 0
 #define BUILD_BUG_ON(condition) _Static_assert(!(condition), "invalid BusyBox buffer size")
 #define GETOPT_RESET() (optind = 0)
@@ -97,6 +98,7 @@ int mknod(const char *path, mode_t mode, dev_t device);
 int bb_ask_y_confirmation(void);
 int bb_ask_y_confirmation_FILE(FILE *stream);
 void xstat(const char *path, struct stat *metadata);
+void xfstat(int fd, struct stat *metadata, const char *message);
 void xclose(int fd);
 void xunlink(const char *path);
 uint32_t *crc32_new_table_le(void);
@@ -108,6 +110,7 @@ uint32_t crc32_block_endian0(uint32_t value, const void *buffer, unsigned length
 int parse_datestr(const char *text, struct tm *value);
 int index_in_substrings(const char *strings, const char *key);
 const char *nth_string(const char *strings, int n);
+char *is_suffixed_with(const char *string, const char *key);
 time_t validate_tm_time(const char *text, struct tm *value);
 extern const char bb_msg_invalid_date[];
 extern const char bb_msg_invalid_arg_to[];
@@ -247,6 +250,7 @@ extern const char bb_msg_read_error[];
 extern const char *const bb_argv_dash[];
 ssize_t full_read(int fd, void *buffer, size_t size);
 int open_or_warn(const char *path, int flags);
+int open_zipped(const char *path, int fail_if_not_compressed);
 int xopen(const char *path, int flags);
 int open_or_warn_stdin(const char *path);
 FILE *fopen_or_warn_stdin(const char *path);

@@ -52,6 +52,8 @@ from test_busybox_ln import verify_ln
 from wasm_df_fixture import DF_CHECK
 from test_busybox_df import verify_df
 from test_busybox_stat import verify_stat
+from wasm_tar_fixture import TAR_CHECK
+from test_busybox_tar import verify_tar
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -309,6 +311,7 @@ def main():
     parser.add_argument("--du-applet", action="store_true", help="Verify upstream du and independently count saved FAT clusters")
     parser.add_argument("--ln-applet", action="store_true", help="Verify upstream ln and independently inspect saved hard-link groups")
     parser.add_argument("--df-applet", action="store_true", help="Verify upstream df with real mount statistics and independent FAT capacity")
+    parser.add_argument("--tar-applet", action="store_true", help="Verify upstream tar streams, containment, links and saved archives")
     args = parser.parse_args()
     if args.code_cancel_only and not args.code_workspace:
         parser.error("--code-cancel-only requires --code-workspace")
@@ -469,13 +472,14 @@ def main():
                         args.realpath_applet, args.stat_applet, args.ls_applet,
                         args.find_applet, args.program_paths, args.copy_move_applets,
                         args.xargs_applet, args.compression_applets, args.unzip_applet,
-                        args.du_applet, args.ln_applet, args.df_applet))
+                        args.du_applet, args.ln_applet, args.df_applet, args.tar_applet))
     if applet_modes:
         if not args.code_workspace or args.filesystem_tools or args.code_cancel_only:
             parser.error("Applet checks require --code-workspace and exclude other code modes")
         if applet_modes != 1:
             parser.error("Select one applet check mode")
-        fixture = (DF_CHECK if args.df_applet else
+        fixture = (TAR_CHECK if args.tar_applet else
+                   DF_CHECK if args.df_applet else
                    LN_CHECK if args.ln_applet else
                    DU_CHECK if args.du_applet else
                    UNZIP_CHECK if args.unzip_applet else
@@ -489,7 +493,8 @@ def main():
                    REALPATH_CHECK if args.realpath_applet else
                    SHA256_CHECK if args.sha256_applet else
                    BASE64_CHECK if args.base64_applet else TEXT_APPLETS_CHECK)
-        marker = ('UPSTREAM_DF_OK' if args.df_applet else
+        marker = ('UPSTREAM_TAR_OK' if args.tar_applet else
+                  'UPSTREAM_DF_OK' if args.df_applet else
                   'UPSTREAM_LN_OK' if args.ln_applet else
                   'UPSTREAM_DU_OK' if args.du_applet else
                   'UPSTREAM_UNZIP_OK' if args.unzip_applet else
@@ -661,6 +666,8 @@ def main():
                         verify_compression(workspace)
                     elif args.unzip_applet:
                         verify_unzip(workspace)
+                    elif args.tar_applet:
+                        verify_tar(workspace)
                     elif args.du_applet:
                         def allocation(name):
                             entry = fs.get('/work/' + workspace.entries[name]['backing'])

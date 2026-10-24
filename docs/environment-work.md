@@ -6,8 +6,9 @@ expansion. Initial native/firmware interfaces do not establish full completion.
 The shared image currently uses upstream ls, find, awk, sed, grep, chmod, cat, head,
 tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true,
 false, od, hexdump, base64, sha256sum and realpath, plus mkdir, rmdir, rm,
-touch, date, sort, uniq, cut, tr, cp, mv, which, xargs, gzip, gunzip, zcat, unzip, du, ln and df. Other
-utility applets still need upstream replacement or addition.
+touch, date, sort, uniq, cut, tr, cp, mv, which, xargs, gzip, gunzip, zcat, unzip, du, ln, df
+and tar. All 48 required commands have native and actual WHPX evidence; the
+complete environment still requires the delivery gates below.
 Upstream `stat` now reports file and symlink metadata, ownership, permissions,
 timestamps and custom/terse formats. Filesystem mode (`stat -f`) now uses the
 same capacity provider through a guest C statfs adapter. Standard statvfs
@@ -114,7 +115,15 @@ charged until its last close. Native command checks, quota boundaries and
 independent host volume queries pass. Both actual 512 MiB WHPX model API flows
 pass with independent saved FAT capacity and byte checks in
 artifacts/df-whpx-responses and artifacts/df-whpx-chat_completions.
-The missing required applet is tar.
+Tar now uses upstream creation, member parsing, listing, extraction and filters.
+Gzip compression/decompression use cooperative child processes with explicit fd
+maps; names and links resolve below the anchored extraction directory. Directory
+attributes are restored after their children. Native integration checks saved
+archives, metadata, hard links, binary/pipe boundaries and path containment.
+Both actual 512 MiB WHPX model API flows pass with independent saved archive,
+byte, link and metadata checks in artifacts/tar-whpx-responses and
+artifacts/tar-whpx-chat_completions. The remaining mount, manifest,
+retained-session and final delivery gates are incomplete.
 
 ## Delivery requirements
 
