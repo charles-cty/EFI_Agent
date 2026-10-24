@@ -975,6 +975,10 @@ impl FileSystem for Namespace {
         }
         Ok(Some(Rc::new(Self::view(self.inner().clone(), id))))
     }
+    fn directory_path(&self) -> Result<String, FileError> {
+        self.inner().check()?;
+        self.inner().state.borrow().path(self.anchor.inode)
+    }
     fn resolve_path(&self, base: &str, path: &str) -> Result<String, FileError> {
         self.inner().check()?;
         if path.is_empty() {

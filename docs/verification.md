@@ -1,5 +1,33 @@
 # Verification record
 
+## 2026-10-24: Physical paths for retained directory views
+
+The filesystem interface now exposes a directory view's current physical path,
+relative to its filesystem root. Namespace views derive it from the retained
+inode graph. Runtime-mounted views preserve their mount prefix. Detached
+directories return NotFound, including after replacement or old-name reuse.
+Providers without directory identity return Unsupported.
+
+The persistent namespace integration case checks a symlink-selected anchor,
+ancestor movement across directories, old-name recreation, replacement of the
+retained empty directory, repeated name reuse and journal reload. The mounted
+integration case checks root/bin/dev/proc/tmp paths, workspace and temporary
+ancestor moves, nested ordinary names matching mounts, removal and inode
+identity. Both retain the existing rejection of parent escape from an ordinary
+directory capability. The expected paths come from the test's explicit rename
+destinations and inode identities rather than the production path helper.
+
+All 27 namespace cases, six temporary-storage cases and the mounted directory
+path case pass on Windows. Full host tests pass in
+`artifacts/cwd-directory-path-host-tests.log`. Host and UEFI Clippy with warnings
+denied pass in `artifacts/cwd-directory-path-clippy-host.log` and
+`artifacts/cwd-directory-path-clippy-uefi.log`. Rust formatting and whitespace
+checks pass. No environment or dependency workaround was required.
+
+This change supplies an internal prerequisite for anchored cwd. Runtime cwd
+ownership, parent traversal and guest libc adaptation remain pending. No new
+firmware cwd behavior or WHPX acceptance is claimed by these checks.
+
 ## 2026-10-24: Process files and descriptor links
 
 The mounted root now binds /proc/self to each process, including inherited

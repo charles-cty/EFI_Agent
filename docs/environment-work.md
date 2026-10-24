@@ -200,6 +200,14 @@ artifacts/procfs-release-whpx-chat_completions. Host/target checks and Release
 packaging pass. Anchored cwd tracking, installation manifests, retained sessions
 and final delivery gates remain.
 
+Anchored cwd work has started with physical path queries on directory views.
+The namespace derives the path from the retained inode and its current parents;
+mounted views preserve the workspace or temporary mount prefix. Rename and
+old-name reuse cannot redirect this query to a replacement inode. Removed or
+replaced anchors return NotFound. Existing directory capabilities stay bounded.
+Runtime cwd ownership, parent navigation, libc adaptation and full native/WHPX
+cwd acceptance remain pending.
+
 ## Delivery requirements
 
 - One namespace shared by shell, Python, C, model files and module resolution.

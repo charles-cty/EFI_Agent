@@ -426,6 +426,25 @@ impl FileSystem for VirtualFileSystem {
         path.owner(self).directory_view_raw(&path)
     }
 
+    fn directory_path(&self) -> Result<String, FileError> {
+        match &self.scope {
+            Scope::Root => Ok(String::new()),
+            Scope::Workspace => self.base.directory_path(),
+            Scope::Mount(mount) if mount == "tmp" => {
+                let path = self.tmp.directory_path()?;
+                Ok(if path.is_empty() {
+                    mount.clone()
+                } else {
+                    format!("{mount}/{path}")
+                })
+            }
+            Scope::Mount(mount) => {
+                self.metadata_raw("")?;
+                Ok(mount.clone())
+            }
+        }
+    }
+
     fn resolve_path(&self, base: &str, path: &str) -> Result<String, FileError> {
         if path.is_empty() {
             return Err(FileError::NotFound);

@@ -292,6 +292,12 @@ pub trait FileSystem: core::any::Any {
     fn directory_view(&self, _path: &str) -> Result<Option<Rc<dyn FileSystem>>, FileError> {
         Ok(None)
     }
+    /// Return this directory view's current path from its filesystem root,
+    /// without a leading slash. A detached directory has no path (NotFound).
+    /// Providers without directory identity return Unsupported.
+    fn directory_path(&self) -> Result<String, FileError> {
+        Err(FileError::Unsupported)
+    }
     fn identity(&self) -> usize {
         self as *const Self as *const () as usize
     }

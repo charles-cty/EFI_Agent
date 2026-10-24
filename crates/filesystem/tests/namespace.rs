@@ -557,6 +557,50 @@ fn unlink_and_replacement_retain_open_file_identity_and_collect_after_last_close
 }
 
 #[test]
+fn directory_paths_follow_inode_identity_through_ancestor_moves_and_replacement() {
+    let work = Workspace::new();
+    let namespace = work.open();
+    namespace.create_directory("parent").unwrap();
+    namespace.create_directory("parent/child").unwrap();
+    namespace.create_directory("other").unwrap();
+    namespace.symlink("parent/child", "alias").unwrap();
+    let directory = namespace.directory_view("alias").unwrap().unwrap();
+    let inode = directory.metadata("").unwrap().inode;
+    assert_eq!(namespace.directory_path().unwrap(), "");
+    assert_eq!(directory.directory_path().unwrap(), "parent/child");
+
+    namespace.rename("parent", "other/moved").unwrap();
+    namespace.create_directory("parent").unwrap();
+    namespace.create_directory("parent/child").unwrap();
+    assert_eq!(directory.directory_path().unwrap(), "other/moved/child");
+    assert_eq!(directory.metadata("").unwrap().inode, inode);
+    assert_ne!(namespace.metadata("parent/child").unwrap().inode, inode);
+    assert_eq!(directory.metadata("..").unwrap_err(), FileError::NotCapable);
+
+    // Replacing the retained directory detaches that inode, even though a
+    // different directory now has the exact path it previously reported.
+    namespace
+        .rename("parent/child", "other/moved/child")
+        .unwrap();
+    assert_eq!(directory.directory_path(), Err(FileError::NotFound));
+    assert_eq!(directory.metadata("").unwrap().inode, inode);
+    assert_eq!(directory.metadata("").unwrap().links, 0);
+    namespace.remove_directory("other/moved/child").unwrap();
+    namespace.create_directory("other/moved/child").unwrap();
+    assert_eq!(directory.directory_path(), Err(FileError::NotFound));
+    drop(directory);
+    namespace.flush().unwrap();
+    assert!(namespace.take_errors().is_empty());
+    drop(namespace);
+    assert!(
+        work.open()
+            .metadata("other/moved/child")
+            .unwrap()
+            .is_directory()
+    );
+}
+
+#[test]
 fn directory_views_survive_rename_and_removed_views_cannot_escape_their_anchor() {
     let work = Workspace::new();
     let namespace = work.open();

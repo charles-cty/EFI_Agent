@@ -9,6 +9,12 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Directory views now expose their current physical path from the inode graph.
+Namespace and mounted views follow ancestor renames and reject path queries
+for removed or replaced directory inodes, including when an old name is reused.
+Ordinary directory-fd capability bounds remain unchanged. This is a prerequisite
+for anchored cwd; process cwd and guest libc still use path strings.
+
 Process files now expose actual PID/parent/dispatcher state, startup cmdline and
 environment, cwd/exe links, fd links and mounts. Proc self views bind per process,
 including inherited directory views. Descriptor tables publish weak references;

@@ -8,7 +8,14 @@ backing files. It retains open-file and directory identity across mutations.
 WASI unlink/rmdir, rename across directory views, symlink/readlink, lookup
 flags and path/descriptor timestamps now call provider methods. Raw providers
 can reject unimplemented operations explicitly. Model file tools and module
-loading share the mounted namespace. Virtual mounts remain pending.
+loading share the mounted namespace, including virtual mounts.
+
+Directory views can query their current physical path through `directory_path`.
+The namespace derives this path from the retained inode graph. Ancestor moves
+change the result; removal or replacement returns NotFound even when another
+inode takes the former name. Mounted views add the correct mount prefix.
+This query does not expand directory-fd capabilities. Process cwd and guest libc
+still use path strings; anchored cwd routing remains pending.
 
 `namespace::read_snapshot` reads the committed logical tree without recovery
 writes or garbage collection. It exposes validated backing paths to host
