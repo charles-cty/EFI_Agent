@@ -1,5 +1,66 @@
 # Verification record
 
+## 2026-10-24: Inode-backed shared temporary storage
+
+The runtime /tmp provider now uses the common namespace with a bounded memory
+object store and ephemeral metadata commits. Nested directories, relative
+symlinks, hard links, modes, times and inode-based directory anchors share the
+workspace algorithms. The 32 MiB data quota and 4096 non-root inode/name slots
+include detached objects until their last close. Aliases share data charges;
+directories and extra hard-link names consume slots. Slot checks run before
+allocating a new backing object. Workspace-private names remain available as
+ordinary names in the ephemeral tree. Dot entries no longer consume ordinary
+directory listing slots.
+The private process endpoint is recognized only on the workspace preopen;
+an anchored temporary directory can open/read/write an ordinary file with
+that name without entering the control protocol.
+
+Common tests verify exact byte/slot boundaries, sparse short writes, truncation,
+clock failures before effects, provider replacement, link counts, permissions,
+times, renamed/detached directories and last-close reclamation. A structured
+300-step write/truncate model independently checks bytes and capacity. Runtime
+tests verify operations in both directions between root and anchored temporary
+views, cross-device rejection, isolation between worlds, and directory listing
+at the full 4096-name boundary.
+
+Native Release Python/ash integration verifies standard tempfile cleanup,
+renamed directory-fd operations, child cwd, symlink loops, permission failures,
+metadata identity, shared links, detached open-file bytes, exact ENOSPC/short
+writes, cross-device mv fallback and temporary archive extraction. Independent
+namespace inspection checks saved bytes/mode/time and excludes temporary data.
+Evidence: `artifacts/tmp-inodes-native.log`.
+
+Actual 512 MiB WHPX/OVMF passes both Responses and Chat Completions with the
+final private-endpoint correction and the preceding basic applet sequence.
+Independent saved FAT/namespace inspection verifies the cross-device saved
+payload, mode, timestamp and absence of temporary entries. Evidence:
+`artifacts/tmp-inodes-whpx-responses` and
+`artifacts/tmp-inodes-whpx-chat_completions`, with completed host logs beside
+them. These checks cover the temporary inode subset, not general cross-mount
+path traversal or the full networking/application combination.
+
+Host workspace tests, host/UEFI Clippy and formatting pass in
+`artifacts/tmp-inodes-rust-tests.log`, `artifacts/tmp-inodes-clippy-host.log`,
+`artifacts/tmp-inodes-clippy-uefi.log` and `artifacts/tmp-inodes-format.log`.
+The actual BusyBox large-count/reserved-space test also passes with its external
+module fixture in `artifacts/tmp-inodes-statistics.log`. Native regressions
+pass tar, df, all 17 CPython cases, permission/C wrappers and all 112 stream
+cases in `artifacts/tmp-inodes-regression-*`. Release packaging passes in
+`artifacts/tmp-inodes-package.log`.
+
+Build/check corrections: the clock hookup now downcasts the runtime's stored
+filesystem trait object to its known virtual root. Clippy rejected an ambiguous
+null-byte escape in a test; explicit hexadecimal escapes preserve the intended
+bytes. A runner rebuild failed with LNK1104 while an integration test retained
+the Windows executable. The test handle was retained until completion, then
+the runner build and temporary integration passed. Concurrent build checks also
+waited for Cargo's artifact lock. A documentation patch with stale context was
+reapplied against the current text.
+
+General absolute/cross-mount symlink traversal, mount collision policy, complete
+device/process files, installation manifests, retained sessions and final
+environment delivery remain incomplete.
+
 ## 2026-10-24: Upstream tar and cooperative gzip archives
 
 BusyBox tar now builds into the shared image with upstream creation, parsing,

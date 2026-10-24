@@ -9,6 +9,24 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+The shared /tmp mount now reuses the inode namespace over bounded memory
+objects, with ephemeral metadata commits, nested directories, relative links,
+hard links, permissions/times and directory anchors retained through rename.
+The 32 MiB data and 4096 non-root inode/name quotas include detached open
+objects. Full directory listings retain their ordinary-name limit in addition
+to dot entries. The private process endpoint only intercepts the workspace
+preopen. Native integration verifies standard tempfile cleanup, renamed
+directory-fd operations, child cwd, cross-device mv fallback, archive extraction
+and an ordinary temporary file named like the private endpoint. Exact quota,
+last-close and structured sparse-write models pass. Both actual 512 MiB WHPX
+model API flows pass with independent saved FAT bytes/metadata and temporary
+mount exclusion in artifacts/tmp-inodes-whpx-responses and
+artifacts/tmp-inodes-whpx-chat_completions. Host tests, host/UEFI Clippy,
+formatting, Release packaging and native command/Python/permission/stream
+regressions pass. Absolute/cross-mount link
+traversal, collision policy, device/process files, installation manifests and
+retained sessions remain incomplete.
+
 Upstream BusyBox tar now builds into the shared image with create/list/extract,
 GNU long names/links, PAX names, filters, strip-components and cooperative gzip
 streams. Explicit fd maps support closed standard fds and empty environments.

@@ -4,6 +4,7 @@
 //! checksummed generations bound recovery after an interrupted metadata write.
 mod journal;
 mod state;
+mod temporary;
 
 use crate::{
     Capacity, DirectoryEntries, EntryType, File, FileError, FileSystem, MAX_RESIZE_BYTES, Metadata,
@@ -21,6 +22,11 @@ use state::{MAX_PATH_BYTES, Node, PRIVATE, ROOT, State, valid_name};
 
 pub type Clock = Rc<dyn Fn() -> Result<u64, FileError>>;
 
+enum Storage {
+    Journal,
+    Temporary { slots: usize, device: u32 },
+}
+
 struct Inner {
     raw: Rc<dyn FileSystem>,
     state: RefCell<State>,
@@ -29,7 +35,8 @@ struct Inner {
     uncertain: Cell<bool>,
     open: RefCell<BTreeMap<u64, usize>>,
     errors: RefCell<Vec<FileError>>,
-    clock: Option<Clock>,
+    clock: RefCell<Option<Clock>>,
+    storage: Storage,
 }
 
 struct Anchor {
@@ -117,15 +124,50 @@ fn components(path: &str) -> Result<VecDeque<String>, FileError> {
 }
 
 impl Inner {
+    fn slots(&self) -> usize {
+        match self.storage {
+            Storage::Journal => state::MAX_NODES,
+            Storage::Temporary { slots, .. } => slots,
+        }
+    }
+
+    fn reserve_entry(&self, candidate: &State) -> Result<(), FileError> {
+        if candidate.nodes.len() + candidate.links.len() >= self.slots() {
+            return Err(match self.storage {
+                Storage::Journal => FileError::ResourceLimit,
+                Storage::Temporary { .. } => FileError::NoSpace,
+            });
+        }
+        Ok(())
+    }
+
+    fn device(&self) -> u32 {
+        match self.storage {
+            Storage::Journal => 0,
+            Storage::Temporary { device, .. } => device,
+        }
+    }
+
+    fn stamp(&self) -> Result<Option<u64>, FileError> {
+        self.clock
+            .borrow()
+            .as_ref()
+            .map(|clock| clock())
+            .transpose()
+    }
+
     fn filesystem_statistics(&self) -> Result<crate::FileSystemStatistics, FileError> {
         self.check()?;
         let state = self.state.borrow();
         Ok(crate::FileSystemStatistics {
             capacity: self.raw.capacity()?,
-            files: state::MAX_NODES as u64,
-            files_free: (state::MAX_NODES - state.nodes.len() - state.links.len()) as u64,
-            id: 0,
-            kind: 0x45464941,
+            files: self.slots() as u64,
+            files_free: (self.slots() - state.nodes.len() - state.links.len()) as u64,
+            id: self.device(),
+            kind: match self.storage {
+                Storage::Journal => 0x45464941,
+                Storage::Temporary { .. } => 0x01021994,
+            },
             name_max: state::MAX_NAME_BYTES as u32,
             read_only: false,
         })
@@ -139,11 +181,16 @@ impl Inner {
     }
 
     fn now(&self) -> Result<u64, FileError> {
-        self.clock.as_ref().ok_or(FileError::Unsupported)?()
+        self.stamp()?.ok_or(FileError::Unsupported)
     }
 
     fn commit(&self, candidate: State) -> Result<(), FileError> {
         self.check()?;
+        if matches!(self.storage, Storage::Temporary { .. }) {
+            *self.state.borrow_mut() = candidate;
+            self.dirty.set(false);
+            return Ok(());
+        }
         let generation = self
             .generation
             .get()
@@ -244,7 +291,9 @@ impl Inner {
             EntryType::Symlink => (node.target.as_ref().unwrap().len() as u64, Some(0)),
             _ => (0, Some(0)),
         };
-        Ok(node_metadata(&self.state.borrow(), inode, size, allocated))
+        let mut metadata = node_metadata(&self.state.borrow(), inode, size, allocated);
+        metadata.device = u64::from(self.device());
+        Ok(metadata)
     }
 }
 
@@ -315,12 +364,39 @@ impl Namespace {
             uncertain: Cell::new(false),
             open: RefCell::new(BTreeMap::new()),
             errors: RefCell::new(Vec::new()),
-            clock,
+            clock: RefCell::new(clock),
+            storage: Storage::Journal,
         });
         let namespace = Self::view(inner, ROOT);
         namespace.collect_garbage()?;
         namespace.remove_uncommitted_objects()?;
         Ok(namespace)
+    }
+
+    /// Create an ephemeral inode tree with bounded data and directory slots.
+    /// Slots include the root, additional hard-link names and detached inodes
+    /// retained by open descriptors. No journal or host files are created.
+    pub fn temporary(bytes: u64, slots: usize, device: u32, clock: Option<Clock>) -> Self {
+        assert!((1..=state::MAX_NODES).contains(&slots));
+        Self::view(
+            Rc::new(Inner {
+                raw: Rc::new(temporary::MemoryStore::new(bytes)),
+                state: RefCell::new(State::new(0)),
+                generation: Cell::new(0),
+                dirty: Cell::new(false),
+                uncertain: Cell::new(false),
+                open: RefCell::new(BTreeMap::new()),
+                errors: RefCell::new(Vec::new()),
+                clock: RefCell::new(clock),
+                storage: Storage::Temporary { slots, device },
+            }),
+            ROOT,
+        )
+    }
+
+    /// Replace the host time provider before guest execution starts.
+    pub fn set_clock(&self, clock: Option<Clock>) {
+        *self.inner().clock.borrow_mut() = clock;
     }
 
     fn view(inner: Rc<Inner>, inode: u64) -> Self {
@@ -518,19 +594,17 @@ impl Namespace {
             return Err(FileError::NotFound);
         }
         permission(node, 0o300)?;
-        if parent == ROOT && (name.eq_ignore_ascii_case(PRIVATE) || name == ".efi-process") {
+        if matches!(self.inner().storage, Storage::Journal)
+            && parent == ROOT
+            && (name.eq_ignore_ascii_case(PRIVATE) || name == ".efi-process")
+        {
             return Err(FileError::Access);
         }
         Ok(())
     }
 
     fn stamp(&self) -> Result<u64, FileError> {
-        self.inner()
-            .clock
-            .as_ref()
-            .map(|clock| clock())
-            .transpose()
-            .map(|now| now.unwrap_or(0))
+        self.inner().stamp().map(|now| now.unwrap_or(0))
     }
 
     fn detach(&self, path: &str, directory: bool) -> Result<(), FileError> {
@@ -648,6 +722,7 @@ impl Namespace {
         }
         let (parent, name) = destination_view.parent(destination)?;
         let mut candidate = self.inner().state.borrow().clone();
+        self.inner().reserve_entry(&candidate)?;
         candidate.add_link(inode, parent, name)?;
         candidate.nodes.get_mut(&parent).unwrap().modified = self.stamp()?;
         self.inner().commit(candidate)
@@ -749,6 +824,7 @@ impl FileSystem for Namespace {
                     return Err(FileError::Exists);
                 }
                 let now = self.stamp()?;
+                self.inner().reserve_entry(&candidate)?;
                 let id = candidate.allocate(Node::new(Some(parent), name, EntryType::File, now))?;
                 let backing = alloc::format!(".efi-agent-fs/objects/{id}");
                 let mut raw_options = options;
@@ -785,8 +861,8 @@ impl FileSystem for Namespace {
         raw_options.create = false;
         raw_options.exclusive = false;
         raw_options.append = false;
-        let modified = if options.truncate && self.inner().clock.is_some() {
-            Some(self.inner().now()?)
+        let modified = if options.truncate {
+            self.inner().stamp()?
         } else {
             None
         };
@@ -849,6 +925,7 @@ impl FileSystem for Namespace {
             return Err(FileError::Exists);
         }
         let now = self.stamp()?;
+        self.inner().reserve_entry(&candidate)?;
         candidate.allocate(Node::new(Some(parent), name, EntryType::Directory, now))?;
         candidate.nodes.get_mut(&parent).unwrap().modified = now;
         self.inner().commit(candidate)
@@ -926,6 +1003,7 @@ impl FileSystem for Namespace {
         let mut node = Node::new(Some(parent), name, EntryType::Symlink, now);
         node.mode = 0o777;
         node.target = Some(target.into());
+        self.inner().reserve_entry(&candidate)?;
         candidate.allocate(node)?;
         candidate.nodes.get_mut(&parent).unwrap().modified = now;
         self.inner().commit(candidate)
@@ -1020,7 +1098,7 @@ impl File for OpenFile {
         if !self.read {
             return Err(FileError::Access);
         }
-        let now = self.inner.clock.as_ref().map(|clock| clock()).transpose()?;
+        let now = self.inner.stamp()?;
         let count = self.handle.as_mut().unwrap().read(buffer)?;
         if count != 0
             && let Some(now) = now
@@ -1050,7 +1128,7 @@ impl File for OpenFile {
             return Err(FileError::FileTooLarge);
         }
         let count = buffer.len().min((MAX_RESIZE_BYTES - position) as usize);
-        let now = self.inner.clock.as_ref().map(|clock| clock()).transpose()?;
+        let now = self.inner.stamp()?;
         let count = handle.write(&buffer[..count])?;
         if count != 0
             && let Some(now) = now
@@ -1074,7 +1152,9 @@ impl File for OpenFile {
         self.inner.check()?;
         let info = self.handle.as_mut().unwrap().metadata()?;
         let state = self.inner.state.borrow();
-        Ok(node_metadata(&state, self.inode, info.size, info.allocated))
+        let mut metadata = node_metadata(&state, self.inode, info.size, info.allocated);
+        metadata.device = u64::from(self.inner.device());
+        Ok(metadata)
     }
     fn flush(&mut self) -> Result<(), FileError> {
         if self.write {
@@ -1090,7 +1170,7 @@ impl File for OpenFile {
         if size > MAX_RESIZE_BYTES {
             return Err(FileError::FileTooLarge);
         }
-        let now = self.inner.clock.as_ref().map(|clock| clock()).transpose()?;
+        let now = self.inner.stamp()?;
         self.handle.as_mut().unwrap().resize(size)?;
         if let Some(now) = now {
             self.inner

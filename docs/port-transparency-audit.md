@@ -80,6 +80,12 @@ through private startup adapters. BusyBox df uses those same measured capacity
 and namespace-slot providers through C statvfs/fstatvfs. Snapshot descriptors
 remain private, close on spawn and close after each reply. General mounts and
 cross-mount traversal still need their delivery gates.
+The temporary mount now reuses the inode namespace over bounded memory storage.
+Native Python/ash checks cover nested directories, relative symlinks, hard links,
+permissions, timestamps, retained directory fds, tempfile cleanup and cross-device
+move fallback. Both 512 MiB WHPX model API flows verify this subset with
+independent saved FAT bytes/metadata and temporary mount exclusion. Absolute
+and cross-mount link traversal remains incomplete.
 
 The 2026-10-22 filesystem expansion connects directory creation to native and
 firmware providers, and rename to the native provider. File writes now use

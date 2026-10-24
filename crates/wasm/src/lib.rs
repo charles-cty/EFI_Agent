@@ -473,6 +473,12 @@ impl World {
             self.processes.is_empty(),
             "Cannot replace a live world's clock"
         );
+        if let Some(filesystem) = &self.filesystem {
+            (filesystem.as_ref() as &dyn core::any::Any)
+                .downcast_ref::<filesystem::VirtualFileSystem>()
+                .expect("World installs the virtual root filesystem")
+                .set_clock(clock.clone());
+        }
         self.clock = Some(clock);
     }
 
@@ -509,10 +515,11 @@ impl World {
             self.processes.is_empty(),
             "Cannot replace a live world's filesystem"
         );
-        self.filesystem = Some(filesystem::VirtualFileSystem::with_programs(
-            filesystem,
-            self.bin.clone(),
-        ));
+        let filesystem = filesystem::VirtualFileSystem::with_programs(filesystem, self.bin.clone());
+        if let Some(clock) = &self.clock {
+            filesystem.set_clock(clock.clone());
+        }
+        self.filesystem = Some(filesystem);
     }
 
     pub fn spawn(&mut self, args: Vec<String>, stdin: Vec<u8>) -> Result<Pid, Error> {

@@ -40,7 +40,7 @@ nonexecutable-file skipping, Python shebang options and independent saved script
 bytes/modes in `artifacts/program-paths-whpx-20261024`. Installation rejects
 workspace command collisions before publishing aliases and preserves unrelated
 workspace `/bin` entries. Persistent installation manifests, general mount/link
-traversal, the remaining command inventory and retained sessions remain pending.
+traversal and retained sessions remain pending.
 
 ## Required commands
 
@@ -110,9 +110,10 @@ artifacts/ln-whpx-responses and artifacts/ln-whpx-chat_completions.
 Df uses upstream mount selection and formatting with measured workspace bytes,
 distinct free/available values, namespace slot counts and virtual mount IDs.
 Python statvfs/fstatvfs use the private adapter with the unchanged interpreter.
-The shared /tmp quota is 32 MiB and 4096 live objects; detached open data remains
-charged until its last close. Native command checks, quota boundaries and
-independent host volume queries pass. Both actual 512 MiB WHPX model API flows
+The shared /tmp quota is 32 MiB and 4096 non-root inode/name slots; detached
+open data and inodes remain charged until their last close. Native command
+checks, quota boundaries and independent host volume queries pass. Both actual
+512 MiB WHPX model API flows
 pass with independent saved FAT capacity and byte checks in
 artifacts/df-whpx-responses and artifacts/df-whpx-chat_completions.
 Tar now uses upstream creation, member parsing, listing, extraction and filters.
@@ -124,6 +125,19 @@ Both actual 512 MiB WHPX model API flows pass with independent saved archive,
 byte, link and metadata checks in artifacts/tar-whpx-responses and
 artifacts/tar-whpx-chat_completions. The remaining mount, manifest,
 retained-session and final delivery gates are incomplete.
+
+The /tmp provider now uses the common inode namespace over bounded memory
+objects. Nested directories, relative symlinks, hard links, enforced modes,
+timestamps, replacement/unlink lifetime and anchored directory descriptors
+share the workspace algorithms without writing a journal. Ordinary temporary
+names do not reserve the workspace's private metadata paths. Directory listings
+include dot entries in addition to the full ordinary-name quota. Native Python
+and ash verify tempfile cleanup, child cwd, cross-device mv fallback and archive
+extraction. Both actual 512 MiB WHPX model APIs pass with independent saved FAT
+bytes/metadata and temporary mount exclusion in
+artifacts/tmp-inodes-whpx-responses and artifacts/tmp-inodes-whpx-chat_completions.
+General absolute/cross-mount symlink traversal, mount collisions, device/process
+files and retained sessions still need their delivery gates.
 
 ## Delivery requirements
 

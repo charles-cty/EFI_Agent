@@ -358,6 +358,7 @@ struct DirectoryEntry {
 pub struct DirectoryEntries {
     entries: Vec<DirectoryEntry>,
     bytes: usize,
+    names: usize,
 }
 
 impl DirectoryEntries {
@@ -377,11 +378,16 @@ impl DirectoryEntries {
             "Host directory entry is not a single name"
         );
         let bytes = 24 + name.len();
-        if self.entries.len() == MAX_DIRECTORY_ENTRIES || bytes > MAX_DIRECTORY_BYTES - self.bytes {
+        let ordinary = name != "." && name != "..";
+        if (ordinary && self.names == MAX_DIRECTORY_ENTRIES)
+            || self.entries.len() == MAX_DIRECTORY_ENTRIES + 2
+            || bytes > MAX_DIRECTORY_BYTES - self.bytes
+        {
             return Err(FileError::ResourceLimit);
         }
         self.entries.push(DirectoryEntry { name, kind });
         self.bytes += bytes;
+        self.names += usize::from(ordinary);
         Ok(())
     }
 

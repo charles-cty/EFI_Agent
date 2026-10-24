@@ -327,7 +327,7 @@ fn open(
         let memory = memory(&caller)?;
         range(opened, 4, memory.data_size(&caller))?;
         let path = path(&caller, &directory, ptr, len)?;
-        if path == ".efi-process" {
+        if directory.preopen && path == ".efi-process" {
             if oflags != 0 || flags != 0 || rights & ((1 << 1) | (1 << 6)) != ((1 << 1) | (1 << 6))
             {
                 return Err(28);

@@ -7,6 +7,87 @@ use std::{fs, path::PathBuf, rc::Rc, time::SystemTime};
 struct Workspace(PathBuf);
 
 #[test]
+fn temporary_directory_views_route_mutations_in_both_directions_after_rename() {
+    use efi_agent_wasm::filesystem::{FileError, FileSystem, OpenOptions, VirtualFileSystem};
+    let work = Workspace::new();
+    let filesystem = VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(work.0.clone())));
+    let options = OpenOptions {
+        read: true,
+        write: true,
+        create: true,
+        exclusive: false,
+        truncate: false,
+        append: false,
+    };
+    filesystem.create_directory("tmp/dir").unwrap();
+    filesystem.create_directory("tmp/other").unwrap();
+    let view = filesystem.directory_view("tmp/dir").unwrap().unwrap();
+    let other = filesystem.directory_view("tmp/other").unwrap().unwrap();
+    let mut file = view.open("file", options).unwrap();
+    file.write(b"anchored").unwrap();
+    filesystem.rename("tmp/dir", "tmp/renamed").unwrap();
+    view.rename_to("file", filesystem.as_ref(), "tmp/through-root")
+        .unwrap();
+    filesystem
+        .rename_to("tmp/through-root", view.as_ref(), "returned")
+        .unwrap();
+    view.hard_link_to("returned", other.as_ref(), "alias", false)
+        .unwrap();
+    other
+        .hard_link_to("alias", filesystem.as_ref(), "tmp/root-alias", false)
+        .unwrap();
+    filesystem
+        .hard_link_to("tmp/root-alias", view.as_ref(), "third", false)
+        .unwrap();
+    assert_eq!(file.metadata().unwrap().links, 4);
+    let nested = filesystem
+        .directory_view("tmp")
+        .unwrap()
+        .unwrap()
+        .directory_view("renamed")
+        .unwrap()
+        .unwrap();
+    nested.rename("third", "fourth").unwrap();
+    assert_eq!(
+        filesystem.metadata("tmp/renamed/fourth").unwrap().inode,
+        file.metadata().unwrap().inode
+    );
+    assert_eq!(
+        view.resolve_path("", "../escape")
+            .and_then(|path| view.metadata(&path))
+            .err(),
+        Some(FileError::NotCapable)
+    );
+    assert_eq!(
+        filesystem
+            .resolve_path("", "tmp/renamed/../root-alias")
+            .and_then(|path| filesystem.metadata(&path))
+            .unwrap()
+            .inode,
+        file.metadata().unwrap().inode
+    );
+    assert_eq!(
+        filesystem.rename("tmp/root-alias", "outside"),
+        Err(FileError::CrossDevice)
+    );
+    assert_eq!(
+        filesystem.hard_link("tmp/root-alias", "outside", false),
+        Err(FileError::CrossDevice)
+    );
+    assert!(!work.0.join("tmp").exists());
+    assert!(!work.0.join("outside").exists());
+    let independent = VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(work.0.clone())));
+    assert_eq!(
+        independent.metadata("tmp/root-alias").err(),
+        Some(FileError::NotFound)
+    );
+    assert_eq!(
+        filesystem.rename_to("tmp/root-alias", independent.as_ref(), "tmp/other"),
+        Err(FileError::CrossDevice)
+    );
+}
+
+#[test]
 fn temporary_capacity_counts_detached_files_and_enforces_shared_exact_boundaries() {
     use efi_agent_wasm::filesystem::{
         FileError, FileSystem, OpenOptions, TEMP_CAPACITY, VirtualFileSystem,
@@ -117,6 +198,11 @@ fn temporary_inode_quota_retains_detached_open_files_until_close() {
         filesystem.filesystem_statistics("tmp").unwrap().files_free,
         0
     );
+    // Dot entries must not consume the advertised 4096 ordinary-name quota.
+    assert_eq!(
+        filesystem.read_directory("tmp").unwrap().iter().count(),
+        MAX_DIRECTORY_ENTRIES + 1
+    );
     assert_eq!(
         filesystem.open("tmp/full", options).err(),
         Some(FileError::NoSpace)
@@ -127,6 +213,10 @@ fn temporary_inode_quota_retains_detached_open_files_until_close() {
         1
     );
     drop(filesystem.open("tmp/last", options).unwrap());
+    assert_eq!(
+        filesystem.read_directory("tmp").unwrap().iter().count(),
+        MAX_DIRECTORY_ENTRIES + 2
+    );
     assert_eq!(
         filesystem.filesystem_statistics("tmp").unwrap().files_free,
         0

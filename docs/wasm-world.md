@@ -87,7 +87,8 @@ The fixed uid/gid may be preserved after a real metadata check; other ownership
 changes fail. Copy timestamp preservation retains upstream whole-second
 precision. Explicit hard links and automatic hard-link preservation use shared
 namespace inodes. Reflinks remain disabled; special node creation returns errors.
-Cross-mount mv fallback has not been verified with the incomplete mount layer.
+Workspace-to-/tmp copy and /tmp-to-workspace mv fallback have native integration
+coverage. General mount traversal still requires its delivery gates.
 
 Du uses upstream traversal, depth limits, totals, symlink policy and inode
 deduplication. Native and firmware providers report allocated file data bytes;
@@ -120,11 +121,22 @@ observable. PAX lengths are checked before pointer movement. Ownership remains
 the environment's fixed uid/gid; unsupported special nodes fail explicitly.
 Other compression formats and extended PAX metadata retain the upstream
 configuration limits.
-The /tmp data quota is 32 MiB across all processes, plus 4096 live file objects.
+The /tmp provider uses the common inode namespace over bounded memory objects.
+It provides nested directories, relative symlinks, hard links, modes, timestamps
+and retained directory anchors through the same algorithms as the workspace.
+Ephemeral metadata changes do not write persistent journals. The /tmp data
+quota is 32 MiB across all processes, plus 4096 non-root inode/name slots.
+Directories and additional hard-link names consume slots. Dot directory entries
+do not reduce the advertised ordinary-name listing limit.
+The private process endpoint is restricted to the workspace preopen. An
+anchored temporary directory treats that filename as an ordinary file.
 Writes return normal short writes at the quota boundary; resize fails without
 changing data. Detached open files and replaced open targets retain their
-charge until the last close. These statistics do not complete general mount,
-directory/link traversal or process-information support.
+charge until the last close. Standard tempfile cleanup, child cwd and temporary
+archive destinations pass native and both actual 512 MiB WHPX model API flows,
+with independent saved bytes/metadata and temporary mount exclusion. General
+absolute and cross-mount link traversal, mount collisions and process-information support
+remain incomplete.
 
 Ln uses upstream option parsing, hard/symbolic link creation, destination
 directory handling, backups and verbose output. Force and backup operations
@@ -1184,7 +1196,8 @@ The remaining scope is:
 - Complete shared mounts, anchored cwd tracking and CPU-time clocks.
 - Socket options, address queries, listen/accept, peek/waitall and half-shutdown.
 - Reproducible source acquisition and packaging for the existing guest builds.
-- BusyBox remaining applets/builtins and complete executable mount traversal.
+- Remaining shell builtins and complete executable mount traversal; all 48
+  required external commands have native and WHPX evidence.
 - Complete shell task failure cleanup and nonlocal-jump resource verification.
 - Further SSH operations beyond the pinned-host-key/password exec client.
 - Remaining curl protocols and transport operations beyond the verified HTTP/TLS client.
