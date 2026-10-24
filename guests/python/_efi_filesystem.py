@@ -20,7 +20,7 @@ def install(request):
         if os.path.isabs(path):
             return path, 3
         if dir_fd is None:
-            cwd = os.getcwdb() if isinstance(path, bytes) else os.getcwd()
+            cwd = b'/proc/self/cwd' if isinstance(path, bytes) else '/proc/self/cwd'
             return os.path.join(cwd, path), 3
         return path, operator.index(dir_fd)
 
@@ -155,12 +155,29 @@ def install(request):
         return (value.st_mode >> 6) & mode == mode
 
     def chdir(path):
-        previous = os.getcwd()
-        original_chdir(path)
-        error, _ = request(17, payload=os.fsencode(os.getcwd()))
+        path = os.fspath(path)
+        if not path:
+            raise OSError(errno.ENOENT, os.strerror(errno.ENOENT), path)
+        base = b'/proc/self/cwd' if isinstance(path, bytes) else '/proc/self/cwd'
+        encoded = os.fsencode(os.path.join(base, path))
+        if b'\0' in encoded:
+            raise ValueError('embedded null byte')
+        error, _ = request(17, payload=encoded)
         if error:
-            original_chdir(previous)
             raise OSError(error, os.strerror(error), path)
+
+    def getcwdb():
+        fd = request(16)[0]
+        try:
+            chunks = []
+            while chunk := os.read(fd, 4096):
+                chunks.append(chunk)
+            return b''.join(chunks)
+        finally:
+            os.close(fd)
+
+    def getcwd():
+        return os.fsdecode(getcwdb())
 
     class ScanAnchor:
         def __init__(self, fd):
@@ -349,7 +366,7 @@ def install(request):
     methods = {'stat': stat_path, 'lstat': lstat, 'fstat': fstat,
                'chmod': chmod, 'fchmod': fchmod, 'umask': umask,
                'mkdir': mkdir, 'open': open_path, 'access': access, 'chdir': chdir,
-               'scandir': scandir}
+               'scandir': scandir, 'getcwd': getcwd, 'getcwdb': getcwdb}
     methods.update({'remove': remove, 'unlink': remove, 'rmdir': rmdir, 'link': link,
                     'statvfs': statvfs, 'fstatvfs': fstatvfs})
     for name, function in methods.items():
@@ -373,9 +390,4 @@ def install(request):
     os.geteuid = posix.geteuid = lambda: 1
     os.getgid = posix.getgid = lambda: 1
     os.getegid = posix.getegid = lambda: 1
-    fd = request(16)[0]
-    try:
-        path = os.read(fd, 4097)
-    finally:
-        os.close(fd)
-    original_chdir(os.fsdecode(path))
+    original_chdir('/proc/self/cwd')

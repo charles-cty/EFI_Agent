@@ -22,7 +22,8 @@ def _request(operation, *words, payload=b''):
                   12: errno.ENOMEM, 13: errno.EACCES, 20: errno.ENOTDIR,
                   40: errno.ELOOP, 14: errno.EFAULT, 22: errno.EINVAL, 24: errno.EMFILE,
                   36: errno.ENAMETOOLONG, 44: errno.ENOENT,
-                  54: errno.ENOTDIR, 58: errno.ELOOP}
+                  54: errno.ENOTDIR, 58: errno.ENOTSUP, 29: errno.EIO,
+                  76: errno.ENOTCAPABLE}
         error = errors[-result]
         raise OSError(error, os.strerror(error))
     return result, value
@@ -139,8 +140,11 @@ def _fork_exec(args, executables, close_fds, keep, cwd, env,
                         payload=struct.pack('<' + 'I' * len(mappings), *mappings) +
                         arguments + environment)[0]
     if cwd is None:
-        cwd = os.getcwd()
-    cwd = os.fsencode(os.path.join(os.getcwd(), os.fsdecode(cwd)))
+        cwd = b''
+    else:
+        if not os.fspath(cwd):
+            raise OSError(errno.ENOENT, os.strerror(errno.ENOENT), cwd)
+        cwd = os.fsencode(os.path.join('/proc/self/cwd', os.fsdecode(cwd)))
     if b'\0' in cwd:
         raise ValueError('embedded null byte')
     payload = struct.pack('<' + 'I' * len(mappings), *mappings) + arguments + environment + cwd

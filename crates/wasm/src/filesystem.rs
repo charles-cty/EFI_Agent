@@ -72,17 +72,40 @@ pub struct VirtualFileSystem {
 }
 
 impl VirtualFileSystem {
+    fn local_cwd_suffix<'a>(&self, path: &'a str) -> Option<&'a str> {
+        if self.scope != Scope::Root {
+            return None;
+        }
+        let pid = self.process?;
+        for prefix in [String::from("proc/self/cwd"), format!("proc/{pid}/cwd")] {
+            if let Some(suffix) = path.strip_prefix(&prefix) {
+                if suffix.is_empty() {
+                    return Some(suffix);
+                }
+                if let Some(suffix) = suffix.strip_prefix('/') {
+                    return Some(suffix);
+                }
+            }
+        }
+        None
+    }
+
     pub(crate) fn executable_path(&self, path: &str) -> Result<(String, Metadata), FileError> {
         let resolved = self.walk(path, Follow::Final, false)?;
         let metadata = resolved.owner(self).metadata_raw(&resolved)?;
-        Ok((
-            if resolved.filesystem.is_some() {
-                path.into()
-            } else {
+        let path = if let Some(owner) = &resolved.filesystem {
+            let directory = owner.directory_path()?;
+            if directory.is_empty() {
                 resolved.path
-            },
-            metadata,
-        ))
+            } else if resolved.path.is_empty() {
+                directory
+            } else {
+                format!("{directory}/{}", resolved.path)
+            }
+        } else {
+            resolved.path
+        };
+        Ok((path, metadata))
     }
 
     pub fn new(base: Rc<dyn FileSystem>) -> Result<Rc<Self>, MountError> {
@@ -493,7 +516,7 @@ impl FileSystem for VirtualFileSystem {
         } else {
             format!("{base}/{path}")
         };
-        if path.len() > walk::MAX_PATH {
+        if self.local_cwd_suffix(&path).unwrap_or(&path).len() > walk::MAX_PATH {
             return Err(FileError::ResourceLimit);
         }
         Ok(path)

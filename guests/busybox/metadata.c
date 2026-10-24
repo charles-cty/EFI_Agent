@@ -32,7 +32,11 @@ static int path_fd(int fd, const char *path)
 static int request(uint32_t *words, size_t count, const char *path, uint32_t response[2])
 {
     size_t length = path ? strlen(path) : 0;
-    if (length > 4096) {
+    const char *bounded_path = path;
+    const char *cwd_prefix = "/proc/self/cwd/";
+    if (path && strncmp(path, cwd_prefix, strlen(cwd_prefix)) == 0)
+        bounded_path += strlen(cwd_prefix);
+    if (bounded_path && strlen(bounded_path) > 4096) {
         errno = ENAMETOOLONG;
         return -1;
     }
@@ -58,7 +62,14 @@ static int request(uint32_t *words, size_t count, const char *path, uint32_t res
         bb_simple_error_msg_and_die("incomplete metadata response");
     close(channel);
     if ((int32_t)response[0] < 0) {
-        errno = EINVAL;
+        switch (-(int32_t)response[0]) {
+        case 24: errno = EMFILE; break;
+        case 29: errno = EIO; break;
+        case 44: errno = ENOENT; break;
+        case 58: errno = ENOTSUP; break;
+        case 76: errno = ENOTCAPABLE; break;
+        default: errno = EINVAL; break;
+        }
         return -1;
     }
     return 0;
@@ -66,48 +77,71 @@ static int request(uint32_t *words, size_t count, const char *path, uint32_t res
 
 void efi_busybox_restore_cwd(void)
 {
+    if (__real_chdir("/proc/self/cwd") < 0)
+        bb_simple_perror_msg_and_die("current directory");
+}
+
+char *__wrap_getcwd(char *buffer, size_t capacity)
+{
+    if (buffer && capacity == 0) {
+        errno = EINVAL;
+        return NULL;
+    }
     uint32_t words[] = {16};
     uint32_t response[2];
     if (request(words, 1, NULL, response) < 0)
-        bb_simple_perror_msg_and_die("current directory");
+        return NULL;
     int fd = response[0];
-    char path[4098];
-    ssize_t size = read(fd, path, sizeof(path) - 1);
+    size_t size = response[1];
+    if (capacity && capacity <= size) {
+        close(fd);
+        errno = ERANGE;
+        return NULL;
+    }
+    int allocated = buffer == NULL;
+    if (!buffer) {
+        buffer = malloc(capacity ? capacity : size + 1);
+        if (!buffer) {
+            int error = errno;
+            close(fd);
+            errno = error;
+            return NULL;
+        }
+    }
+    size_t copied = 0;
+    while (copied < size) {
+        ssize_t count = read(fd, buffer + copied, size - copied);
+        if (count <= 0) {
+            int error = count < 0 ? errno : EIO;
+            close(fd);
+            if (allocated)
+                free(buffer);
+            errno = error;
+            return NULL;
+        }
+        copied += count;
+    }
     close(fd);
-    if (size < 0)
-        bb_simple_perror_msg_and_die("current directory");
-    path[size] = '\0';
-    if (__real_chdir(path) < 0)
-        bb_simple_perror_msg_and_die(path);
+    buffer[size] = '\0';
+    return buffer;
 }
 
 int __wrap_chdir(const char *path)
 {
-    char *previous = getcwd(NULL, 0);
-    if (!previous)
-        return -1;
-    if (__real_chdir(path) < 0) {
-        free(previous);
+    if (!*path) {
+        errno = ENOENT;
         return -1;
     }
-    char *absolute = getcwd(NULL, 0);
-    if (!absolute) {
-        free(previous);
-        return -1;
-    }
+    char *absolute = path[0] == '/' ? NULL : xasprintf("/proc/self/cwd/%s", path);
     uint32_t words[] = {17};
     uint32_t response[2];
-    int result = request(words, 1, absolute, response);
+    int result = request(words, 1, absolute ? absolute : path, response);
     free(absolute);
     if (result < 0 || response[0]) {
         int error = result < 0 ? errno : (int)response[0];
-        if (__real_chdir(previous) < 0)
-            bb_simple_perror_msg_and_die("restore current directory");
-        free(previous);
         errno = error;
         return -1;
     }
-    free(previous);
     return 0;
 }
 
@@ -121,11 +155,7 @@ static int metadata(uint32_t operation, int fd, const char *path, int follow, mo
         if (*path == '/') {
             fd = 3;
         } else if (fd == AT_FDCWD) {
-            char *cwd = getcwd(NULL, 0);
-            if (!cwd)
-                return -1;
-            absolute = xasprintf("%s%s%s", cwd, strcmp(cwd, "/") == 0 ? "" : "/", path);
-            free(cwd);
+            absolute = xasprintf("/proc/self/cwd/%s", path);
             path = absolute;
             fd = 3;
         }
@@ -164,11 +194,7 @@ static int allocation(int fd, const char *path, int follow, uint64_t *allocated)
         if (*path == '/') {
             fd = 3;
         } else if (fd == AT_FDCWD) {
-            char *cwd = getcwd(NULL, 0);
-            if (!cwd)
-                return -1;
-            absolute = xasprintf("%s%s%s", cwd, strcmp(cwd, "/") == 0 ? "" : "/", path);
-            free(cwd);
+            absolute = xasprintf("/proc/self/cwd/%s", path);
             path = absolute;
             fd = 3;
         }
@@ -204,11 +230,7 @@ int efi_filesystem_statistics(int fd, const char *path, uint64_t fields[12])
         if (path[0] == '/') {
             fd = 3;
         } else if (fd == AT_FDCWD) {
-            char *cwd = getcwd(NULL, 0);
-            if (!cwd)
-                return -1;
-            absolute = xasprintf("%s%s%s", cwd, strcmp(cwd, "/") ? "/" : "", path);
-            free(cwd);
+            absolute = xasprintf("/proc/self/cwd/%s", path);
             path = absolute;
             fd = 3;
         }

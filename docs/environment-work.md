@@ -200,15 +200,22 @@ artifacts/procfs-release-whpx-chat_completions. Host/target checks and Release
 packaging pass. Anchored cwd tracking, installation manifests, retained sessions
 and final delivery gates remain.
 
-Anchored cwd work has started with physical path queries on directory views.
-The namespace derives the path from the retained inode and its current parents;
-mounted views preserve the workspace or temporary mount prefix. Rename and
-old-name reuse cannot redirect this query to a replacement inode. Removed or
-replaced anchors return NotFound. Existing directory capabilities stay bounded.
-A host-only parent operation also retains deleted-directory ancestry until its
-last live reference closes and restores root routing at mount boundaries.
-Runtime cwd ownership, cwd-aware traversal, libc adaptation and full native/WHPX
-cwd acceptance remain pending.
+Processes now own cwd anchors and inherit them directly. Python and BusyBox
+initialize libc's relative-path routing through /proc/self/cwd, while standard
+getcwd queries return physical paths. Rename, replacement and old-name reuse
+cannot redirect the anchor. Unlinked cwd queries return ENOENT; child inheritance
+and actual-parent navigation remain available. Other directory fds stay bounded.
+Weak proc views retain no cwd after process termination. Native integration
+checks ordinary open/FileIO/import caches, ash, relative scripts, permission and
+umask boundaries, 40/41 links and long physical paths. Both actual 512 MiB WHPX
+API flows and independent saved FAT checks pass in
+artifacts/cwd-anchor-release-whpx-responses and
+artifacts/cwd-anchor-release-whpx-chat_completions. Other C application entry
+points still need cwd bootstrap verification. Installation manifests, retained
+sessions and final delivery gates remain incomplete. Executable lookup now
+canonicalizes cwd/descriptor routes before selecting cached modules or compiled
+command aliases. Same-physical-path executable changes still need cache/content
+validation as part of manifest delivery.
 
 ## Delivery requirements
 

@@ -1,5 +1,7 @@
 //! Process information and descriptor links over live dispatcher state.
-use super::{DirectoryEntries, EntryType, FileError, Metadata, Scope, VirtualFileSystem};
+use super::{
+    DirectoryEntries, EntryType, FileError, FileSystem, Metadata, Scope, VirtualFileSystem,
+};
 use crate::{
     Pid, Status, World,
     clock::{Clock, ClockId},
@@ -8,7 +10,7 @@ use crate::{
 use alloc::{
     collections::BTreeMap,
     format,
-    rc::Rc,
+    rc::{Rc, Weak},
     string::{String, ToString},
     vec::Vec,
 };
@@ -21,7 +23,7 @@ pub(crate) struct Record {
     executable: String,
     arguments: Vec<String>,
     environment: Vec<String>,
-    cwd: Option<String>,
+    cwd: Option<Weak<dyn FileSystem>>,
     descriptors: TableView,
 }
 
@@ -72,6 +74,15 @@ pub(crate) struct Registry {
 }
 
 impl Registry {
+    pub(super) fn cwd(&self, pid: Pid) -> Result<Rc<dyn FileSystem>, FileError> {
+        self.records
+            .borrow()
+            .get(&pid)
+            .and_then(|record| record.cwd.as_ref())
+            .and_then(Weak::upgrade)
+            .ok_or(FileError::NotFound)
+    }
+
     pub(super) fn statistics(&self) -> super::FileSystemStatistics {
         let records = self.records.borrow();
         let mut statistics = super::special_statistics(4);
@@ -181,14 +192,14 @@ impl World {
                 environment: context
                     .map(|context| context.environment.clone())
                     .unwrap_or_default(),
-                cwd: context.map(|context| context.cwd.clone()),
+                cwd: context.and_then(|context| context.cwd.as_ref().map(Rc::downgrade)),
                 descriptors: context
                     .map(|context| context.descriptors.view())
                     .unwrap_or_default(),
             });
             record.parent = process.parent;
             record.state = state;
-            record.cwd = context.map(|context| context.cwd.clone());
+            record.cwd = context.and_then(|context| context.cwd.as_ref().map(Rc::downgrade));
             record.descriptors = context
                 .map(|context| context.descriptors.view())
                 .unwrap_or_default();
@@ -362,6 +373,11 @@ impl VirtualFileSystem {
     }
 
     pub(super) fn process_metadata(&self, node: Node, follow: bool) -> Result<Metadata, FileError> {
+        if let Node::Cwd(pid) = node
+            && follow
+        {
+            return self.process_files.cwd(pid)?.metadata("");
+        }
         if let Node::Fd(pid, fd) = node
             && follow
         {
@@ -396,13 +412,20 @@ impl VirtualFileSystem {
         match node {
             Node::SelfLink(pid) => Ok(pid.to_string()),
             Node::DeviceLink(target) => Ok(target.into()),
-            Node::Cwd(pid) => self
-                .process_files
-                .records
-                .borrow()
-                .get(&pid)
-                .and_then(|record| record.cwd.clone())
-                .ok_or(FileError::NotFound),
+            Node::Cwd(pid) => {
+                let view = self.process_files.cwd(pid)?;
+                match view.directory_path() {
+                    Ok(path) => Ok(format!("/{path}")),
+                    Err(FileError::NotFound) => {
+                        let info = view.metadata("")?;
+                        Ok(format!(
+                            "directory:[{}:{}] (deleted)",
+                            info.device, info.inode
+                        ))
+                    }
+                    Err(error) => Err(error),
+                }
+            }
             Node::Executable(pid) => self
                 .process_files
                 .records

@@ -36,7 +36,7 @@ PROCESS_FILES_CHECK = dedent(r'''
         target = os.stat('/proc/self/fd/' + str(descriptor))
         opened = os.fstat(descriptor)
         assert (target.st_mode, target.st_dev, target.st_ino, target.st_size) == (opened.st_mode, opened.st_dev, opened.st_ino, opened.st_size), (target, opened)
-    control = os.open('.efi-process', os.O_RDWR)
+    control = os.open('/.efi-process', os.O_RDWR)
     assert str(control) not in os.listdir('/dev/fd')
     assert not os.path.lexists('/proc/self/fd/' + str(control))
     os.close(control)

@@ -9,16 +9,31 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Process cwd now owns a directory anchor; child inheritance preserves identity
+through ancestor rename/unlink and old-name reuse. Proc cwd magic links route
+through that anchor, with actual-parent navigation and runtime mounts. Ordinary
+directory fds retain their bounds. Python and BusyBox initialize libc's cached
+cwd routing; standard getcwd queries return physical paths and ENOENT after
+unlink. Sized C snapshots preserve allocation/buffer semantics and long paths.
+The internal caller cwd prefix consumes no user path/link budget. Weak registry
+references release cwd ancestry at termination before reap. Full host tests,
+host/UEFI Clippy, native cwd integration and Release packaging pass. Both actual
+512 MiB Windows WHPX API flows and independent saved FAT checks pass in
+artifacts/cwd-anchor-release-whpx-responses and
+artifacts/cwd-anchor-release-whpx-chat_completions. Other C
+application entry points still need cwd bootstrap verification; installation
+manifests, retained sessions and final delivery remain incomplete.
+
 Directory views now expose their current physical path from the inode graph.
 Namespace and mounted views follow ancestor renames and reject path queries
 for removed or replaced directory inodes, including when an old name is reused.
 Ordinary directory-fd capability bounds remain unchanged. This is a prerequisite
-for anchored cwd; process cwd and guest libc still use path strings.
+for the runtime cwd routing described above.
 The host-only parent-directory operation follows actual inode parents and retains
 the last parent of a removed directory until its last live reference closes.
 Detached ancestry is absent from snapshots and journals. Parent views restore
-virtual root routing across workspace and temporary mount boundaries. Cwd has
-not yet been connected to these operations.
+virtual root routing across workspace and temporary mount boundaries. Runtime
+cwd now uses these operations.
 Full host tests, interruption recovery, host/UEFI Clippy, formatting, Release
 packaging, all 17 CPython cases and native mount/process-file regressions pass.
 Both 512 MiB WHPX APIs pass current namespace/process-file regression and
@@ -39,8 +54,8 @@ host tests, host/UEFI Clippy, formatting and Release packaging pass. Counting
 allocation checks cover large argv/environment vectors and all terminal paths.
 Both actual 512 MiB WHPX model API flows and independent saved FAT checks pass
 in artifacts/procfs-release-whpx-responses and
-artifacts/procfs-release-whpx-chat_completions. Proc cwd still reflects path-based
-cwd; anchored cwd tracking, manifests, retained sessions and final delivery remain.
+artifacts/procfs-release-whpx-chat_completions. The later cwd change above adds
+anchored tracking; manifests, retained sessions and final delivery remain.
 
 Null/zero/random/urandom now expose character metadata, distinct inodes and
 fixed 0666 modes. Discard writes, seek, explicit sync/truncate failures,
@@ -398,8 +413,8 @@ through dangling links and are restored after errors. Final 512 MiB QEMU/OVMF
 checks pass WHPX/Responses with independent saved FAT
 mode/byte checks in artifacts/permissions-whpx-final.
 All 15 CPython integration cases pass,
-including bytecode cache creation/reuse and -B. Current directory state is still
-path based; rename/unlink tracking remains pending. Python subprocess now passes
+including bytecode cache creation/reuse and -B. Current directory state now uses
+anchors for rename/unlink tracking. Python subprocess passes
 cwd and umask through its private process adapter; the native Release runner
 passes all 17 CPython integration tests, including relative/absolute cwd,
 missing cwd errors, umask inheritance and per-child overrides. This change has

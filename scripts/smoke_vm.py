@@ -58,6 +58,7 @@ from wasm_temporary_fixture import TEMPORARY_CHECK, verify_temporary
 from wasm_mount_paths_fixture import MOUNT_PATHS_CHECK, verify_mount_paths
 from wasm_character_devices_fixture import CHARACTER_DEVICES_CHECK, verify_character_devices
 from wasm_process_files_fixture import PROCESS_FILES_CHECK, verify_process_files
+from wasm_cwd_fixture import CWD_CHECK, verify_cwd
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -320,6 +321,7 @@ def main():
     parser.add_argument("--mount-paths", action="store_true", help="Verify cross-mount links, parent traversal and directory bounds")
     parser.add_argument("--character-devices", action="store_true", help="Verify non-terminal null/zero/random devices and independent saved bytes")
     parser.add_argument("--process-files", action="store_true", help="Verify process metadata, descriptor links, pipe lifetime and saved bytes")
+    parser.add_argument("--cwd", action="store_true", help="Verify retained cwd identity through rename/removal and standard Python/ash APIs")
     args = parser.parse_args()
     if args.code_cancel_only and not args.code_workspace:
         parser.error("--code-cancel-only requires --code-workspace")
@@ -481,13 +483,14 @@ def main():
                         args.find_applet, args.program_paths, args.copy_move_applets,
                         args.xargs_applet, args.compression_applets, args.unzip_applet,
                         args.du_applet, args.ln_applet, args.df_applet, args.tar_applet,
-                        args.temporary_mount, args.mount_paths, args.character_devices, args.process_files))
+                        args.temporary_mount, args.mount_paths, args.character_devices, args.process_files, args.cwd))
     if applet_modes:
         if not args.code_workspace or args.filesystem_tools or args.code_cancel_only:
             parser.error("Applet checks require --code-workspace and exclude other code modes")
         if applet_modes != 1:
             parser.error("Select one applet check mode")
-        fixture = (PROCESS_FILES_CHECK if args.process_files else
+        fixture = (CWD_CHECK if args.cwd else
+                   PROCESS_FILES_CHECK if args.process_files else
                    CHARACTER_DEVICES_CHECK if args.character_devices else
                    MOUNT_PATHS_CHECK if args.mount_paths else
                    TEMPORARY_CHECK if args.temporary_mount else
@@ -506,7 +509,8 @@ def main():
                    REALPATH_CHECK if args.realpath_applet else
                    SHA256_CHECK if args.sha256_applet else
                    BASE64_CHECK if args.base64_applet else TEXT_APPLETS_CHECK)
-        marker = ('PROCESS_FILES_OK' if args.process_files else
+        marker = ('CWD_ANCHORS_OK' if args.cwd else
+                  'PROCESS_FILES_OK' if args.process_files else
                   'CHARACTER_DEVICES_OK' if args.character_devices else
                   'MOUNT_PATHS_OK' if args.mount_paths else
                   'TEMPORARY_MOUNT_OK' if args.temporary_mount else
@@ -702,6 +706,8 @@ def main():
                         verify_character_devices(workspace)
                     elif args.process_files:
                         verify_process_files(workspace)
+                    elif args.cwd:
+                        verify_cwd(workspace)
                     elif args.mount_paths:
                         verify_mount_paths(workspace)
                         assert workspace.read('shared-mount-tool-source') == b"print('SHARED_MOUNT_MODEL_EDITED')\n"

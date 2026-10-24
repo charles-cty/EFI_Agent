@@ -39,7 +39,9 @@ Python options now determine shell use, decoding and nonzero-exit handling.
 | High | The prebuilt `_socket` module is present, but its socket creation backend remains unavailable. Runtime WASI socket imports reject unsupported operations explicitly. | Standard Python socket clients cannot use existing client TCP/DNS operations. Add the backend below standard socket interfaces. |
 | Medium | Installed commands now appear in `/bin`; ash uses upstream PATH lookup and the runtime supports executable files and shebangs. General mount-boundary/link traversal and persistent installation manifests remain incomplete. | Native and WHPX cover ordinary PATH ordering, modes, cwd and shebangs. Complete mount traversal and manifest validation before claiming full executable namespace coverage. |
 | Medium | `crates/uefi/src/wasm.rs` uses `split_whitespace`. | Quoted source code, filenames with spaces and empty arguments cannot pass through `/wasm run/start` normally. Add a defined quoting grammar without invoking a shell implicitly. Script-file invocation currently avoids source-code quoting. |
-| Medium | The Python adapter explicitly rejects distinct custom argv[0], pre-exec callbacks, process groups and credentials. Signals and timeouts are unavailable. Current cwd inheritance is path based and does not follow ancestor rename/unlink. | Standard per-child cwd/umask and virtual `/dev/null` work. Complete anchored cwd below standard APIs. Infinite `communicate`/wait and `poll()` are supported. |
+| Medium | The Python adapter explicitly rejects distinct custom argv[0], pre-exec callbacks, process groups and credentials. Signals and timeouts are unavailable. | Standard per-child cwd/umask and virtual `/dev/null` work. Cwd anchors preserve rename/unlink identity below standard file interfaces. Infinite `communicate`/wait and `poll()` are supported. |
+| Medium | BusyBox and Python initialize libc's cwd routing and expose physical getcwd results. Other C application entry points have no verified equivalent bootstrap. A native curl probe returns 26 for a relative config in its child cwd; the absolute config reads independent file-URL bytes successfully. | Fix cwd initialization and verify inherited cwd and relative file arguments in curl, WolfSSH and QuickJS before claiming all application ports share cwd semantics. Evidence: artifacts/cwd-anchor-c-port-probe.log. |
+| Medium | File-backed WASM modules are cached by resolved physical path. Cwd aliases now resolve to that path, but replacement or editing at the same physical path has no content-based cache validation. | Add executable content or generation validation with installation manifests before completing lazy module delivery. |
 | Medium | Private Python scandir entry proxies expose the standard methods and correct modes, including fd anchors, but are not instances of built-in `os.DirEntry`. | Type identity remains an interface difference. Preserve the upstream binary and resolve the missing Preview 1 mode representation below the public API where feasible. |
 | Medium | The full standard library is packaged, but its OS-dependent operations require runtime support. Dynamic extensions and native threads remain unavailable. | Module presence alone does not establish every operation. Validate each required capability through standard imports and calls. |
 | Medium | WASI libc does not propagate CPython's internal close-on-exec setting for ordinary file opens. A native probe reports `os.get_inheritable(open(...).fileno()) == True`. | With `close_fds=False` or `os.system`, a file can cross spawn unless the caller clears inheritance with `os.set_inheritable(fd, False)`. Default `subprocess` descriptor filtering and explicit `pass_fds` are tested. Resolve default file inheritance below the standard API. |
@@ -118,8 +120,13 @@ Descriptor aliases use fdescfs duplication semantics, with shared offsets/status
 and no O_TRUNC effect. Their link text uses stream labels or device/inode pairs.
 Directory aliases retain anchors after rename and share the global link budget.
 Cooperative stream aliases use the guest ABI; model file helpers can open
-regular-file aliases. Proc cwd links still reflect path-based cwd, so ancestor
-rename/unlink tracking remains incomplete.
+regular-file aliases. Proc cwd links retain directory anchors through ancestor
+rename/unlink. Their registry references are weak. Physical getcwd fails after
+unlink while relative access, parent navigation and inherited child identity
+remain available. Ordinary directory-fd bounds remain unchanged. Python keeps
+the upstream interpreter and ordinary open/FileIO operations unchanged; the
+private startup adapter initializes libc's routing prefix and supplies standard
+cwd queries. Other C application entry points still need bootstrap verification.
 
 The 2026-10-22 filesystem expansion connects directory creation to native and
 firmware providers, and rename to the native provider. File writes now use

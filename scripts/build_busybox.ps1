@@ -20,7 +20,7 @@ $compile = '--target=wasm32-wasip1', "--sysroot=$sysroot", '-O2',
     '-fno-optimize-sibling-calls', '-fwrapv', '-D_GNU_SOURCE', '-Iguests/busybox/include',
     '-Iguests/sjlj/include', '-Iguests/include', '-Iguests/busybox', "-I$build", "-I$Source/include", '-iquote', "$Source/shell", '-iquote', "$Source/coreutils",
     '-Werror=return-type', '-Werror=implicit-function-declaration', '-Wl,-z,stack-size=1048576', '-Wl,--max-memory=67108864'
-foreach ($symbol in @('stat', 'lstat', 'fstat', 'fstatat', 'chmod', 'fchmod', 'open', 'mkdir', 'chdir', 'symlink', 'unlink', 'link')) {
+foreach ($symbol in @('stat', 'lstat', 'fstat', 'fstatat', 'chmod', 'fchmod', 'open', 'mkdir', 'chdir', 'getcwd', 'symlink', 'unlink', 'link')) {
     $compile += "-Wl,--wrap=$symbol"
 }
 $compile += '-Wl,--wrap=statvfs', '-Wl,--wrap=fstatvfs'

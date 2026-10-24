@@ -91,6 +91,24 @@ impl VirtualFileSystem {
         if path.starts_with('/') {
             return Err(FileError::NotCapable);
         }
+        // The process's libc cwd prefix is an internal routing address, not
+        // part of a relative user path or its symbolic-link budget.
+        if let Some(suffix) = self.local_cwd_suffix(path)
+            && (follow == Follow::Final || !suffix.is_empty() || path.ends_with('/'))
+        {
+            let view = self.process_files.cwd(self.process.unwrap())?;
+            let target = (view.as_ref() as &dyn core::any::Any)
+                .downcast_ref::<Self>()
+                .ok_or(FileError::Unsupported)?;
+            return self.walk_cwd_budget(
+                target.clone(),
+                components(suffix)?,
+                follow,
+                missing,
+                path.ends_with('/'),
+                links,
+            );
+        }
         let mut parts = components(path)?;
         let mut stack: Vec<String> = vec![String::new()];
         let mut directory_required = path.ends_with('/');
@@ -137,6 +155,24 @@ impl VirtualFileSystem {
                 *links += 1;
                 if *links > 40 {
                     return Err(FileError::Loop);
+                }
+                if let Some(super::process::Node::Cwd(pid)) =
+                    self.process_node(&self.mounted(&candidate))?
+                {
+                    let view = self.process_files.cwd(pid)?;
+                    let target = (view.as_ref() as &dyn core::any::Any)
+                        .downcast_ref::<Self>()
+                        .ok_or(FileError::Unsupported)?;
+                    let mut root = self.clone();
+                    root.scope = Scope::Root;
+                    return root.walk_cwd_budget(
+                        target.clone(),
+                        parts,
+                        follow,
+                        missing,
+                        directory_required,
+                        links,
+                    );
                 }
                 if let Some(super::process::Node::Fd(pid, fd)) =
                     self.process_node(&self.mounted(&candidate))?
@@ -213,5 +249,162 @@ impl VirtualFileSystem {
             stack.push(candidate);
         }
         Ok(stack.pop().unwrap().into())
+    }
+
+    /// Cwd traversal has world-root bounds. Ordinary directory-fd walks retain
+    /// their capability bounds and never call the host parent operation.
+    fn walk_cwd_budget(
+        &self,
+        mut current: Self,
+        mut parts: VecDeque<String>,
+        follow: Follow,
+        missing: bool,
+        mut directory_required: bool,
+        links: &mut usize,
+    ) -> Result<Resolved, FileError> {
+        use super::FileSystem;
+        let mut walked: Vec<String> = Vec::new();
+        loop {
+            let Some(part) = parts.pop_front() else {
+                return Ok(Resolved {
+                    path: String::new(),
+                    filesystem: Some(Rc::new(current)),
+                });
+            };
+            let info = current.metadata_raw("")?;
+            if info.kind != EntryType::Directory {
+                return Err(FileError::NotDirectory);
+            }
+            if info.mode & 0o100 == 0 {
+                return Err(FileError::Access);
+            }
+            if part == "." {
+                continue;
+            }
+            if part == ".." {
+                let parent = current.parent_directory()?;
+                current = (parent.as_ref() as &dyn core::any::Any)
+                    .downcast_ref::<Self>()
+                    .ok_or(FileError::Unsupported)?
+                    .clone();
+                walked.pop();
+                continue;
+            }
+            let resolved = |current: Self, part: String| Resolved {
+                path: part,
+                filesystem: Some(Rc::new(current)),
+            };
+            if parts.is_empty() && follow == Follow::Parent {
+                return Ok(resolved(
+                    current,
+                    if directory_required {
+                        format!("{part}/")
+                    } else {
+                        part
+                    },
+                ));
+            }
+            let info = match current.symlink_metadata_raw(&part) {
+                Ok(info) => info,
+                Err(FileError::NotFound) if missing && parts.is_empty() && !directory_required => {
+                    return Ok(resolved(current, part));
+                }
+                Err(error) => return Err(error),
+            };
+            if info.kind == EntryType::Symlink
+                && (follow == Follow::Final || !parts.is_empty() || directory_required)
+            {
+                *links += 1;
+                if *links > 40 {
+                    return Err(FileError::Loop);
+                }
+                match current.process_node(&current.mounted(&part))? {
+                    Some(super::process::Node::Cwd(pid)) => {
+                        let view = current.process_files.cwd(pid)?;
+                        current = (view.as_ref() as &dyn core::any::Any)
+                            .downcast_ref::<Self>()
+                            .ok_or(FileError::Unsupported)?
+                            .clone();
+                        walked.clear();
+                        continue;
+                    }
+                    Some(super::process::Node::Fd(pid, fd)) => {
+                        if parts.is_empty() && !directory_required {
+                            return Ok(resolved(current, part));
+                        }
+                        let crate::io::Descriptor::Directory(directory) =
+                            current.process_files.descriptor(pid, fd)?
+                        else {
+                            return Err(FileError::NotDirectory);
+                        };
+                        let target = (directory.filesystem.as_ref() as &dyn core::any::Any)
+                            .downcast_ref::<Self>()
+                            .ok_or(FileError::Unsupported)?;
+                        let suffix = parts.into_iter().collect::<Vec<_>>().join("/");
+                        let suffix = if suffix.is_empty() {
+                            String::from(".")
+                        } else {
+                            suffix
+                        };
+                        let suffix = if directory_required {
+                            format!("{suffix}/")
+                        } else {
+                            suffix
+                        };
+                        let path = directory
+                            .filesystem
+                            .resolve_path(&directory.path, &suffix)?;
+                        let mut result = target.walk_budget(&path, follow, missing, links)?;
+                        if result.filesystem.is_none() {
+                            result.filesystem = Some(Rc::new(target.clone()));
+                        }
+                        return Ok(result);
+                    }
+                    _ => (),
+                }
+                if current.program(&current.mounted(&part)).is_some() {
+                    if !parts.is_empty() || directory_required {
+                        return Err(FileError::NotDirectory);
+                    }
+                    return Ok(resolved(current, part));
+                }
+                let target = current.read_link_raw(&part)?;
+                if target.is_empty() {
+                    return Err(FileError::NotFound);
+                }
+                if parts.is_empty() && target.ends_with('/') {
+                    directory_required = true;
+                }
+                if target.starts_with('/') {
+                    current = self.clone();
+                    walked.clear();
+                }
+                let mut replacement = components(&target)?;
+                replacement.append(&mut parts);
+                if replacement.iter().map(String::len).sum::<usize>()
+                    + walked.iter().map(String::len).sum::<usize>()
+                    + (replacement.len() + walked.len()).saturating_sub(1)
+                    > MAX_PATH
+                {
+                    return Err(FileError::ResourceLimit);
+                }
+                parts = replacement;
+                continue;
+            }
+            if parts.is_empty() && !directory_required {
+                return Ok(resolved(current, part));
+            }
+            if info.kind != EntryType::Directory {
+                return Err(FileError::NotDirectory);
+            }
+            let view = current
+                .directory_view_raw(&part)?
+                .ok_or(FileError::Unsupported)?;
+            walked.push(part);
+            current = (view.as_ref() as &dyn core::any::Any)
+                .downcast_ref::<Self>()
+                .ok_or(FileError::Unsupported)?
+                .clone();
+        }
     }
 }

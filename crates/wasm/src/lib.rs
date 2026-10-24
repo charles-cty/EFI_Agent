@@ -170,6 +170,7 @@ impl Error {
             Self::ProgramFile(filesystem::FileError::NotFound) => -2,
             Self::ProgramFile(filesystem::FileError::NotDirectory) => -20,
             Self::ProgramFile(filesystem::FileError::Loop) => -40,
+            Self::ProgramFile(filesystem::FileError::ResourceLimit) => -36,
             Self::InvalidModule(error)
                 if matches!(
                     error.kind(),
@@ -205,7 +206,7 @@ struct Context {
     close_on_exec: BTreeSet<u32>,
     umask: u16,
     creation_mode: Option<u16>,
-    cwd: String,
+    cwd: Option<Rc<dyn filesystem::FileSystem>>,
     clock: Option<Rc<dyn clock::Clock>>,
     limits: StoreLimits,
     random: Option<Rc<dyn random::Random>>,
@@ -603,17 +604,21 @@ impl World {
         if self.processes.len() >= MAX_PROCESSES {
             return Err(Error::ProcessLimit);
         }
-        let cwd = settings.cwd.clone().unwrap_or_else(|| {
+        let cwd = if let Some(path) = &settings.cwd {
+            Some(self.cwd_view(parent, path).map_err(Error::ProgramFile)?)
+        } else if parent == 0 {
+            self.filesystem.clone()
+        } else {
+            self.processes[&parent].execution().store.data().cwd.clone()
+        };
+        let command_cwd = settings.cwd.clone().unwrap_or_else(|| {
             if parent == 0 {
                 String::from("/")
             } else {
-                self.processes[&parent].execution().store.data().cwd.clone()
+                format!("/proc/{parent}/cwd")
             }
         });
-        if !cwd.starts_with('/') || cwd.contains('\0') {
-            return Err(Error::InvalidArguments);
-        }
-        let (module_name, args) = self.resolve_command(args, &environment, &cwd, parent == 0)?;
+        let (module_name, args) = self.resolve_command(args, &environment, &command_cwd, parent)?;
         if args
             .iter()
             .chain(&environment)
@@ -647,7 +652,6 @@ impl World {
                 context.stderr.clone(),
             )
         };
-        let cwd = cwd.trim_matches('/').to_string();
         let mut descriptors = if parent == 0 {
             BTreeMap::from([
                 (0, io::Descriptor::Input(stdin.clone())),
@@ -732,7 +736,12 @@ impl World {
             } else {
                 self.processes[&parent].execution().store.data().umask
             }),
-            cwd: format!("/{cwd}"),
+            cwd: cwd.map(|view| {
+                (view.as_ref() as &dyn core::any::Any)
+                    .downcast_ref::<filesystem::VirtualFileSystem>()
+                    .expect("World cwd uses the virtual filesystem")
+                    .for_process(pid) as Rc<dyn filesystem::FileSystem>
+            }),
             clock: self.clock.clone(),
             random: self.random.clone(),
             network: self.network.clone(),

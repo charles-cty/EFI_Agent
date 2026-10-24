@@ -2,6 +2,8 @@
 #include "libbb.h"
 #include <assert.h>
 
+void efi_busybox_restore_cwd(void);
+
 void *xmalloc(size_t size)
 {
     void *result = malloc(size);
@@ -34,12 +36,28 @@ void bb_simple_perror_msg_and_die(const char *text)
 
 int main(void)
 {
+    efi_busybox_restore_cwd();
     assert(mkdir("c-metadata", 0700) == 0);
     int root = open("c-metadata/root", O_CREAT | O_WRONLY, 0600);
     assert(root >= 0);
     assert(close(root) == 0);
     assert(mkdir("c-metadata/sub", 0700) == 0);
     assert(chdir("c-metadata/sub") == 0);
+    const char *expected_cwd = "/c-metadata/sub";
+    size_t cwd_size = strlen(expected_cwd) + 1;
+    char cwd_buffer[64];
+    assert(getcwd(cwd_buffer, cwd_size) == cwd_buffer);
+    assert(strcmp(cwd_buffer, expected_cwd) == 0);
+    errno = 0;
+    assert(getcwd(cwd_buffer, cwd_size - 1) == NULL && errno == ERANGE);
+    errno = 0;
+    assert(getcwd(cwd_buffer, 0) == NULL && errno == EINVAL);
+    char *allocated_cwd = getcwd(NULL, 0);
+    assert(allocated_cwd && strcmp(allocated_cwd, expected_cwd) == 0);
+    free(allocated_cwd);
+    allocated_cwd = getcwd(NULL, cwd_size);
+    assert(allocated_cwd && strcmp(allocated_cwd, expected_cwd) == 0);
+    free(allocated_cwd);
     int local = open("local", O_CREAT | O_WRONLY, 0640);
     assert(local >= 0);
     struct stat info;

@@ -1,4 +1,5 @@
 //! Command lookup and bounded interpreter dispatch over the guest namespace.
+use crate::filesystem::FileSystem;
 use crate::{ASH_APPLETS, Error, World, filesystem};
 use alloc::{
     format,
@@ -38,10 +39,10 @@ impl World {
         mut args: Vec<String>,
         environment: &[String],
         cwd: &str,
-        root: bool,
+        caller: crate::Pid,
     ) -> Result<(String, Vec<String>), Error> {
         // Host launchers select installed modules directly. Guest launches use PATH.
-        if root
+        if caller == 0
             && (!args[0].contains('/') || args[0].starts_with("/bin/"))
             && self.has_program(&args[0])
         {
@@ -51,8 +52,14 @@ impl World {
                 args,
             ));
         }
+        let filesystem = self.filesystem.as_ref().map(|filesystem| {
+            (filesystem.as_ref() as &dyn core::any::Any)
+                .downcast_ref::<filesystem::VirtualFileSystem>()
+                .expect("World installs the virtual root filesystem")
+                .for_process(caller)
+        });
         for _ in 0..5 {
-            let path = self.command_path(&args[0], environment, cwd)?;
+            let path = self.command_path(&args[0], environment, cwd, filesystem.as_deref())?;
             if let Some(name) = path.strip_prefix("bin/")
                 && self.bin.borrow().contains_key(name)
             {
@@ -66,8 +73,7 @@ impl World {
                     args,
                 ));
             }
-            let filesystem = self
-                .filesystem
+            let filesystem = filesystem
                 .as_ref()
                 .ok_or_else(|| Error::UnknownProgram(path.clone()))?;
             let mut file = filesystem
@@ -118,14 +124,26 @@ impl World {
             if !option.is_empty() {
                 next.push(option.to_string());
             }
-            next.push(format!("/{path}"));
+            // Relative scripts must use the child's inherited cwd. An address
+            // through the parent's proc cwd could change after spawn returns.
+            let prefix = format!("{}/", cwd.trim_matches('/'));
+            next.push(match path.strip_prefix(&prefix) {
+                Some(relative) => relative.to_string(),
+                None => format!("/{path}"),
+            });
             next.extend(args.into_iter().skip(1));
             args = next;
         }
         Err(Error::ProgramFile(filesystem::FileError::Loop))
     }
 
-    fn command_path(&self, name: &str, environment: &[String], cwd: &str) -> Result<String, Error> {
+    fn command_path(
+        &self,
+        name: &str,
+        environment: &[String],
+        cwd: &str,
+        filesystem: Option<&filesystem::VirtualFileSystem>,
+    ) -> Result<String, Error> {
         let explicit = name.contains('/');
         let path = environment
             .iter()
@@ -158,12 +176,9 @@ impl World {
             {
                 return Ok(candidate);
             }
-            let Some(filesystem) = &self.filesystem else {
+            let Some(virtual_root) = filesystem else {
                 continue;
             };
-            let virtual_root = (filesystem.as_ref() as &dyn core::any::Any)
-                .downcast_ref::<filesystem::VirtualFileSystem>()
-                .expect("World installs the virtual root filesystem");
             let (resolved, info) = match virtual_root.executable_path(&candidate) {
                 Ok(resolved) => resolved,
                 Err(filesystem::FileError::NotFound | filesystem::FileError::NotDirectory) => {
@@ -184,7 +199,7 @@ impl World {
             {
                 return Ok(resolved);
             }
-            return Ok(candidate);
+            return Ok(resolved);
         }
         if denied {
             Err(Error::ProgramFile(filesystem::FileError::Access))

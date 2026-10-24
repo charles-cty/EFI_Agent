@@ -14,8 +14,8 @@ Directory views can query their current physical path through `directory_path`.
 The namespace derives this path from the retained inode graph. Ancestor moves
 change the result; removal or replacement returns NotFound even when another
 inode takes the former name. Mounted views add the correct mount prefix.
-This query does not expand directory-fd capabilities. Process cwd and guest libc
-still use path strings; anchored cwd routing remains pending.
+This query does not expand directory-fd capabilities. Each process now owns a
+directory anchor; child processes inherit that identity directly.
 
 The host-only `parent_directory` operation obtains the actual parent anchor for
 runtime cwd traversal. Namespace commits retain the last parent of a newly
@@ -25,6 +25,22 @@ walks the detached chain iteratively; garbage collection reclaims unused nodes.
 Failed journal commits publish no new parent references. Parent views preserve
 mount routing when traversal reaches the workspace or temporary mount root.
 This operation is not exposed through guest directory capabilities.
+
+Proc cwd links route through the retained anchor. Relative cwd paths can use
+actual parents, absolute symlink targets and runtime mount boundaries. Ordinary
+directory fds retain their bounds. The Python startup adapter and BusyBox entry
+point initialize libc's cached cwd to `/proc/self/cwd`; unchanged standard file
+operations then reach the current anchor. Standard getcwd/getcwdb query its
+physical name and fail with ENOENT after unlink. BusyBox getcwd uses a sized
+snapshot and preserves buffer/allocation semantics, including physical paths
+longer than 4096 bytes. The caller's initial libc routing prefix consumes none
+of the relative path or 40-link budget. User symlink expansions remain bounded.
+Registry cwd references are weak; terminal paths release cwd and detached
+ancestry before reap. Other application entry points still need cwd bootstrap
+verification.
+Executable lookup derives the physical path of routed directory views before
+module-cache and installed-alias selection. Same-physical-path executable edits
+still need content/generation validation with manifest delivery.
 
 `namespace::read_snapshot` reads the committed logical tree without recovery
 writes or garbage collection. It exposes validated backing paths to host
@@ -203,8 +219,9 @@ of claiming a persistent pathname for anonymous or detached objects. Regular
 descriptor aliases work through model file helpers; cooperative stream aliases
 use the guest ABI. Directory descriptor paths retain their inode anchor after
 rename. The remaining path uses that provider, with the same shared 40-link
-budget and capability bounds. Cwd inheritance and proc cwd links remain path
-based; ancestor rename/unlink tracking is still pending.
+budget and capability bounds. Cwd inheritance and proc cwd links retain directory
+identity after ancestor rename or unlink. Detached readlink results identify the
+directory inode with a deleted marker; physical getcwd queries return ENOENT.
 
 Ln uses upstream option parsing, hard/symbolic link creation, destination
 directory handling, backups and verbose output. Force and backup operations
@@ -552,8 +569,10 @@ The runtime does not append `.wasm` to command names. `cwd` and per-child umask
 are supported. A distinct custom `argv[0]`, pre-exec callbacks, sessions/groups
 and credentials raise `ENOTSUP`.
 Ordinary children inherit the current directory and process umask. `os.chdir`
-and `os.umask` update that state through the private startup adapter. Current
-directory tracking is still path based and does not follow ancestor rename.
+and `os.umask` update that state through the private startup adapter. Directory
+anchors follow ancestor rename and survive unlink. A child-only umask override
+inherits cwd directly, including detached or unsearchable directories; an explicit
+child cwd must pass a directory/search-permission check before spawn.
 Subprocess timeouts and process signals still raise `ENOTSUP`; adapter support
 for those operations remains pending. Python `time.sleep` and monotonic clocks
 use the runtime clock provider. `subprocess.DEVNULL` uses the virtual `/dev/null` device.
@@ -1267,7 +1286,8 @@ passes, including application chains, network/TLS and concurrent processes.
 The full 256 MiB combination fails during second concurrent Python startup.
 The remaining scope is:
 
-- Complete shared mounts, anchored cwd tracking and CPU-time clocks.
+- Verify cwd bootstrap in the remaining application ports; complete installation
+  manifests and retained interpreter sessions. CPU-time clocks are unavailable.
 - Socket options, address queries, listen/accept, peek/waitall and half-shutdown.
 - Reproducible source acquisition and packaging for the existing guest builds.
 - Remaining shell builtins and complete executable mount traversal; all 48

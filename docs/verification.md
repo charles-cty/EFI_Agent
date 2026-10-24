@@ -1,5 +1,74 @@
 # Verification record
 
+## 2026-10-24: Runtime cwd anchors and standard Python/ash routing
+
+Each process now owns a directory anchor. Children inherit it directly, including
+when only umask changes. Explicit child cwd checks directory type and search
+permission before spawning. Proc cwd references are weak. Magic links retain
+identity through ancestor rename, replacement, name reuse and unlink. Detached
+links identify their directory inode with a deleted marker. Relative cwd walks
+use actual parents and runtime mount boundaries; ordinary directory fds remain
+bounded. Normal return, proc_exit, trap and cancellation release cwd and detached
+ancestry before reap.
+
+Python and BusyBox initialize libc's cached cwd to /proc/self/cwd. The unchanged
+CPython open/FileIO/import machinery therefore reaches the retained anchor.
+Standard cwd queries derive the physical path and return ENOENT after unlink.
+BusyBox getcwd uses the sized private snapshot and preserves caller-buffer,
+ERANGE/EINVAL and allocated-buffer behavior. It can return physical paths longer
+than 4096 bytes. The internal initial routing prefix consumes none of the user
+path or symbolic-link budget. Explicit user links retain their shared limit.
+
+Four Rust integration cases independently verify all terminal paths and inode
+quota recovery, direct WASI 4096/4098-byte inputs, 40/41 ordinary links and
+executable selection through changing cwd routes. A full spawn frame combines
+64 KiB of arguments, 127 fd mappings and a 4096-byte cwd without charging the
+private routing prefix to those limits. The executable case first
+reproduced an incorrect exit 7 where the new file required exit 9. Lookup now
+uses the routed directory's physical path before cache and installed-alias
+selection. The case also checks a symlink to a compiled-only installed command.
+Full final-source host tests and host/UEFI Clippy pass in
+`artifacts/cwd-anchor-release-host-tests.log`,
+`artifacts/cwd-anchor-release-clippy-host.log` and
+`artifacts/cwd-anchor-release-clippy-uefi.log`.
+
+The real Python/ash fixture covers ordinary open/FileIO/import caches, renamed
+ancestors, old-name reuse, waiting-child isolation, relative scripts, failed
+chdir atomicity, inherited versus explicit search permission, detached cwd with
+and without child umask, actual-parent navigation and temporary mount roots.
+It checks 40/41 links through standard open and an 18-level physical cwd longer
+than 4096 bytes through both Python and ash. Saved-state verification checks
+replacement bytes, deleted names, link targets and temporary exclusion.
+
+Final Release packaging and native cwd, CPython (17 cases), mount-path,
+process-file, program-path, permission and stream (112 cases) regressions pass
+in `artifacts/cwd-anchor-release-package.log` and the corresponding
+`artifacts/cwd-anchor-release-*.log` records. Both actual 512 MiB Windows WHPX
+API flows pass the cwd fixture, current tool sequence and independent saved FAT
+checks in `artifacts/cwd-anchor-release-whpx-responses` and
+`artifacts/cwd-anchor-release-whpx-chat_completions`.
+
+Intermediate corrections:
+
+- The metadata fixture did not link xstrdup. Absolute chdir requests now reuse
+  the caller's string; only relative requests need allocation.
+- Unchanged libc folds repeated dot components before some file calls. The
+  exact oversized-path rejection check therefore uses direct WASI inputs;
+  the standard Python case checks that a long normalized input remains usable.
+- The proc fixture now opens the root-only private endpoint by its absolute
+  path, since relative opens use actual cwd routing.
+- An initial host probe omitted the Python command after uv run; the corrected
+  invocation uses uv run --no-project python. Curl's progress meter required
+  silent mode for a byte-exact diagnostic probe.
+
+Other C application entry points still need cwd bootstrap verification.
+The diagnostic in `artifacts/cwd-anchor-c-port-probe.log` confirms a curl gap:
+with child cwd /c-port-cwd, relative --config opts fails with 26 while the same
+absolute configuration path downloads the independent file-URL oracle bytes
+with status 0. This remains incomplete work.
+Same-physical-path executable changes need content/generation validation with
+installation manifests. Retained sessions and final delivery remain incomplete.
+
 ## 2026-10-24: Retained parent-directory ancestry
 
 The host-only parent-directory operation uses inode parents. A successful

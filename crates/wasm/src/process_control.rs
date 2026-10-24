@@ -1,4 +1,5 @@
 //! Internal process operations for unmodified WASI interpreters over an open descriptor.
+use crate::filesystem::{FileSystem, VirtualFileSystem};
 use crate::{Execution, Pid, SpawnSettings, Status, World, filesystem::FileError, io::Descriptor};
 use alloc::{
     collections::BTreeSet,
@@ -53,6 +54,23 @@ pub(super) fn respond(
 }
 
 impl World {
+    pub(crate) fn cwd_view(&self, pid: Pid, path: &str) -> Result<Rc<dyn FileSystem>, FileError> {
+        if !path.starts_with('/') || path.contains('\0') {
+            return Err(FileError::Invalid);
+        }
+        let root = self.filesystem.as_ref().ok_or(FileError::NotFound)?;
+        let root = (root.as_ref() as &dyn core::any::Any)
+            .downcast_ref::<VirtualFileSystem>()
+            .expect("World installs the virtual root filesystem")
+            .for_process(pid);
+        let path = path.trim_start_matches('/');
+        let view = root.directory_view(path)?.ok_or(FileError::Unsupported)?;
+        if view.metadata("")?.mode & 0o100 == 0 {
+            return Err(FileError::Access);
+        }
+        Ok(view)
+    }
+
     pub(super) fn control(&mut self, pid: Pid, fd: u32, bytes: &[u8], written: u32) {
         // One request per write; the caller must consume the previous response.
         let empty = match &self.processes[&pid].execution().store.data().descriptors[&fd] {
@@ -73,7 +91,9 @@ impl World {
         }
         let mut waiting = None;
         let result = (|| {
-            if bytes.len() > 70_672 {
+            // Argument/environment bytes, cwd bytes, fd maps and header.
+            // Leave room for the private libc cwd prefix outside user limits.
+            if bytes.len() > 65_536 + 4096 + 32 + 127 * 8 + 24 {
                 return Err(-22);
             }
             let operation = word(bytes, 0)?;
@@ -249,11 +269,11 @@ impl World {
                     } else {
                         None
                     };
-                    if args_size > 65536 || env_size > 65536 - args_size || cwd_size == 0 {
+                    if args_size > 65536
+                        || env_size > 65536 - args_size
+                        || (cwd_size == 0 && !has_umask)
+                    {
                         return Err(-7);
-                    }
-                    if cwd_size > 4096 {
-                        return Err(-36);
                     }
                     let header_size = if has_umask { 24 } else { 20 };
                     if maps > 127
@@ -290,32 +310,15 @@ impl World {
                     let args = strings(&bytes[start..start + args_size])?;
                     let env = strings(&bytes[start + args_size..start + args_size + env_size])?;
                     let cwd_bytes = &bytes[start + args_size + env_size..];
-                    let cwd = core::str::from_utf8(cwd_bytes)
-                        .map_err(|_| -22)?
-                        .to_string();
-                    if !cwd.starts_with('/') || cwd.contains('\0') {
-                        return Err(-22);
-                    }
-                    let filesystem = self.filesystem.as_ref().ok_or(-2)?;
-                    let resolved = filesystem
-                        .resolve_path(
-                            "",
-                            if cwd == "/" {
-                                "."
-                            } else {
-                                cwd.trim_start_matches('/')
-                            },
-                        )
-                        .map_err(|error| -FileError::errno(error))?;
-                    let metadata = filesystem
-                        .metadata(&resolved)
-                        .map_err(|error| -FileError::errno(error))?;
-                    if !metadata.is_directory() {
-                        return Err(-54);
-                    }
-                    if metadata.mode & 0o100 == 0 {
-                        return Err(-2);
-                    }
+                    let cwd = if cwd_size == 0 {
+                        None
+                    } else {
+                        let path = core::str::from_utf8(cwd_bytes).map_err(|_| -22)?;
+                        if !path.starts_with('/') || path.contains('\0') {
+                            return Err(-22);
+                        }
+                        Some(path.to_string())
+                    };
                     let child = self
                         .spawn_child(
                             pid,
@@ -323,10 +326,7 @@ impl World {
                             Some(env),
                             Vec::new(),
                             Some(mapping),
-                            SpawnSettings {
-                                cwd: Some(cwd),
-                                umask,
-                            },
+                            SpawnSettings { cwd, umask },
                         )
                         .map_err(|error| error.spawn_errno())?;
                     Ok((child as i32, 0))
@@ -562,45 +562,32 @@ impl World {
                         .unwrap()
                         .store
                         .data_mut();
+                    let path = match &context.cwd {
+                        Some(view) => format!(
+                            "/{}",
+                            view.directory_path().map_err(|error| -error.errno())?
+                        ),
+                        None => String::from("/"),
+                    };
                     let fd = (4..crate::MAX_DESCRIPTORS)
                         .find(|fd| !context.descriptors.contains_key(fd))
                         .ok_or(-24)?;
+                    let size = i32::try_from(path.len()).map_err(|_| -7)?;
                     context.descriptors.insert(
                         fd,
-                        Descriptor::Input(Rc::new(RefCell::new(
-                            context.cwd.as_bytes().iter().copied().collect(),
-                        ))),
+                        Descriptor::Input(Rc::new(RefCell::new(path.into_bytes().into()))),
                     );
                     context.close_on_exec.insert(fd);
-                    Ok((fd as i32, 0))
+                    Ok((fd as i32, size))
                 }
                 17 => {
                     let path = core::str::from_utf8(&bytes[4..]).map_err(|_| -22)?;
                     if !path.starts_with('/') || path.contains('\0') {
                         return Err(-22);
                     }
-                    let filesystem = self.filesystem.as_ref().ok_or(-2)?;
-                    let result = (|| {
-                        let path = if path.trim_matches('/').is_empty() {
-                            String::new()
-                        } else {
-                            filesystem
-                                .resolve_path("", path.trim_start_matches('/'))
-                                .map_err(crate::filesystem::FileError::errno)?
-                        };
-                        let info = filesystem
-                            .metadata(&path)
-                            .map_err(crate::filesystem::FileError::errno)?;
-                        if !info.is_directory() {
-                            return Err(54);
-                        }
-                        if info.mode & 0o100 == 0 {
-                            return Err(2);
-                        }
-                        Ok(format!("/{path}"))
-                    })();
+                    let result = self.cwd_view(pid, path).map_err(FileError::errno);
                     match result {
-                        Ok(path) => {
+                        Ok(view) => {
                             self.processes
                                 .get_mut(&pid)
                                 .unwrap()
@@ -609,7 +596,7 @@ impl World {
                                 .unwrap()
                                 .store
                                 .data_mut()
-                                .cwd = path;
+                                .cwd = Some(view);
                             Ok((0, 0))
                         }
                         Err(error) => Ok((error, 0)),
