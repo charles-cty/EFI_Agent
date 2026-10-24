@@ -192,6 +192,59 @@ static int allocation(int fd, const char *path, int follow, uint64_t *allocated)
     return 0;
 }
 
+int efi_filesystem_statistics(int fd, const char *path, uint64_t fields[12])
+{
+    char *absolute = NULL;
+    if (path) {
+        fd = path_fd(fd, path);
+        if (fd < 0 && fd != AT_FDCWD)
+            return -1;
+        if (path[0] == '/') {
+            fd = 3;
+        } else if (fd == AT_FDCWD) {
+            char *cwd = getcwd(NULL, 0);
+            if (!cwd)
+                return -1;
+            absolute = xasprintf("%s%s%s", cwd, strcmp(cwd, "/") ? "/" : "", path);
+            free(cwd);
+            path = absolute;
+            fd = 3;
+        }
+    }
+    uint32_t words[] = {26, (uint32_t)fd, path != NULL};
+    uint32_t response[2];
+    int result = request(words, 3, path, response);
+    free(absolute);
+    if (result < 0)
+        return -1;
+    if (response[0]) {
+        errno = response[0];
+        return -1;
+    }
+    int reply = response[1];
+    ssize_t count = read(reply, fields, 96);
+    int error = errno;
+    close(reply);
+    if (count != 96) {
+        errno = count < 0 ? error : EIO;
+        return -1;
+    }
+    return 0;
+}
+
+int efi_mount_snapshot(void)
+{
+    uint32_t words[] = {27};
+    uint32_t response[2];
+    if (request(words, 1, NULL, response) < 0)
+        return -1;
+    if (response[0]) {
+        errno = response[0];
+        return -1;
+    }
+    return response[1];
+}
+
 static int patch_stat(int result, int fd, const char *path, int follow, struct stat *info)
 {
     if (result < 0)

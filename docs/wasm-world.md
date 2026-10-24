@@ -99,6 +99,21 @@ du units use upstream ceiling behavior; directory read/close errors fail.
 Hard-linked files count once by default; -l counts each name. General mount
 accounting remains incomplete.
 
+Df uses upstream parsing, mount selection, unit formatting, percentages and
+inode output. Its mount table comes from the runtime inventory. Workspace
+capacity uses Windows volume queries or EFI_FILE_SYSTEM_INFO, including shared
+journal storage. Free space and space available to the caller remain distinct.
+Windows obtains the actual allocation unit instead of assuming 4096 bytes.
+Workspace inode counts report the shared namespace entry-slot quota, including
+aliases and detached open inodes. The read-only dev/proc mounts have no data
+capacity and are shown with -a or explicit operands. The /bin overlay uses the
+workspace filesystem. Upstream -H currently uses the same binary scaling as -h.
+The /tmp data quota is 32 MiB across all processes, plus 4096 live file objects.
+Writes return normal short writes at the quota boundary; resize fails without
+changing data. Detached open files and replaced open targets retain their
+charge until the last close. These statistics do not complete general mount,
+directory/link traversal or process-information support.
+
 Ln uses upstream option parsing, hard/symbolic link creation, destination
 directory handling, backups and verbose output. Force and backup operations
 reject replacement of the source directory entry, including parent-directory
@@ -694,6 +709,16 @@ the source UTF-8 byte length and concatenated source/destination paths. Both
 directory rights and paths are checked before mutation. Python os.link uses
 this private operation to supply directory-fd and follow-symlink arguments
 absent from the prebuilt interpreter. The interpreter binary stays unchanged.
+Filesystem-statistics operation 26 takes a descriptor, a path-present flag and
+an optional UTF-8 path. It validates path/fd filestat rights and returns a
+close-on-exec descriptor containing twelve little-endian u64 values: block and
+fragment sizes, total/free/available blocks, total/free/available file slots,
+filesystem ID, flags, name length and type. Invalid provider values fail before
+reply publication. Mount operation 27 returns a close-on-exec mount-table text
+snapshot with escaped fields. BusyBox statvfs/fstatvfs and private Python
+os.statvfs/os.fstatvfs adapters consume these snapshots through standard methods.
+Preview 1 stat-f filesystem output remains disabled pending its separate C
+interface adaptation and verification.
 Creation applies the process umask; changing a mode affects later opens and
 directory traversal while existing file handles retain their granted access.
 The single guest owner/group is uid/gid 1. Symlink mode mutation without

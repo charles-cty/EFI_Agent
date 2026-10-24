@@ -6,12 +6,12 @@ expansion. Initial native/firmware interfaces do not establish full completion.
 The shared image currently uses upstream ls, find, awk, sed, grep, chmod, cat, head,
 tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true,
 false, od, hexdump, base64, sha256sum and realpath, plus mkdir, rmdir, rm,
-touch, date, sort, uniq, cut, tr, cp, mv, which, xargs, gzip, gunzip, zcat, unzip, du and ln. Other
+touch, date, sort, uniq, cut, tr, cp, mv, which, xargs, gzip, gunzip, zcat, unzip, du, ln and df. Other
 utility applets still need upstream replacement or addition.
 Upstream `stat` now reports file and symlink metadata, ownership, permissions,
 timestamps and custom/terse formats. Filesystem mode (`stat -f`) remains
-disabled until guest filesystem-statistics interfaces and mount accounting are
-available. Raw native and firmware capacity providers already exist.
+disabled pending its C statfs adaptation and verification. Standard statvfs
+interfaces now use measured native and firmware capacity and runtime mounts.
 Date currently supports UTC; other TZ values fail explicitly and timezone
 support remains pending.
 Firmware monotonic waits now use a reported hardware-counter rate. General mount
@@ -106,7 +106,15 @@ verifies cp -l/-a, du deduplication, descriptor-relative Python links, backups,
 source protection and independent saved groups. Both actual 512 MiB WHPX model
 APIs pass with independent saved FAT inode/backing/byte/mode checks in
 artifacts/ln-whpx-responses and artifacts/ln-whpx-chat_completions.
-The missing required applets are df and tar.
+Df uses upstream mount selection and formatting with measured workspace bytes,
+distinct free/available values, namespace slot counts and virtual mount IDs.
+Python statvfs/fstatvfs use the private adapter with the unchanged interpreter.
+The shared /tmp quota is 32 MiB and 4096 live objects; detached open data remains
+charged until its last close. Native command checks, quota boundaries and
+independent host volume queries pass. Both actual 512 MiB WHPX model API flows
+pass with independent saved FAT capacity and byte checks in
+artifacts/df-whpx-responses and artifacts/df-whpx-chat_completions.
+The missing required applet is tar.
 
 ## Delivery requirements
 

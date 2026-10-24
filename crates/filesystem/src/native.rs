@@ -191,10 +191,39 @@ fn capacity(path: &Path) -> Result<crate::Capacity, FileError> {
     {
         return Err(error(std::io::Error::last_os_error()));
     }
+    let mut volume = [0u16; 32768];
+    if unsafe {
+        windows_sys::Win32::Storage::FileSystem::GetVolumePathNameW(
+            path.as_ptr(),
+            volume.as_mut_ptr(),
+            volume.len() as u32,
+        )
+    } == 0
+    {
+        return Err(error(std::io::Error::last_os_error()));
+    }
+    let (mut sectors, mut sector_size, mut free_clusters, mut total_clusters) = (0, 0, 0, 0);
+    if unsafe {
+        windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceW(
+            volume.as_ptr(),
+            &mut sectors,
+            &mut sector_size,
+            &mut free_clusters,
+            &mut total_clusters,
+        )
+    } == 0
+    {
+        return Err(error(std::io::Error::last_os_error()));
+    }
+    let block_size = sectors
+        .checked_mul(sector_size)
+        .filter(|&size| size != 0)
+        .ok_or(FileError::Overflow)?;
     Ok(crate::Capacity {
         total,
+        free,
         available,
-        block_size: 4096,
+        block_size,
     })
 }
 
@@ -216,6 +245,7 @@ fn capacity(path: &Path) -> Result<crate::Capacity, FileError> {
     };
     Ok(crate::Capacity {
         total: info.f_blocks.saturating_mul(block),
+        free: info.f_bfree.saturating_mul(block),
         available: info.f_bavail.saturating_mul(block),
         block_size: block.try_into().map_err(|_| FileError::Overflow)?,
     })

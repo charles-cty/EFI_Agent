@@ -6,6 +6,133 @@ use std::{fs, path::PathBuf, rc::Rc, time::SystemTime};
 
 struct Workspace(PathBuf);
 
+#[test]
+fn temporary_capacity_counts_detached_files_and_enforces_shared_exact_boundaries() {
+    use efi_agent_wasm::filesystem::{
+        FileError, FileSystem, OpenOptions, TEMP_CAPACITY, VirtualFileSystem,
+    };
+    let work = Workspace::new();
+    let filesystem = VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(work.0.clone())));
+    let options = OpenOptions {
+        read: true,
+        write: true,
+        create: true,
+        exclusive: false,
+        truncate: false,
+        append: false,
+    };
+    let initial = filesystem.filesystem_statistics("tmp").unwrap();
+    assert_eq!(initial.capacity.available, TEMP_CAPACITY);
+    let mut first = filesystem.open("tmp/first", options).unwrap();
+    let mut second = filesystem.open("tmp/second", options).unwrap();
+    first.resize(TEMP_CAPACITY - 3).unwrap();
+    assert_eq!(second.write(b"12345").unwrap(), 3);
+    assert_eq!(second.write(b"x"), Err(FileError::NoSpace));
+    assert_eq!(
+        filesystem
+            .filesystem_statistics("tmp")
+            .unwrap()
+            .capacity
+            .available,
+        0
+    );
+    filesystem.unlink("tmp/first").unwrap();
+    assert_eq!(first.filesystem_statistics().unwrap().capacity.available, 0);
+    assert_eq!(first.resize(TEMP_CAPACITY - 2), Err(FileError::NoSpace));
+    first.seek(0, 0).unwrap();
+    assert_eq!(first.write(b"overwrite").unwrap(), 9);
+    let mut empty = filesystem.open("tmp/empty", options).unwrap();
+    empty.seek(65537, 0).unwrap();
+    assert_eq!(empty.write(b""), Ok(0));
+    assert_eq!(empty.metadata().unwrap().size, 0);
+    first.resize(TEMP_CAPACITY - 4).unwrap();
+    assert_eq!(second.write(b"yz").unwrap(), 1);
+    assert_eq!(
+        filesystem
+            .filesystem_statistics("tmp")
+            .unwrap()
+            .capacity
+            .available,
+        0
+    );
+    drop(first);
+    assert_eq!(
+        filesystem
+            .filesystem_statistics("tmp")
+            .unwrap()
+            .capacity
+            .available,
+        TEMP_CAPACITY - 4
+    );
+    assert_eq!(second.metadata().unwrap().allocated, Some(4));
+    let view = filesystem.directory_view("tmp").unwrap().unwrap();
+    assert_eq!(
+        view.filesystem_statistics("second")
+            .unwrap()
+            .capacity
+            .available,
+        TEMP_CAPACITY - 4
+    );
+    filesystem.unlink("tmp/second").unwrap();
+    assert_eq!(
+        second.filesystem_statistics().unwrap().capacity.available,
+        TEMP_CAPACITY - 4
+    );
+    drop(second);
+    assert_eq!(
+        filesystem
+            .filesystem_statistics("tmp")
+            .unwrap()
+            .capacity
+            .available,
+        TEMP_CAPACITY
+    );
+}
+
+#[test]
+fn temporary_inode_quota_retains_detached_open_files_until_close() {
+    use efi_agent_wasm::filesystem::{
+        FileError, FileSystem, MAX_DIRECTORY_ENTRIES, OpenOptions, VirtualFileSystem,
+    };
+    let work = Workspace::new();
+    let filesystem = VirtualFileSystem::new(Rc::new(native_fs::NativeFileSystem(work.0.clone())));
+    let options = OpenOptions {
+        read: true,
+        write: true,
+        create: true,
+        exclusive: false,
+        truncate: false,
+        append: false,
+    };
+    let held = filesystem.open("tmp/held", options).unwrap();
+    filesystem.unlink("tmp/held").unwrap();
+    for index in 1..MAX_DIRECTORY_ENTRIES {
+        drop(
+            filesystem
+                .open(&format!("tmp/file-{index}"), options)
+                .unwrap(),
+        );
+    }
+    assert_eq!(
+        filesystem.filesystem_statistics("tmp").unwrap().files_free,
+        0
+    );
+    assert_eq!(
+        filesystem.open("tmp/full", options).err(),
+        Some(FileError::NoSpace)
+    );
+    drop(held);
+    assert_eq!(
+        filesystem.filesystem_statistics("tmp").unwrap().files_free,
+        1
+    );
+    drop(filesystem.open("tmp/last", options).unwrap());
+    assert_eq!(
+        filesystem.filesystem_statistics("tmp").unwrap().files_free,
+        0
+    );
+}
+
 impl Workspace {
     fn new() -> Self {
         let nonce = SystemTime::now()

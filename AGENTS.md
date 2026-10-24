@@ -9,6 +9,19 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Upstream BusyBox df now builds into the shared image. Standard C and Python
+statvfs/fstatvfs use measured workspace capacity, distinct free/available bytes,
+namespace slot counts and runtime mount statistics. Windows allocation units
+come from the volume; firmware capacity comes from EFI_FILE_SYSTEM_INFO.
+Shared /tmp storage enforces 32 MiB and 4096 live objects, retaining unlinked
+open-file charges until last close. Boundary, rights and quota integration,
+native guest regressions, host tests, host/UEFI Clippy, formatting and Release
+packaging pass. Both actual 512 MiB WHPX model API flows pass independent
+saved FAT capacity and byte checks in artifacts/df-whpx-responses and
+artifacts/df-whpx-chat_completions. Required commands now number 47/48; tar
+remains. Stat -f, general mounts, manifests, retained sessions and full
+environment delivery remain incomplete.
+
 Upstream BusyBox ln now builds into the shared image. File and symlink hard
 links share namespace inodes, backing data, permissions, times and link counts.
 Alias deletion/promotion, same-inode rename, anchored views, open-file lifetime

@@ -18,6 +18,71 @@ fn time_update(value: u64, flags: u32) -> TimeUpdate {
     }
 }
 
+pub(super) fn control_statistics(
+    context: &Context,
+    fd: u32,
+    path: Option<&str>,
+) -> Result<[u8; 96], i32> {
+    let descriptor = context.descriptors.get(&fd).ok_or(io::BADF)?;
+    let statistics = match (descriptor, path) {
+        (Descriptor::Directory(directory), path) => {
+            let right = if path.is_some() { 1 << 18 } else { 1 << 21 };
+            if directory.rights & right == 0 {
+                return Err(76);
+            }
+            let path = match path {
+                Some(path) => directory.resolve(path)?,
+                None => directory.path.clone(),
+            };
+            directory.filesystem.filesystem_statistics(&path)
+        }
+        (Descriptor::File { handle, rights, .. }, None) => {
+            if rights & (1 << 21) == 0 {
+                return Err(76);
+            }
+            handle.borrow().filesystem_statistics()
+        }
+        (_, Some(_)) => return Err(54),
+        _ => return Err(58),
+    }
+    .map_err(FileError::errno)?;
+    statistics.encode().map_err(FileError::errno)
+}
+
+pub(super) fn control_mounts(context: &Context) -> Result<alloc::vec::Vec<u8>, i32> {
+    let Descriptor::Directory(directory) = context.descriptors.get(&3).ok_or(io::BADF)? else {
+        return Err(54);
+    };
+    let mounts = directory.filesystem.mounts().map_err(FileError::errno)?;
+    let mut result = String::new();
+    for mount in mounts {
+        for field in [&mount.source, &mount.path, &mount.kind] {
+            if field.is_empty() || field.contains('\0') {
+                return Err(28);
+            }
+            for ch in field.chars() {
+                match ch {
+                    ' ' => result.push_str("\\040"),
+                    '\t' => result.push_str("\\011"),
+                    '\n' => result.push_str("\\012"),
+                    '\\' => result.push_str("\\134"),
+                    _ => result.push(ch),
+                }
+            }
+            result.push(' ');
+        }
+        result.push_str(if mount.read_only {
+            "ro 0 0\n"
+        } else {
+            "rw 0 0\n"
+        });
+        if result.len() > 65536 {
+            return Err(48);
+        }
+    }
+    Ok(result.into_bytes())
+}
+
 pub(super) fn control_hard_link(
     context: &Context,
     source_fd: u32,

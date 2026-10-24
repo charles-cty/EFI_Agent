@@ -78,12 +78,12 @@ impl World {
             }
             let operation = word(bytes, 0)?;
             let expected = match operation {
-                1 | 6 | 7 | 16 => 4,
+                1 | 6 | 7 | 16 | 27 => 4,
                 2 | 3 | 5 | 10 => 12,
                 4 | 13 | 15 | 18 | 19 => 8,
                 14 => 12,
                 20 | 21 => bytes.len(),
-                8 | 9 | 11 | 12 | 17 | 22 | 23 | 24 | 25 => bytes.len(),
+                8 | 9 | 11 | 12 | 17 | 22 | 23 | 24 | 25 | 26 => bytes.len(),
                 _ => return Err(-22),
             };
             if bytes.len() != expected {
@@ -386,6 +386,46 @@ impl World {
                             Err(error) => (error, 0),
                         },
                     )
+                }
+                26 | 27 => {
+                    let context = self
+                        .processes
+                        .get_mut(&pid)
+                        .unwrap()
+                        .execution
+                        .as_mut()
+                        .unwrap()
+                        .store
+                        .data_mut();
+                    let result = if operation == 26 {
+                        let fd = word(bytes, 1)?;
+                        let mode = word(bytes, 2)?;
+                        let payload = bytes.get(12..).ok_or(-22)?;
+                        let path = match mode {
+                            0 if payload.is_empty() => None,
+                            1 => Some(core::str::from_utf8(payload).map_err(|_| -22)?),
+                            _ => return Ok((28, 0)),
+                        };
+                        crate::filesystem_abi::control_statistics(context, fd, path)
+                            .map(|bytes| bytes.to_vec())
+                    } else {
+                        crate::filesystem_abi::control_mounts(context)
+                    };
+                    let bytes = match result {
+                        Ok(bytes) => bytes,
+                        Err(error) => return Ok((error, 0)),
+                    };
+                    let Some(reply_fd) = (4..crate::MAX_DESCRIPTORS)
+                        .find(|fd| !context.descriptors.contains_key(fd))
+                    else {
+                        return Ok((crate::io::MFILE, 0));
+                    };
+                    context.descriptors.insert(
+                        reply_fd,
+                        Descriptor::Input(Rc::new(RefCell::new(bytes.into()))),
+                    );
+                    context.close_on_exec.insert(reply_fd);
+                    Ok((0, reply_fd as i32))
                 }
                 25 => {
                     let source_fd = word(bytes, 1)?;

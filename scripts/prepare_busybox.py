@@ -34,7 +34,7 @@ ENABLED = {
     "GZIP", "GUNZIP", "ZCAT", "FEATURE_GZIP_DECOMPRESS",
     "FEATURE_GZIP_LONG_OPTIONS", "FEATURE_GUNZIP_LONG_OPTIONS", "FEATURE_GZIP_LEVELS",
     "UNZIP", "FEATURE_UNZIP_CDF",
-    "DU", "FEATURE_DU_DEFAULT_BLOCKSIZE_1K",
+    "DU", "FEATURE_DU_DEFAULT_BLOCKSIZE_1K", "DF", "FEATURE_DF_FANCY",
     "MONOTONIC_SYSCALL",
     "DATE", "FEATURE_DATE_ISOFMT", "FEATURE_DATE_NANO",
     "SORT", "FEATURE_SORT_BIG", "UNIQ", "CUT", "FEATURE_CUT_REGEX",
@@ -504,7 +504,7 @@ def main():
              *(args.source / f"coreutils/{name}.c" for name in (
                  "cat", "head", "tail", "wc", "tee", "sleep", "basename",
                  "dirname", "pwd", "env", "printenv", "seq", "yes", "true", "false",
-                 "mkdir", "rmdir", "rm", "touch", "cp", "mv", "du", "ln")),
+                 "mkdir", "rmdir", "rm", "touch", "cp", "mv", "du", "ln", "df")),
              args.source / "libbb/copy_file.c", args.source / "libbb/inode_hash.c",
              args.source / "findutils/xargs.c",
              args.source / "archival/gzip.c", args.source / "archival/bbunzip.c",
@@ -554,6 +554,9 @@ def main():
     prepare_compression(args.source, args.output, replace_once)
     prepare_unzip(args.source, args.output, replace_once)
     prepare_du(args.source, args.output)
+    df = (args.source / "coreutils/df.c").read_text(encoding="utf-8")
+    df = replace_once(df, '\treturn status;', '\tfflush_stdout_and_exit(status);')
+    (args.output / "df.c").write_text(df, encoding="utf-8")
     prepare_date(args.source, args.output)
     prepare_text_applets(args.source, args.output, replace_once)
     prepare_dump(args.source, args.output)

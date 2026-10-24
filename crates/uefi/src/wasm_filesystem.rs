@@ -89,6 +89,7 @@ impl FileSystem for FirmwareFileSystem {
             .map_err(|failure| error(failure.status()))?;
         Ok(Capacity {
             total: info.volume_size(),
+            free: info.free_space(),
             available: info.free_space(),
             block_size: info.block_size(),
         })

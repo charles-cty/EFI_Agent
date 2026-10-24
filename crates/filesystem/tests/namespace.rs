@@ -39,6 +39,43 @@ fn options() -> OpenOptions {
         append: false,
     }
 }
+
+#[test]
+fn namespace_statistics_report_capacity_and_retained_entry_quota() {
+    let work = Workspace::new();
+    let namespace = work.open();
+    let initial = namespace.filesystem_statistics("").unwrap();
+    assert_eq!(initial.files_free, initial.files - 1);
+    let raw = work.raw().capacity().unwrap();
+    assert_eq!(initial.capacity.total, raw.total);
+    assert_eq!(initial.capacity.block_size, raw.block_size);
+    assert!(initial.capacity.available <= initial.capacity.free);
+    let handle = namespace.open("file", options()).unwrap();
+    namespace.hard_link("file", "alias", false).unwrap();
+    assert_eq!(
+        namespace.filesystem_statistics("alias").unwrap().files_free,
+        initial.files_free - 2
+    );
+    namespace.unlink("file").unwrap();
+    assert_eq!(
+        handle.filesystem_statistics().unwrap().files_free,
+        initial.files_free - 1
+    );
+    namespace.unlink("alias").unwrap();
+    assert_eq!(
+        handle.filesystem_statistics().unwrap().files_free,
+        initial.files_free - 1
+    );
+    assert_eq!(
+        namespace.filesystem_statistics("alias").unwrap_err(),
+        FileError::NotFound
+    );
+    drop(handle);
+    assert_eq!(
+        namespace.filesystem_statistics("").unwrap().files_free,
+        initial.files_free
+    );
+}
 fn write(fs: &dyn FileSystem, path: &str, bytes: &[u8]) {
     let mut file = fs
         .open(

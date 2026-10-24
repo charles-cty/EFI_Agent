@@ -1,5 +1,12 @@
 //! Runtime directory descriptors over the common filesystem interfaces.
-use alloc::{boxed::Box, collections::BTreeMap, format, rc::Rc, string::String, vec::Vec};
+use alloc::{
+    boxed::Box,
+    collections::BTreeMap,
+    format,
+    rc::{Rc, Weak},
+    string::String,
+    vec::Vec,
+};
 use core::cell::RefCell;
 pub use efi_agent_filesystem::*;
 
@@ -10,7 +17,55 @@ fn virtual_metadata(kind: EntryType, size: u64) -> Metadata {
     metadata
 }
 
-type TempFiles = BTreeMap<String, Rc<RefCell<Vec<u8>>>>;
+pub const TEMP_CAPACITY: u64 = 32 * 1024 * 1024;
+
+#[derive(Default)]
+struct TempFiles {
+    names: BTreeMap<String, Rc<RefCell<Vec<u8>>>>,
+    objects: Vec<Weak<RefCell<Vec<u8>>>>,
+}
+
+impl TempFiles {
+    fn statistics(&self) -> FileSystemStatistics {
+        let mut used = 0;
+        let mut files = 0;
+        for file in self.objects.iter().filter_map(Weak::upgrade) {
+            used += file.borrow().len() as u64;
+            files += 1;
+        }
+        FileSystemStatistics {
+            capacity: Capacity {
+                total: TEMP_CAPACITY,
+                free: TEMP_CAPACITY - used,
+                available: TEMP_CAPACITY - used,
+                block_size: 1,
+            },
+            files: MAX_DIRECTORY_ENTRIES as u64 + 1,
+            files_free: MAX_DIRECTORY_ENTRIES as u64 - files,
+            id: 3,
+            kind: 0x01021994,
+            name_max: 1024,
+            read_only: false,
+        }
+    }
+}
+
+fn special_statistics(device: u32) -> FileSystemStatistics {
+    FileSystemStatistics {
+        capacity: Capacity {
+            total: 0,
+            free: 0,
+            available: 0,
+            block_size: 1,
+        },
+        files: 3,
+        files_free: 0,
+        id: device,
+        kind: if device == 2 { 0x1373 } else { 0x9fa0 },
+        name_max: 1024,
+        read_only: true,
+    }
+}
 type Programs = Rc<RefCell<BTreeMap<String, Option<String>>>>;
 
 /// Files and directories that exist in every guest without being persisted in
@@ -32,7 +87,7 @@ impl VirtualFileSystem {
         let identity = base.identity();
         Rc::new(Self {
             base,
-            tmp: Rc::new(RefCell::new(BTreeMap::new())),
+            tmp: Rc::new(RefCell::new(TempFiles::default())),
             mount: String::new(),
             identity,
             programs,
@@ -93,11 +148,15 @@ struct VirtualFile {
     offset: usize,
     zero: bool,
     discard: bool,
+    device: u32,
 }
 
 struct ProgramFile(Box<dyn File>);
 
 impl File for ProgramFile {
+    fn filesystem_statistics(&self) -> Result<FileSystemStatistics, FileError> {
+        self.0.filesystem_statistics()
+    }
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize, FileError> {
         self.0.read(buffer)
     }
@@ -121,6 +180,9 @@ impl File for ProgramFile {
 }
 
 impl File for VirtualFile {
+    fn filesystem_statistics(&self) -> Result<FileSystemStatistics, FileError> {
+        Ok(special_statistics(self.device))
+    }
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize, FileError> {
         if self.zero {
             buffer.fill(0);
@@ -160,7 +222,9 @@ impl File for VirtualFile {
     }
 
     fn metadata(&mut self) -> Result<Metadata, FileError> {
-        Ok(virtual_metadata(EntryType::File, self.data.len() as u64))
+        let mut metadata = virtual_metadata(EntryType::File, self.data.len() as u64);
+        metadata.device = u64::from(self.device);
+        Ok(metadata)
     }
 
     fn flush(&mut self) -> Result<(), FileError> {
@@ -174,12 +238,16 @@ impl File for VirtualFile {
 
 struct TmpFile {
     data: Rc<RefCell<Vec<u8>>>,
+    storage: Rc<RefCell<TempFiles>>,
     offset: usize,
     write: bool,
     append: bool,
 }
 
 impl File for TmpFile {
+    fn filesystem_statistics(&self) -> Result<FileSystemStatistics, FileError> {
+        Ok(self.storage.borrow().statistics())
+    }
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize, FileError> {
         let data = self.data.borrow();
         let count = buffer.len().min(data.len().saturating_sub(self.offset));
@@ -194,9 +262,12 @@ impl File for TmpFile {
         if !self.write {
             return Err(FileError::ReadOnly);
         }
-        let mut data = self.data.borrow_mut();
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        let length = self.data.borrow().len();
         if self.append {
-            self.offset = data.len();
+            self.offset = length;
         }
         let end = self
             .offset
@@ -205,15 +276,24 @@ impl File for TmpFile {
         if end as u64 > MAX_RESIZE_BYTES {
             return Err(FileError::FileTooLarge);
         }
-        if self.offset > data.len() {
-            data.resize(self.offset, 0);
+        let available = self.storage.borrow().statistics().capacity.available as usize;
+        let count = buffer
+            .len()
+            .min(length.saturating_add(available).saturating_sub(self.offset));
+        if count == 0 {
+            return Err(FileError::NoSpace);
         }
-        if self.offset + buffer.len() > data.len() {
-            data.resize(self.offset + buffer.len(), 0);
+        let end = self.offset + count;
+        let mut data = self.data.borrow_mut();
+        if end > data.len() {
+            let growth = end - data.len();
+            data.try_reserve_exact(growth)
+                .map_err(|_| FileError::NoSpace)?;
+            data.resize(end, 0);
         }
-        data[self.offset..self.offset + buffer.len()].copy_from_slice(buffer);
-        self.offset += buffer.len();
-        Ok(buffer.len())
+        data[self.offset..end].copy_from_slice(&buffer[..count]);
+        self.offset = end;
+        Ok(count)
     }
     fn seek(&mut self, offset: i64, whence: u32) -> Result<u64, FileError> {
         let length = self.data.borrow().len() as i64;
@@ -231,10 +311,10 @@ impl File for TmpFile {
         Ok(next as u64)
     }
     fn metadata(&mut self) -> Result<Metadata, FileError> {
-        Ok(virtual_metadata(
-            EntryType::File,
-            self.data.borrow().len() as u64,
-        ))
+        let mut metadata = virtual_metadata(EntryType::File, self.data.borrow().len() as u64);
+        metadata.device = 3;
+        metadata.allocated = Some(metadata.size);
+        Ok(metadata)
     }
     fn flush(&mut self) -> Result<(), FileError> {
         Ok(())
@@ -246,8 +326,19 @@ impl File for TmpFile {
         if size > MAX_RESIZE_BYTES {
             return Err(FileError::FileTooLarge);
         }
+        let growth = size.saturating_sub(self.data.borrow().len() as u64);
+        if growth > self.storage.borrow().statistics().capacity.available {
+            return Err(FileError::NoSpace);
+        }
         let size = usize::try_from(size).map_err(|_| FileError::Overflow)?;
-        self.data.borrow_mut().resize(size, 0);
+        let mut data = self.data.borrow_mut();
+        if size > data.len() {
+            let growth = size - data.len();
+            data.try_reserve_exact(growth)
+                .map_err(|_| FileError::NoSpace)?;
+        }
+        data.resize(size, 0);
+        data.shrink_to_fit();
         Ok(())
     }
 }
@@ -270,21 +361,28 @@ impl FileSystem for VirtualFileSystem {
                 return Err(FileError::NotFound);
             }
             let mut files = self.tmp.borrow_mut();
-            let data = match files.get(name) {
+            let data = match files.names.get(name) {
                 Some(_data) if options.exclusive => return Err(FileError::Exists),
                 Some(data) => data.clone(),
                 None if options.create => {
+                    files.objects.retain(|file| file.strong_count() != 0);
+                    if files.objects.len() >= MAX_DIRECTORY_ENTRIES {
+                        return Err(FileError::NoSpace);
+                    }
                     let data = Rc::new(RefCell::new(Vec::new()));
-                    files.insert(name.into(), data.clone());
+                    files.objects.push(Rc::downgrade(&data));
+                    files.names.insert(name.into(), data.clone());
                     data
                 }
                 None => return Err(FileError::NotFound),
             };
             if options.truncate {
                 data.borrow_mut().clear();
+                data.borrow_mut().shrink_to_fit();
             }
             return Ok(Box::new(TmpFile {
                 data,
+                storage: self.tmp.clone(),
                 offset: 0,
                 write: options.write,
                 append: options.append,
@@ -310,6 +408,7 @@ impl FileSystem for VirtualFileSystem {
                 offset: 0,
                 zero,
                 discard,
+                device: if path.starts_with("dev/") { 2 } else { 4 },
             }));
         }
         self.base.open(path, options)
@@ -325,16 +424,24 @@ impl FileSystem for VirtualFileSystem {
             let data = self
                 .tmp
                 .borrow()
+                .names
                 .get(name)
                 .cloned()
                 .ok_or(FileError::NotFound)?;
-            return Ok(virtual_metadata(
-                EntryType::File,
-                data.borrow().len() as u64,
-            ));
+            let mut metadata = virtual_metadata(EntryType::File, data.borrow().len() as u64);
+            metadata.device = 3;
+            metadata.allocated = Some(metadata.size);
+            return Ok(metadata);
         }
         if let Some(kind) = Self::virtual_entry(path) {
-            return Ok(virtual_metadata(kind, 0));
+            let mut metadata = virtual_metadata(kind, 0);
+            metadata.device = match path.split('/').next() {
+                Some("dev") => 2,
+                Some("tmp") => 3,
+                Some("proc") => 4,
+                _ => 0,
+            };
+            return Ok(metadata);
         }
         self.base.metadata(path)
     }
@@ -372,7 +479,7 @@ impl FileSystem for VirtualFileSystem {
                     )?;
                 }
             } else if path == "tmp" {
-                for name in self.tmp.borrow().keys() {
+                for name in self.tmp.borrow().names.keys() {
                     entries.push(name.clone(), EntryType::File)?;
                 }
             } else if path == "dev" {
@@ -411,12 +518,13 @@ impl FileSystem for VirtualFileSystem {
             let mut files = self.tmp.borrow_mut();
             if source == destination {
                 return files
+                    .names
                     .contains_key(source)
                     .then_some(())
                     .ok_or(FileError::NotFound);
             }
-            let data = files.remove(source).ok_or(FileError::NotFound)?;
-            files.insert(destination.into(), data);
+            let data = files.names.remove(source).ok_or(FileError::NotFound)?;
+            files.names.insert(destination.into(), data);
             return Ok(());
         }
         if Self::virtual_entry(source).is_some()
@@ -436,6 +544,7 @@ impl FileSystem for VirtualFileSystem {
             return self
                 .tmp
                 .borrow_mut()
+                .names
                 .remove(name)
                 .map(|_| ())
                 .ok_or(FileError::NotFound);
@@ -523,8 +632,15 @@ impl FileSystem for VirtualFileSystem {
                     .expect("Registered executable has metadata"),
             });
         }
-        if let Some(kind) = Self::virtual_entry(path) {
-            return Ok(virtual_metadata(kind, 0));
+        if Self::virtual_entry(path).is_some() || path.starts_with("tmp/") {
+            let relative = if self.mount.is_empty() {
+                path
+            } else {
+                path.strip_prefix(&self.mount)
+                    .unwrap()
+                    .trim_start_matches('/')
+            };
+            return self.metadata(relative);
         }
         self.base.symlink_metadata(path)
     }
@@ -555,6 +671,34 @@ impl FileSystem for VirtualFileSystem {
 
     fn capacity(&self) -> Result<Capacity, FileError> {
         self.base.capacity()
+    }
+
+    fn filesystem_statistics(&self, path: &str) -> Result<FileSystemStatistics, FileError> {
+        self.metadata(path)?;
+        let path = self.mounted(path);
+        match path.split('/').next() {
+            Some("tmp") => Ok(self.tmp.borrow().statistics()),
+            Some("dev") => Ok(special_statistics(2)),
+            Some("proc") => Ok(special_statistics(4)),
+            _ => self.base.filesystem_statistics(""),
+        }
+    }
+
+    fn mounts(&self) -> Result<Vec<Mount>, FileError> {
+        let mut mounts = self.base.mounts()?;
+        for (source, path, kind, read_only) in [
+            ("devfs", "/dev", "devfs", true),
+            ("tmpfs", "/tmp", "tmpfs", false),
+            ("proc", "/proc", "proc", true),
+        ] {
+            mounts.push(Mount {
+                source: source.into(),
+                path: path.into(),
+                kind: kind.into(),
+                read_only,
+            });
+        }
+        Ok(mounts)
     }
 
     fn identity(&self) -> usize {
@@ -591,12 +735,13 @@ impl FileSystem for VirtualFileSystem {
             let mut files = self.tmp.borrow_mut();
             if source == destination {
                 return files
+                    .names
                     .contains_key(source)
                     .then_some(())
                     .ok_or(FileError::NotFound);
             }
-            let data = files.remove(source).ok_or(FileError::NotFound)?;
-            files.insert(destination.into(), data);
+            let data = files.names.remove(source).ok_or(FileError::NotFound)?;
+            files.names.insert(destination.into(), data);
             return Ok(());
         }
         if Self::virtual_entry(&source).is_some()

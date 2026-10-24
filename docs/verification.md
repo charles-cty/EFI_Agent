@@ -1,5 +1,80 @@
 # Verification record
 
+## 2026-10-24: Upstream df and measured filesystem statistics
+
+BusyBox 1.37.0 df now builds into the shared image with its upstream parser,
+mount selection, unit formatting, percentages and inode mode. Its only staged
+command change propagates buffered stdout failures. The upstream mount-point
+helper consumes the runtime inventory through a private mount-table snapshot.
+Windows uses actual volume capacity/allocation-unit queries; UEFI uses
+EFI_FILE_SYSTEM_INFO. Total free bytes and caller-available bytes are distinct.
+Workspace file counts describe its shared namespace entry-slot quota; aliases
+and detached open inodes retain slots. The /bin overlay shares that filesystem.
+Zero-capacity dev/proc mounts appear with -a or explicit operands.
+
+Standard C statvfs/fstatvfs and private Python os.statvfs/os.fstatvfs adapters
+consume the same fixed-width statistics reply. CPython remains prebuilt.
+Private operation 26 checks path/fd filestat rights and returns twelve u64
+fields in a close-on-exec snapshot. Operation 27 snapshots escaped mount fields.
+Native ABI tests verify capacities beyond 32 bits, reserved-space distinctions,
+both rights paths, malformed flags/NUL names, unavailable descriptors, provider
+invariants and exact descriptor-quota exhaustion. Mount snapshots verify their
+inventory and field escaping. Evidence: `artifacts/df-abi-tests.log`.
+
+The shared /tmp quota is 32 MiB and 4096 live file objects. Ordinary writes
+return short counts at exhaustion; resize rejects growth before changing data.
+Truncation and last close release charges. Unlinked files and replaced open
+targets retain their charges. Native tests distinguish full/one-byte-available,
+overwrite/growth, empty writes beyond EOF, shared directory views and retained
+inode quota at its exact limit. All nine mutation integration cases pass in
+`artifacts/df-mutation-tests.log`. All 26 filesystem integration cases pass in
+`artifacts/df-filesystem-tests.log`, including workspace slot retention and
+host capacity comparisons.
+
+Native Release df integration checks file/directory paths, symlinks, missing
+and denied inputs, unit and POSIX formatting, human output, mount/type filters,
+inode output, closed stdout, repeated descriptor cleanup, and open unlink on
+workspace/tmp files. Independent host volume queries check reported totals and
+free/available values after execution; saved output bytes and names are checked
+separately. Evidence: `artifacts/df-native.log`.
+
+The final shared image passes actual 512 MiB WHPX/OVMF through Responses and
+Chat Completions. Independent saved FAT checks count data clusters and free
+FAT entries, compare capacity snapshots, and verify retained bytes, links and
+deleted names. Evidence: `artifacts/df-whpx-responses` and
+`artifacts/df-whpx-chat_completions`, with completed host logs beside them.
+
+All host workspace tests, host/UEFI Clippy, formatting and Release EFI/launcher
+packaging pass in `artifacts/df-rust-tests.log`, `artifacts/df-clippy-host.log`,
+`artifacts/df-clippy-uefi.log`, `artifacts/df-format.log` and
+`artifacts/df-package.log`. Focused suites include the subsequently added quota
+and slot cases. Native regressions pass ln, du, stat, copy/move, ls, mutation,
+compression, unzip, basic/text commands, xargs, all 17 CPython cases, PATH,
+permissions/C metadata, ash descriptors/math, awk/sed/grep and streams in
+`artifacts/df-regression-*.log`. Modified Python syntax passes in
+`artifacts/df-python-syntax.log`.
+
+Corrections and execution issues:
+
+- The previous capacity interface omitted total free bytes and Windows assumed
+  a 4096-byte allocation unit. Both values now come from volume queries.
+- Initial source integration needed the upstream suffix-table declaration.
+  WASI libc already defines statvfs/fstatvfs, so the adapter uses linker wraps
+  instead of duplicate public symbols. Temporary-storage refactoring initially
+  missed one cross-view rename map access; compilation identified it.
+- An initial fixture used -B1P, which passes the invalid size 1P. The corrected
+  invocation supplies -B1 and -P separately. A Python statvfs result must omit
+  the internal fsid field from its ten positional fields; fsid is extra metadata.
+- FAT reader introspection established the actual boot-sector and FAT entry
+  interfaces. The saved-volume verifier counts actual free data clusters.
+  Expected not-yet-created logs and absent process names produced inspection
+  errors during progress checks; the live test handles were retained and polled.
+- Code review removed an unnecessary percentage-initialization change. Final
+  guest sources retain the upstream percentage algorithm.
+
+Tar, stat -f adaptation, general mounts/link traversal, persistent manifests,
+retained sessions and final full environment verification remain incomplete.
+
 ## 2026-10-24: Upstream ln and persistent hard-link identity
 
 BusyBox 1.37.0 ln now builds into the shared image. Namespace directory entries

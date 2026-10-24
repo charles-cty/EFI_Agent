@@ -75,6 +75,11 @@ link operations, so its private startup adapter supplies that standard method
 through the internal endpoint, including explicit symlink-following control.
 The launcher retains shared identities through FAT staging and host save;
 equal contents alone do not imply a hard-link group.
+Standard Python statvfs/fstatvfs now report the runtime filesystem statistics
+through private startup adapters. BusyBox df uses those same measured capacity
+and namespace-slot providers through C statvfs/fstatvfs. Snapshot descriptors
+remain private, close on spawn and close after each reply. General mounts and
+cross-mount traversal still need their delivery gates.
 
 The 2026-10-22 filesystem expansion connects directory creation to native and
 firmware providers, and rename to the native provider. File writes now use

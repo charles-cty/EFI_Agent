@@ -23,6 +23,7 @@ $compile = '--target=wasm32-wasip1', "--sysroot=$sysroot", '-O2',
 foreach ($symbol in @('stat', 'lstat', 'fstat', 'fstatat', 'chmod', 'fchmod', 'open', 'mkdir', 'chdir', 'symlink')) {
     $compile += "-Wl,--wrap=$symbol"
 }
+$compile += '-Wl,--wrap=statvfs', '-Wl,--wrap=fstatvfs'
 $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-Path $Source 'shell/ash_ptr_hack.c'),
     (Join-Path $Source 'coreutils/echo.c'), (Join-Path $Source 'libbb/process_escape_sequence.c'),
     (Join-Path $build 'printf.c'), (Join-Path $Source 'libbb/bb_strtonum.c'),
@@ -55,6 +56,8 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $Source 'coreutils/realpath.c'),
     (Join-Path $build 'stat.c'),
     (Join-Path $build 'du.c'),
+    (Join-Path $build 'df.c'), 'guests/busybox/filesystem_support.c',
+    (Join-Path $Source 'libbb/find_mount_point.c'),
     (Join-Path $build 'ln.c'),
     (Join-Path $Source 'libbb/isdirectory.c'),
     (Join-Path $Source 'findutils/find.c'),

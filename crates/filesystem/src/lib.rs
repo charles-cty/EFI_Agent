@@ -132,6 +132,9 @@ pub struct OpenOptions {
 
 /// A host-owned open file. Duplicated descriptors share this object's cursor.
 pub trait File {
+    fn filesystem_statistics(&self) -> Result<FileSystemStatistics, FileError> {
+        Err(FileError::Unsupported)
+    }
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize, FileError>;
     fn write(&mut self, buffer: &[u8]) -> Result<usize, FileError>;
     fn seek(&mut self, offset: i64, whence: u32) -> Result<u64, FileError>;
@@ -157,13 +160,73 @@ pub enum TimeUpdate {
 #[derive(Clone, Copy, Debug)]
 pub struct Capacity {
     pub total: u64,
+    pub free: u64,
     pub available: u64,
     pub block_size: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FileSystemStatistics {
+    pub capacity: Capacity,
+    pub files: u64,
+    pub files_free: u64,
+    pub id: u32,
+    pub kind: u32,
+    pub name_max: u32,
+    pub read_only: bool,
+}
+
+impl FileSystemStatistics {
+    /// Fixed-width private statvfs reply, independent of the guest C ABI.
+    pub fn encode(self) -> Result<[u8; 96], FileError> {
+        let capacity = self.capacity;
+        if capacity.block_size == 0
+            || capacity.free > capacity.total
+            || capacity.available > capacity.free
+            || self.files_free > self.files
+        {
+            return Err(FileError::Invalid);
+        }
+        let block = u64::from(capacity.block_size);
+        let fields = [
+            block,
+            block,
+            capacity.total / block,
+            capacity.free / block,
+            capacity.available / block,
+            self.files,
+            self.files_free,
+            self.files_free,
+            u64::from(self.id),
+            u64::from(self.read_only),
+            u64::from(self.name_max),
+            u64::from(self.kind),
+        ];
+        let mut bytes = [0; 96];
+        for (chunk, field) in bytes.chunks_exact_mut(8).zip(fields) {
+            chunk.copy_from_slice(&field.to_le_bytes());
+        }
+        Ok(bytes)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Mount {
+    pub source: String,
+    pub path: String,
+    pub kind: String,
+    pub read_only: bool,
 }
 
 /// Paths use slash-separated names relative to the provider's root.
 /// Providers must preserve open-file identity across changes to path names.
 pub trait FileSystem: core::any::Any {
+    fn filesystem_statistics(&self, _path: &str) -> Result<FileSystemStatistics, FileError> {
+        Err(FileError::Unsupported)
+    }
+    fn mounts(&self) -> Result<Vec<Mount>, FileError> {
+        Err(FileError::Unsupported)
+    }
     fn open(&self, path: &str, options: OpenOptions) -> Result<Box<dyn File>, FileError>;
     fn metadata(&self, path: &str) -> Result<Metadata, FileError>;
     fn read_directory(&self, path: &str) -> Result<DirectoryEntries, FileError>;

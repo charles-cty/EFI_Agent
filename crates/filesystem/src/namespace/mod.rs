@@ -117,6 +117,19 @@ fn components(path: &str) -> Result<VecDeque<String>, FileError> {
 }
 
 impl Inner {
+    fn filesystem_statistics(&self) -> Result<crate::FileSystemStatistics, FileError> {
+        self.check()?;
+        let state = self.state.borrow();
+        Ok(crate::FileSystemStatistics {
+            capacity: self.raw.capacity()?,
+            files: state::MAX_NODES as u64,
+            files_free: (state::MAX_NODES - state.nodes.len() - state.links.len()) as u64,
+            id: 0,
+            kind: 0x45464941,
+            name_max: state::MAX_NAME_BYTES as u32,
+            read_only: false,
+        })
+    }
     fn check(&self) -> Result<(), FileError> {
         if self.uncertain.get() {
             Err(FileError::Io)
@@ -939,6 +952,18 @@ impl FileSystem for Namespace {
     fn capacity(&self) -> Result<Capacity, FileError> {
         self.inner().raw.capacity()
     }
+    fn filesystem_statistics(&self, path: &str) -> Result<crate::FileSystemStatistics, FileError> {
+        self.walk(path, true)?;
+        self.inner().filesystem_statistics()
+    }
+    fn mounts(&self) -> Result<Vec<crate::Mount>, FileError> {
+        Ok(alloc::vec![crate::Mount {
+            source: "workspace".into(),
+            path: "/".into(),
+            kind: "efi-agent".into(),
+            read_only: false,
+        }])
+    }
 }
 
 fn set_times(
@@ -987,6 +1012,9 @@ struct OpenFile {
 }
 
 impl File for OpenFile {
+    fn filesystem_statistics(&self) -> Result<crate::FileSystemStatistics, FileError> {
+        self.inner.filesystem_statistics()
+    }
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize, FileError> {
         self.inner.check()?;
         if !self.read {

@@ -52,6 +52,33 @@ def install(request):
         finally:
             os.close(reply)
 
+    def filesystem_statistics(fd, path=None):
+        if not 0 <= fd < 128:
+            raise OSError(errno.EBADF, os.strerror(errno.EBADF))
+        encoded = b'' if path is None else os.fsencode(path)
+        if b'\0' in encoded:
+            raise ValueError('embedded null byte')
+        error, reply = request(26, fd, int(path is not None), payload=encoded)
+        if error:
+            raise OSError(error, os.strerror(error), path)
+        try:
+            data = os.read(reply, 96)
+            if len(data) != 96:
+                raise OSError(errno.EIO, 'incomplete filesystem statistics response')
+            fields = struct.unpack('<12Q', data)
+            return os.statvfs_result(fields[:8] + fields[9:11], {'f_fsid': fields[8]})
+        finally:
+            os.close(reply)
+
+    def statvfs(path):
+        if isinstance(path, int):
+            return fstatvfs(path)
+        resolved, fd = at_path(path, None)
+        return filesystem_statistics(fd, resolved)
+
+    def fstatvfs(fd):
+        return filesystem_statistics(operator.index(fd))
+
     def replace_mode(value, mode, allocated):
         fields = list(value)
         fields[0] = stat.S_IFMT(value.st_mode) | mode
@@ -322,7 +349,8 @@ def install(request):
                'chmod': chmod, 'fchmod': fchmod, 'umask': umask,
                'mkdir': mkdir, 'open': open_path, 'access': access, 'chdir': chdir,
                'scandir': scandir}
-    methods.update({'remove': remove, 'unlink': remove, 'rmdir': rmdir, 'link': link})
+    methods.update({'remove': remove, 'unlink': remove, 'rmdir': rmdir, 'link': link,
+                    'statvfs': statvfs, 'fstatvfs': fstatvfs})
     for name, function in methods.items():
         previous = getattr(os, name, None)
         for capability in ('supports_fd', 'supports_dir_fd', 'supports_follow_symlinks', 'supports_effective_ids'):
@@ -337,6 +365,7 @@ def install(request):
     os.supports_follow_symlinks.add(chmod)
     os.supports_effective_ids.add(access)
     os.supports_fd.add(scandir)
+    os.supports_fd.add(statvfs)
     os.supports_dir_fd.add(link)
     os.supports_follow_symlinks.add(link)
     os.getuid = posix.getuid = lambda: 1
