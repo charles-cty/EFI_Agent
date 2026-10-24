@@ -43,8 +43,9 @@ fn metadata(metadata: fs::Metadata) -> Metadata {
     result.created = nanos(metadata.created());
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
         result.mode = (metadata.permissions().mode() & 0o7777) as u16;
+        result.allocated = metadata.blocks().checked_mul(512);
     }
     #[cfg(windows)]
     if metadata.permissions().readonly() {
@@ -127,7 +128,22 @@ impl FileSystem for NativeFileSystem {
         }))
     }
     fn metadata(&self, path: &str) -> Result<Metadata, FileError> {
-        fs::metadata(self.path(path)?).map(metadata).map_err(error)
+        let path = self.path(path)?;
+        let info = metadata(fs::metadata(&path).map_err(error)?);
+        #[cfg(windows)]
+        let info = {
+            let mut info = info;
+            if info.kind == EntryType::File {
+                use std::os::windows::fs::OpenOptionsExt;
+                let handle = fs::OpenOptions::new()
+                    .access_mode(windows_sys::Win32::Storage::FileSystem::FILE_READ_ATTRIBUTES)
+                    .open(&path)
+                    .map_err(error)?;
+                info.allocated = Some(allocated(&handle)?);
+            }
+            info
+        };
+        Ok(info)
     }
     fn read_directory(&self, path: &str) -> Result<DirectoryEntries, FileError> {
         let mut entries = DirectoryEntries::new();
@@ -207,6 +223,31 @@ struct NativeFile {
     append: bool,
     writable: bool,
 }
+
+#[cfg(windows)]
+fn allocated(handle: &fs::File) -> Result<u64, FileError> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_COMPRESSION_INFO, FileCompressionInfo, GetFileInformationByHandleEx,
+    };
+    let mut info = FILE_COMPRESSION_INFO::default();
+    // The live handle and the output buffer remain valid for this call.
+    if unsafe {
+        GetFileInformationByHandleEx(
+            handle.as_raw_handle(),
+            FileCompressionInfo,
+            (&mut info as *mut FILE_COMPRESSION_INFO).cast(),
+            core::mem::size_of::<FILE_COMPRESSION_INFO>() as u32,
+        )
+    } == 0
+    {
+        return Err(error(std::io::Error::last_os_error()));
+    }
+    info.CompressedFileSize
+        .try_into()
+        .map_err(|_| FileError::Overflow)
+}
+
 impl File for NativeFile {
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize, FileError> {
         self.handle.read(buffer).map_err(error)
@@ -227,7 +268,14 @@ impl File for NativeFile {
         self.handle.seek(position).map_err(error)
     }
     fn metadata(&mut self) -> Result<Metadata, FileError> {
-        self.handle.metadata().map(metadata).map_err(error)
+        let info = metadata(self.handle.metadata().map_err(error)?);
+        #[cfg(windows)]
+        let info = {
+            let mut info = info;
+            info.allocated = Some(allocated(&self.handle)?);
+            info
+        };
+        Ok(info)
     }
     fn flush(&mut self) -> Result<(), FileError> {
         if self.writable {

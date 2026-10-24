@@ -18,6 +18,59 @@ fn time_update(value: u64, flags: u32) -> TimeUpdate {
     }
 }
 
+/// Allocation is absent from Preview 1 filestat. Preserve provider errors and
+/// distinguish unknown allocation from files with no allocated data blocks.
+pub(super) fn control_allocation(
+    context: &Context,
+    fd: u32,
+    flags: u32,
+    path: &str,
+) -> Result<u64, i32> {
+    if flags & !1 != 0 {
+        return Err(28);
+    }
+    let descriptor = context.descriptors.get(&fd).ok_or(io::BADF)?;
+    let metadata = if path.is_empty() {
+        match descriptor {
+            Descriptor::File { handle, rights, .. } => {
+                if rights & (1 << 21) == 0 {
+                    return Err(76);
+                }
+                handle.borrow_mut().metadata().map_err(FileError::errno)?
+            }
+            Descriptor::Directory(directory) => {
+                if directory.rights & (1 << 21) == 0 {
+                    return Err(76);
+                }
+                directory
+                    .filesystem
+                    .metadata(&directory.path)
+                    .map_err(FileError::errno)?
+            }
+            _ => return Ok(0),
+        }
+    } else {
+        let Descriptor::Directory(directory) = descriptor else {
+            return Err(54);
+        };
+        if directory.rights & (1 << 18) == 0 {
+            return Err(76);
+        }
+        let path = if directory.preopen && path.trim_matches('/').is_empty() {
+            directory.path.clone()
+        } else {
+            directory.resolve(path)?
+        };
+        if flags == 1 {
+            directory.filesystem.metadata(&path)
+        } else {
+            directory.filesystem.symlink_metadata(&path)
+        }
+        .map_err(FileError::errno)?
+    };
+    metadata.allocated.ok_or(58)
+}
+
 /// Private metadata extension for interpreters whose Preview 1 libc has no
 /// permission operations. Results use WASI errno values, like file syscalls.
 pub(super) fn control_mode(

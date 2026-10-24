@@ -9,6 +9,22 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Upstream du now builds into the shared image with measured file allocation.
+Windows queries file compression/allocation information by handle; UEFI uses
+EFI_FILE_INFO PhysicalSize. Namespace files retain these values across rename,
+unlink and open handles. Logical directories and links use shared journals
+without independently allocated data blocks. Unknown allocation remains
+explicitly unsupported. Private metadata queries supply actual st_blocks to
+BusyBox and unchanged CPython through their existing adapters. Directory link
+counts now include subdirectories, enabling upstream directory deduplication.
+Native Release integration includes sparse files, independent Windows path
+queries and binary/unit boundaries. Both 512 MiB WHPX model APIs pass with
+independent saved FAT cluster-chain checks in artifacts/du-whpx-responses and
+artifacts/du-whpx-chat_completions. Native command/permission/Python/descriptor
+regressions, host tests, host/UEFI Clippy, formatting and packaging pass.
+The remaining required applets are df, tar and ln. General mount accounting,
+installation manifests and retained sessions remain incomplete.
+
 Upstream unzip now builds into the shared image with stored/DEFLATE members,
 central-directory parsing, filters, overwrite policies and symlinks. Dynamic
 archive descriptors preserve workspace fd 3. Extraction uses an anchored
@@ -22,7 +38,7 @@ and artifacts/unzip-whpx-chat_completions. Metadata, Python, command and
 descriptor regressions, all host tests, host/UEFI Clippy and formatting pass.
 ZIP64, encryption
 and compression methods other than stored/DEFLATE remain unsupported.
-The remaining required applets are du, df, tar and ln. Mount, manifest and
+The remaining required applets are df, tar and ln. Mount, manifest and
 retained-session gates remain incomplete.
 
 Upstream gzip/gunzip/zcat now build into the shared image with CRC32 and
@@ -37,7 +53,7 @@ enter the existing Asyncify jump driver. Native awk/sed/grep/streams/basic/text/
 xargs/copy-move/mutation/PATH/CPython regressions, all host tests, host/UEFI
 Clippy, format and syntax checks pass. Compression levels and long options are
 enabled; upstream maps levels 1-3 to 4. Seamless non-gzip formats are disabled.
-The remaining required applets are du, df, tar and ln. Mount, manifest
+The remaining required applets are df, tar and ln. Mount, manifest
 and retained-session gates remain incomplete.
 
 Upstream xargs now uses cooperative spawn/wait with exact argument vectors,

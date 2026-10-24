@@ -83,7 +83,7 @@ impl World {
                 4 | 13 | 15 | 18 | 19 => 8,
                 14 => 12,
                 20 | 21 => bytes.len(),
-                8 | 9 | 11 | 12 | 17 | 22 | 23 => bytes.len(),
+                8 | 9 | 11 | 12 | 17 | 22 | 23 | 24 => bytes.len(),
                 _ => return Err(-22),
             };
             if bytes.len() != expected {
@@ -386,6 +386,41 @@ impl World {
                             Err(error) => (error, 0),
                         },
                     )
+                }
+                24 => {
+                    let directory = word(bytes, 1)?;
+                    let flags = word(bytes, 2)?;
+                    let path =
+                        core::str::from_utf8(bytes.get(12..).ok_or(-22)?).map_err(|_| -22)?;
+                    if path.contains('\0') {
+                        return Err(-22);
+                    }
+                    let context = self
+                        .processes
+                        .get_mut(&pid)
+                        .unwrap()
+                        .execution
+                        .as_mut()
+                        .unwrap()
+                        .store
+                        .data_mut();
+                    let allocated = match crate::filesystem_abi::control_allocation(
+                        context, directory, flags, path,
+                    ) {
+                        Ok(value) => value,
+                        Err(error) => return Ok((error, 0)),
+                    };
+                    let Some(reply_fd) = (4..crate::MAX_DESCRIPTORS)
+                        .find(|fd| !context.descriptors.contains_key(fd))
+                    else {
+                        return Ok((crate::io::MFILE, 0));
+                    };
+                    context.descriptors.insert(
+                        reply_fd,
+                        Descriptor::Input(Rc::new(RefCell::new(allocated.to_le_bytes().into()))),
+                    );
+                    context.close_on_exec.insert(reply_fd);
+                    Ok((0, reply_fd as i32))
                 }
                 15 => {
                     let mask = word(bytes, 1)? as u16 & 0o777;

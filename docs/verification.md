@@ -1,5 +1,66 @@
 # Verification record
 
+## 2026-10-24: Upstream du and measured file allocation
+
+The shared image builds BusyBox 1.37.0 du. Native Release integration verifies
+apparent and allocated sizes, totals, depths, human/explicit units, command-line
+and recursive symlink policies, directory deduplication, missing/dangling inputs,
+denied traversal and closed stdout. Boundary files cover 0/1/511/512/513,
+4095/4096/4097, 65535/65536/65537 and 524287/524288/524289 bytes. An 8 MiB
+Windows sparse hole distinguishes measured allocation from rounded logical
+length. An independent Windows path query checks the provider's handle query;
+saved contents and reported blocks are verified separately. Evidence:
+`artifacts/du-native.log` and `artifacts/du-build.log`.
+
+Actual 512 MiB WHPX/OVMF passes Responses and Chat Completions, including the
+preceding basic command suite. The host independently follows each saved FAT
+cluster chain and compares its allocated bytes with guest stat and du results.
+Evidence: `artifacts/du-whpx-responses` and
+`artifacts/du-whpx-chat_completions`. Firmware uses EFI_FILE_INFO PhysicalSize.
+The unchanged CPython binary receives block counts through its private startup
+adapter. Logical namespace directories and symlinks use shared journals, with
+zero independently allocated data blocks. Unknown provider allocation remains
+unsupported, rather than being inferred from file length.
+
+Namespace integration verifies host allocation through growth, truncation,
+rename, snapshot, path/fd access and open unlink. Directory link counts include
+immediate subdirectories and remain correct through rename/removal. The private
+allocation ABI test distinguishes zero, unsupported and values above 32 bits;
+it checks missing files, malformed flags/NUL names, descriptor type, filestat
+rights and exact descriptor-quota exhaustion. Reply snapshots close on exec;
+repeated Python stat calls verify client cleanup.
+
+Stat, ls, copy/move, mutation, PATH, compression, unzip, all 17 CPython cases,
+permissions/C metadata, awk/sed/grep, streams, basic/text commands, xargs and
+ash descriptors pass native regressions in `artifacts/du-regression-*.log`.
+All host workspace tests, host/UEFI Clippy and formatting pass in
+`artifacts/du-rust-tests.log`, `artifacts/du-clippy-host.log`,
+`artifacts/du-clippy-uefi.log` and `artifacts/du-format.log`. Final Release
+runner, EFI and launcher packaging pass in `artifacts/du-runner-build.log`
+and `artifacts/du-package.log`. Modified Python and guest-fixture syntax pass.
+
+Corrections and execution issues:
+
+- WASI libc synthesized allocated blocks from logical file size. Metadata now
+  retains an optional provider measurement and exposes it through a private
+  u64 snapshot; standard C and Python stat methods use that measurement.
+- Directory links were always one, preventing upstream directory identity
+  deduplication. Linked directories now report two plus their subdirectories;
+  detached open directories still report zero.
+- Du now enables its existing upstream ceiling code for explicit units.
+  Its directory read/close failures retain failure status. A missing cleanup
+  helper declaration was added with the upstream signature.
+- An initial scandir test followed a deliberately dangling link. The boundary
+  metadata check now requests lstat semantics. The FAT library inspection used
+  an incorrect class name initially; DirectoryEntry exposes the actual runs.
+- The ABI test initially had a WAT delimiter error and requested the unavailable
+  fd_fdstat_set_rights import. It now opens an actual restricted directory to
+  test rights. Descriptor exhaustion returns positive WASI MFILE.
+
+Df, tar, ln, general mounts, manifest/session delivery and final networking
+regression remain incomplete. Du hard-link and cross-mount behavior require
+those provider gates before full environment completion.
+
 ## 2026-10-24: Upstream unzip with anchored extraction
 
 The shared image uses BusyBox 1.37.0 unzip, ZIP32 central-directory parsing and

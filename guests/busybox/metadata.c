@@ -152,6 +152,46 @@ static int metadata(uint32_t operation, int fd, const char *path, int follow, mo
     return 0;
 }
 
+static int allocation(int fd, const char *path, int follow, uint64_t *allocated)
+{
+    char *absolute = NULL;
+    if (path) {
+        fd = path_fd(fd, path);
+        if (fd == -1)
+            return -1;
+        if (*path == '/') {
+            fd = 3;
+        } else if (fd == AT_FDCWD) {
+            char *cwd = getcwd(NULL, 0);
+            if (!cwd)
+                return -1;
+            absolute = xasprintf("%s%s%s", cwd, strcmp(cwd, "/") == 0 ? "" : "/", path);
+            free(cwd);
+            path = absolute;
+            fd = 3;
+        }
+    }
+    uint32_t words[] = {24, (uint32_t)fd, (uint32_t)follow};
+    uint32_t response[2];
+    int result = request(words, 3, path, response);
+    free(absolute);
+    if (result < 0)
+        return -1;
+    if (response[0]) {
+        errno = response[0];
+        return -1;
+    }
+    int reply = response[1];
+    ssize_t count = read(reply, allocated, sizeof(*allocated));
+    int error = errno;
+    close(reply);
+    if (count != sizeof(*allocated)) {
+        errno = count < 0 ? error : EIO;
+        return -1;
+    }
+    return 0;
+}
+
 static int patch_stat(int result, int fd, const char *path, int follow, struct stat *info)
 {
     if (result < 0)
@@ -159,7 +199,11 @@ static int patch_stat(int result, int fd, const char *path, int follow, struct s
     mode_t mode = 0;
     if (metadata(path ? 11 : 13, fd, path, follow, &mode) < 0)
         return -1;
+    uint64_t allocated;
+    if (allocation(fd, path, follow, &allocated) < 0)
+        return -1;
     info->st_mode = (info->st_mode & ~07777) | mode;
+    info->st_blocks = allocated / 512 + (allocated % 512 != 0);
     info->st_uid = 1;
     info->st_gid = 1;
     return 0;

@@ -72,14 +72,17 @@ pub fn read_snapshot(raw: &dyn FileSystem) -> Result<Option<Vec<SnapshotEntry>>,
         .iter()
         .filter(|(id, node)| **id == ROOT || node.parent.is_some())
         .map(|(&id, node)| {
-            let size = match node.kind {
-                EntryType::File => raw.metadata(node.backing.as_ref().unwrap())?.size,
-                EntryType::Symlink => node.target.as_ref().unwrap().len() as u64,
-                _ => 0,
+            let (size, allocated) = match node.kind {
+                EntryType::File => {
+                    let info = raw.metadata(node.backing.as_ref().unwrap())?;
+                    (info.size, info.allocated)
+                }
+                EntryType::Symlink => (node.target.as_ref().unwrap().len() as u64, Some(0)),
+                _ => (0, Some(0)),
             };
             Ok(SnapshotEntry {
                 path: state.path(id)?,
-                metadata: node_metadata(id, node, size),
+                metadata: node_metadata(&state, id, size, allocated),
                 backing: node.backing.clone(),
                 target: node.target.clone(),
             })
@@ -210,22 +213,38 @@ impl Inner {
             .get(&inode)
             .ok_or(FileError::NotFound)?
             .clone();
-        let size = match node.kind {
-            EntryType::File => self.raw.metadata(node.backing.as_ref().unwrap())?.size,
-            EntryType::Symlink => node.target.as_ref().unwrap().len() as u64,
-            _ => 0,
+        let (size, allocated) = match node.kind {
+            EntryType::File => {
+                let info = self.raw.metadata(node.backing.as_ref().unwrap())?;
+                (info.size, info.allocated)
+            }
+            EntryType::Symlink => (node.target.as_ref().unwrap().len() as u64, Some(0)),
+            _ => (0, Some(0)),
         };
-        Ok(node_metadata(inode, &node, size))
+        Ok(node_metadata(&self.state.borrow(), inode, size, allocated))
     }
 }
 
-fn node_metadata(inode: u64, node: &Node, size: u64) -> Metadata {
+fn node_metadata(state: &State, inode: u64, size: u64, allocated: Option<u64>) -> Metadata {
+    let node = &state.nodes[&inode];
+    let links = if inode != ROOT && node.parent.is_none() {
+        0
+    } else if node.kind == EntryType::Directory {
+        2 + state
+            .nodes
+            .values()
+            .filter(|child| child.parent == Some(inode) && child.kind == EntryType::Directory)
+            .count() as u64
+    } else {
+        1
+    };
     Metadata {
         inode,
         kind: node.kind,
         size,
+        allocated,
         mode: node.mode,
-        links: u64::from(inode == ROOT || node.parent.is_some()),
+        links,
         accessed: node.accessed,
         modified: node.modified,
         created: node.created,
@@ -956,9 +975,9 @@ impl File for OpenFile {
     }
     fn metadata(&mut self) -> Result<Metadata, FileError> {
         self.inner.check()?;
-        let size = self.handle.as_mut().unwrap().metadata()?.size;
+        let info = self.handle.as_mut().unwrap().metadata()?;
         let state = self.inner.state.borrow();
-        Ok(node_metadata(self.inode, &state.nodes[&self.inode], size))
+        Ok(node_metadata(&state, self.inode, info.size, info.allocated))
     }
     fn flush(&mut self) -> Result<(), FileError> {
         if self.write {

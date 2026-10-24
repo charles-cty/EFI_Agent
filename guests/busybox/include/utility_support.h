@@ -36,6 +36,7 @@ void xchdir(const char *path);
 void xdup2(int source, int destination);
 void bb_copyfd_exact_size(int input, int output, off_t size);
 void chomp(char *text);
+void reset_ino_dev_hashtable(void);
 typedef uint64_t uoff_t;
 #define OFF_FMT "ll"
 #define HUMAN_READABLE_MAX_WIDTH_STR "7"

@@ -75,6 +75,80 @@ fn read(fs: &dyn FileSystem, path: &str) -> Vec<u8> {
     result
 }
 
+#[cfg(unix)]
+fn host_allocated(path: &std::path::Path) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    fs::metadata(path).unwrap().blocks() * 512
+}
+
+#[cfg(windows)]
+fn host_allocated(path: &std::path::Path) -> u64 {
+    use std::os::windows::ffi::OsStrExt;
+    let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut high = 0;
+    // Query by path, independently of the provider's handle information query.
+    let low = unsafe {
+        windows_sys::Win32::Storage::FileSystem::GetCompressedFileSizeW(path.as_ptr(), &mut high)
+    };
+    assert_ne!(low, u32::MAX, "{}", std::io::Error::last_os_error());
+    (u64::from(high) << 32) | u64::from(low)
+}
+
+#[test]
+fn allocation_preserves_host_measurements_across_mutations_and_open_unlink() {
+    assert_eq!(
+        efi_agent_filesystem::Metadata::new(EntryType::File, 8193).allocated,
+        None
+    );
+    let workspace = Workspace::new();
+    let namespace = workspace.open();
+    namespace.create_directory("data").unwrap();
+    namespace.symlink("data/input", "alias").unwrap();
+    assert_eq!(namespace.metadata("").unwrap().links, 3);
+    assert_eq!(namespace.metadata("data").unwrap().links, 2);
+    assert_eq!(namespace.metadata("data").unwrap().allocated, Some(0));
+    assert_eq!(
+        namespace.symlink_metadata("alias").unwrap().allocated,
+        Some(0)
+    );
+    let mut handle = namespace.open("data/input", options()).unwrap();
+    for size in [0, 1, 511, 512, 513, 4095, 4096, 4097, 65537] {
+        handle.resize(0).unwrap();
+        handle.seek(0, 0).unwrap();
+        assert_eq!(handle.write(&vec![193; size]).unwrap(), size);
+        handle.flush().unwrap();
+        let snapshot = efi_agent_filesystem::namespace::read_snapshot(workspace.raw().as_ref())
+            .unwrap()
+            .unwrap();
+        let entry = snapshot
+            .iter()
+            .find(|entry| entry.path == "data/input")
+            .unwrap();
+        let expected = host_allocated(&workspace.0.join(entry.backing.as_ref().unwrap()));
+        assert_eq!(entry.metadata.allocated, Some(expected), "size {size}");
+        assert_eq!(
+            namespace.metadata("alias").unwrap().allocated,
+            Some(expected)
+        );
+        assert_eq!(handle.metadata().unwrap().allocated, Some(expected));
+    }
+    let allocated = handle.metadata().unwrap().allocated;
+    namespace.rename("data", "renamed").unwrap();
+    namespace.unlink("renamed/input").unwrap();
+    assert_eq!(handle.metadata().unwrap().allocated, allocated);
+    assert_eq!(handle.metadata().unwrap().links, 0);
+    handle.resize(0).unwrap();
+    handle.flush().unwrap();
+    assert_eq!(handle.metadata().unwrap().allocated, Some(0));
+    namespace.create_directory("renamed/child").unwrap();
+    assert_eq!(namespace.metadata("renamed").unwrap().links, 3);
+    namespace.rename("renamed/child", "child").unwrap();
+    assert_eq!(namespace.metadata("renamed").unwrap().links, 2);
+    assert_eq!(namespace.metadata("").unwrap().links, 4);
+    namespace.remove_directory("child").unwrap();
+    assert_eq!(namespace.metadata("").unwrap().links, 3);
+}
+
 #[test]
 fn model_files_share_guest_namespace_and_validate_before_creating_parents() {
     use efi_agent_filesystem::text;

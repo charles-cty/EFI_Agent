@@ -6,7 +6,7 @@ expansion. Initial native/firmware interfaces do not establish full completion.
 The shared image currently uses upstream ls, find, awk, sed, grep, chmod, cat, head,
 tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true,
 false, od, hexdump, base64, sha256sum and realpath, plus mkdir, rmdir, rm,
-touch, date, sort, uniq, cut, tr, cp, mv, which, xargs, gzip, gunzip, zcat and unzip. Other
+touch, date, sort, uniq, cut, tr, cp, mv, which, xargs, gzip, gunzip, zcat, unzip and du. Other
 utility applets still need upstream replacement or addition.
 Upstream `stat` now reports file and symlink metadata, ownership, permissions,
 timestamps and custom/terse formats. Filesystem mode (`stat -f`) remains
@@ -89,7 +89,16 @@ APIs pass, with independent saved FAT bytes, modes, timestamps and containment
 checks in artifacts/unzip-whpx-responses and unzip-whpx-chat_completions.
 ZIP64, encryption and other
 compression methods remain unsupported.
-The missing required applets are du, df, tar and ln.
+Du uses upstream traversal, option parsing and inode deduplication with actual
+allocated data bytes. Windows and EFI provider measurements survive namespace
+lookup and open-file unlink; C and Python stat methods report those blocks.
+Logical directories and symlinks have no independently allocated data blocks;
+shared journal storage belongs to filesystem capacity accounting. Native
+integration verifies sparse and ordinary files against independent Windows
+queries. Both 512 MiB WHPX APIs verify bytes and saved FAT cluster chains in
+artifacts/du-whpx-responses and du-whpx-chat_completions. Hard-link counting
+and cross-mount -x behavior still need the corresponding provider gates.
+The missing required applets are df, tar and ln.
 
 ## Delivery requirements
 

@@ -63,6 +63,12 @@ Windows native checks verify real denial, retained file access, fd-relative
 metadata after rename, symbolic/recursive chmod and sed mode preservation.
 The dedicated permission integration independently verifies saved modes and
 process restart. Firmware evidence is recorded separately in verification.md.
+Allocation reporting now also uses the private adapter below standard
+stat/fstat/scandir. Windows handle queries and EFI physical sizes replace
+WASI libc's synthesized blocks. Native sparse-file checks use an independent
+Windows path query; both WHPX model APIs compare saved FAT cluster chains.
+Unknown allocation fails explicitly. Shared namespace journals are accounted
+at filesystem level, outside per-file allocated data bytes.
 
 The 2026-10-22 filesystem expansion connects directory creation to native and
 firmware providers, and rename to the native provider. File writes now use

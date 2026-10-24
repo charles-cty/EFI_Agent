@@ -41,6 +41,7 @@ int xargs_main(int argc, char **argv);
 int gzip_main(int argc, char **argv);
 int gunzip_main(int argc, char **argv);
 int unzip_main(int argc, char **argv);
+int du_main(int argc, char **argv);
 int ls_main(int argc, char **argv);
 int mkdir_main(int argc, char **argv);
 int rmdir_main(int argc, char **argv);
@@ -63,6 +64,7 @@ int efi_busybox_applet(int argc, char **argv)
     if (strcmp(name, "xargs") == 0) return xargs_main(argc, argv);
     if (strcmp(name, "gzip") == 0) return gzip_main(argc, argv);
     if (strcmp(name, "unzip") == 0) return unzip_main(argc, argv);
+    if (strcmp(name, "du") == 0) return du_main(argc, argv);
     if (strcmp(name, "gunzip") == 0 || strcmp(name, "zcat") == 0)
         return gunzip_main(argc, argv);
     if (strcmp(name, "head") == 0) return head_main(argc, argv);

@@ -39,12 +39,26 @@ def install(request):
             raise OSError(error, os.strerror(error), path)
         return value
 
-    def replace_mode(value, mode):
+    def allocation(fd, flags=1, path=None):
+        encoded = b'' if path is None else os.fsencode(path)
+        error, reply = request(24, fd, flags, payload=encoded)
+        if error:
+            raise OSError(error, os.strerror(error), path)
+        try:
+            data = os.read(reply, 8)
+            if len(data) != 8:
+                raise OSError(errno.EIO, 'incomplete allocation response')
+            return struct.unpack('<Q', data)[0]
+        finally:
+            os.close(reply)
+
+    def replace_mode(value, mode, allocated):
         fields = list(value)
         fields[0] = stat.S_IFMT(value.st_mode) | mode
         fields[4] = fields[5] = 1
         extra = {name: getattr(value, name) for name in (
             'st_atime', 'st_mtime', 'st_ctime', 'st_atime_ns', 'st_mtime_ns', 'st_ctime_ns')}
+        extra['st_blocks'] = (allocated + 511) // 512
         return os.stat_result(fields, extra)
 
     def stat_path(path, *, dir_fd=None, follow_symlinks=True):
@@ -55,7 +69,7 @@ def install(request):
         value = original_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
         resolved, fd = at_path(path, dir_fd)
         mode = metadata(11, fd, int(bool(follow_symlinks)), path=resolved)
-        return replace_mode(value, mode)
+        return replace_mode(value, mode, allocation(fd, int(bool(follow_symlinks)), resolved))
 
     def lstat(path, *, dir_fd=None):
         return stat_path(path, dir_fd=dir_fd, follow_symlinks=False)
@@ -63,7 +77,7 @@ def install(request):
     def fstat(fd):
         fd = operator.index(fd)
         value = original_fstat(fd)
-        return replace_mode(value, metadata(13, fd))
+        return replace_mode(value, metadata(13, fd), allocation(fd))
 
     def checked_mode(mode):
         # POSIX ignores type/high bits; namespace modes contain only permissions.
@@ -170,7 +184,7 @@ def install(request):
                     fd = self._anchor.fd
                     path = self.name
                 mode = metadata(11, fd, int(follow), path=path)
-                self._stats[follow] = replace_mode(value, mode)
+                self._stats[follow] = replace_mode(value, mode, allocation(fd, int(follow), path))
             return self._stats[follow]
 
     class FdEntry:

@@ -89,6 +89,15 @@ precision. Reflinks and automatic hard-link preservation are disabled pending
 provider support; explicit hard links and special node creation return errors.
 Cross-mount mv fallback has not been verified with the incomplete mount layer.
 
+Du uses upstream traversal, depth limits, totals, symlink policy and inode
+deduplication. Native and firmware providers report allocated file data bytes;
+BusyBox stat wrappers and Python stat/fstat/scandir expose those values as
+512-byte st_blocks. Namespace directories and symlinks are stored in shared
+journals and have no separately allocated data blocks. Directory link counts
+include subdirectories. Unknown provider allocation returns ENOTSUP. Explicit
+du units use upstream ceiling behavior; directory read/close errors fail.
+General mount accounting and hard-link support remain incomplete.
+
 Date uses upstream BusyBox UTC parsing and formatting, RFC/ISO output,
 nanosecond fields and file reference times. Invalid -D input tails, unavailable
 clock reads, oversized formatted output and closed stdout fail explicitly.
@@ -657,6 +666,12 @@ not inherited by child processes. Metadata replies retain positive WASI errno va
 process replies retain negative POSIX errors. Snapshot descriptors are private
 and close on spawn. BusyBox libc wrappers and Python's private startup adapter
 use these operations behind standard stat/chmod/open/mkdir/scandir methods.
+Allocation query 24 takes a directory/file descriptor, a follow flag and an
+optional path. It checks filestat rights, returns positive WASI errors, or
+provides a close-on-exec snapshot descriptor with one little-endian u64 byte
+count. The client closes this descriptor after reading. Unknown allocation
+is distinct from known zero. Windows uses handle compression information,
+which measures sparse allocation; firmware uses EFI_FILE_INFO PhysicalSize.
 Creation applies the process umask; changing a mode affects later opens and
 directory traversal while existing file handles retain their granted access.
 The single guest owner/group is uid/gid 1. Symlink mode mutation without

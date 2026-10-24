@@ -3,6 +3,13 @@ use alloc::{boxed::Box, collections::BTreeMap, format, rc::Rc, string::String, v
 use core::cell::RefCell;
 pub use efi_agent_filesystem::*;
 
+// Virtual entries have no independently allocated persistent data blocks.
+fn virtual_metadata(kind: EntryType, size: u64) -> Metadata {
+    let mut metadata = Metadata::new(kind, size);
+    metadata.allocated = Some(0);
+    metadata
+}
+
 type TempFiles = BTreeMap<String, Rc<RefCell<Vec<u8>>>>;
 type Programs = Rc<RefCell<BTreeMap<String, Option<String>>>>;
 
@@ -63,7 +70,7 @@ impl VirtualFileSystem {
         let source = self.program(path)?;
         let mut metadata = source
             .and_then(|source| self.base.metadata(&source).ok())
-            .unwrap_or_else(|| Metadata::new(EntryType::File, 0));
+            .unwrap_or_else(|| virtual_metadata(EntryType::File, 0));
         metadata.mode = 0o555;
         Some(metadata)
     }
@@ -153,7 +160,7 @@ impl File for VirtualFile {
     }
 
     fn metadata(&mut self) -> Result<Metadata, FileError> {
-        Ok(Metadata::new(EntryType::File, self.data.len() as u64))
+        Ok(virtual_metadata(EntryType::File, self.data.len() as u64))
     }
 
     fn flush(&mut self) -> Result<(), FileError> {
@@ -224,7 +231,7 @@ impl File for TmpFile {
         Ok(next as u64)
     }
     fn metadata(&mut self) -> Result<Metadata, FileError> {
-        Ok(Metadata::new(
+        Ok(virtual_metadata(
             EntryType::File,
             self.data.borrow().len() as u64,
         ))
@@ -321,10 +328,13 @@ impl FileSystem for VirtualFileSystem {
                 .get(name)
                 .cloned()
                 .ok_or(FileError::NotFound)?;
-            return Ok(Metadata::new(EntryType::File, data.borrow().len() as u64));
+            return Ok(virtual_metadata(
+                EntryType::File,
+                data.borrow().len() as u64,
+            ));
         }
         if let Some(kind) = Self::virtual_entry(path) {
-            return Ok(Metadata::new(kind, 0));
+            return Ok(virtual_metadata(kind, 0));
         }
         self.base.metadata(path)
     }
@@ -470,7 +480,7 @@ impl FileSystem for VirtualFileSystem {
         if let Some(source) = self.program(path) {
             return Ok(match source {
                 Some(source) => {
-                    let mut info = Metadata::new(EntryType::Symlink, (source.len() + 1) as u64);
+                    let mut info = virtual_metadata(EntryType::Symlink, (source.len() + 1) as u64);
                     info.mode = 0o777;
                     info
                 }
@@ -480,7 +490,7 @@ impl FileSystem for VirtualFileSystem {
             });
         }
         if let Some(kind) = Self::virtual_entry(path) {
-            return Ok(Metadata::new(kind, 0));
+            return Ok(virtual_metadata(kind, 0));
         }
         self.base.symlink_metadata(path)
     }

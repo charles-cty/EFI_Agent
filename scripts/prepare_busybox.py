@@ -34,6 +34,7 @@ ENABLED = {
     "GZIP", "GUNZIP", "ZCAT", "FEATURE_GZIP_DECOMPRESS",
     "FEATURE_GZIP_LONG_OPTIONS", "FEATURE_GUNZIP_LONG_OPTIONS", "FEATURE_GZIP_LEVELS",
     "UNZIP", "FEATURE_UNZIP_CDF",
+    "DU", "FEATURE_DU_DEFAULT_BLOCKSIZE_1K",
     "MONOTONIC_SYSCALL",
     "DATE", "FEATURE_DATE_ISOFMT", "FEATURE_DATE_NANO",
     "SORT", "FEATURE_SORT_BIG", "UNIQ", "CUT", "FEATURE_CUT_REGEX",
@@ -321,6 +322,27 @@ def prepare_mutations(source: Path, output: Path):
     (output / "touch.c").write_text(touch, encoding="utf-8")
 
 
+def prepare_du(source: Path, output: Path):
+    text = (source / 'coreutils/du.c').read_text(encoding='utf-8')
+    # Keep upstream's ceiling for explicit units.
+    text = replace_once(text, '# if ENABLE_DESKTOP', '# if 1')
+    text = replace_once(text, '\t\twhile ((entry = readdir(dir))) {', '''        for (;;) {
+            errno = 0;
+            entry = readdir(dir);
+            if (!entry) {
+                if (errno) {
+                    bb_simple_perror_msg(filename);
+                    G.status = EXIT_FAILURE;
+                }
+                break;
+            }''')
+    text = replace_once(text, '\t\tclosedir(dir);', '''        if (closedir(dir) < 0) {
+            bb_simple_perror_msg(filename);
+            G.status = EXIT_FAILURE;
+        }''')
+    (output / 'du.c').write_text(text, encoding='utf-8')
+
+
 def prepare_date(source: Path, output: Path):
     """Keep upstream date parsing/formatting and reject unavailable clock writes."""
     text = (source / "coreutils/date.c").read_text(encoding="utf-8")
@@ -426,7 +448,7 @@ def main():
              *(args.source / f"coreutils/{name}.c" for name in (
                  "cat", "head", "tail", "wc", "tee", "sleep", "basename",
                  "dirname", "pwd", "env", "printenv", "seq", "yes", "true", "false",
-                 "mkdir", "rmdir", "rm", "touch", "cp", "mv")),
+                 "mkdir", "rmdir", "rm", "touch", "cp", "mv", "du")),
              args.source / "libbb/copy_file.c", args.source / "libbb/inode_hash.c",
              args.source / "findutils/xargs.c",
              args.source / "archival/gzip.c", args.source / "archival/bbunzip.c",
@@ -475,6 +497,7 @@ def main():
     prepare_xargs(args.source, args.output, replace_once)
     prepare_compression(args.source, args.output, replace_once)
     prepare_unzip(args.source, args.output, replace_once)
+    prepare_du(args.source, args.output)
     prepare_date(args.source, args.output)
     prepare_text_applets(args.source, args.output, replace_once)
     prepare_dump(args.source, args.output)

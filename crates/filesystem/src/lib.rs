@@ -68,6 +68,9 @@ impl FileError {
 pub struct Metadata {
     pub kind: EntryType,
     pub size: u64,
+    /// Storage allocated to file data, excluding shared namespace journals.
+    /// None means that the provider cannot measure allocation.
+    pub allocated: Option<u64>,
     pub inode: u64,
     pub links: u64,
     pub mode: u16,
@@ -81,6 +84,7 @@ impl Metadata {
         Self {
             kind,
             size,
+            allocated: None,
             inode: 0,
             links: 1,
             mode: if kind == EntryType::Directory {
