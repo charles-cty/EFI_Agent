@@ -35,7 +35,6 @@ Python options now determine shell use, decoding and nonzero-exit handling.
 
 | Priority | Finding and evidence | Effect and required direction |
 | --- | --- | --- |
-| High | Final native regression shows `tar -C DIR ... .` and `find .` omit children while `ls .` lists them. C libc can collapse the retained-cwd routing path before a no-follow query. | Preserve the original stat/lstat/fstatat path semantics. Raw file type and private mode/allocation metadata must refer to the same object. Current combined environment delivery remains incomplete. |
 | High | QuickJS's custom `main` in `guests/quickjs/main.c` accepts only `-e`. `scripts/build_quickjs.ps1` omits upstream `qjs` and `quickjs-libc`. | Script-file entry, upstream `std`/`os` modules and file module loading remain absent. Restore those interfaces above internal host adapters. The requested zx-like `$` extension is a separate feature. |
 | High | The prebuilt `_socket` module is present, but its socket creation backend remains unavailable. Runtime WASI socket imports reject unsupported operations explicitly. | Standard Python socket clients cannot use existing client TCP/DNS operations. Add the backend below standard socket interfaces. |
 | Medium | Installed commands appear in `/bin`; ash uses upstream PATH lookup and the runtime supports executable files, shebangs and mount/link traversal. Persistent manifests validate modules, aliases, libraries and licenses before publication. | Native coverage includes manifest reload/removal, failed-install rollback and explicit BusyBox-name overrides. Retained shell/Python sessions pass both WHPX APIs; the final environment regression remains incomplete. |
@@ -179,3 +178,14 @@ subprocess pipes, and an independent read of saved FAT bytes. Exact results,
 artifact locations and unresolved limits are in `verification.md`.
 This audit covers the paths listed above; it does not establish complete POSIX,
 Python or QuickJS conformance.
+
+## C cwd metadata routing
+
+Standard C stat/lstat/fstatat now bypass libc's lexical normalization of the
+private cwd route. Explicit directory-fd lookup retains dot, link/parent and
+trailing-slash semantics. An explicit /proc/self/cwd remains a symlink for
+lstat; lstat of . describes the actual directory. Native integration checks
+renamed/deleted cwd and distinct decoy/target bytes. Both 512 MiB WHPX API
+flows pass actual BusyBox/curl/QuickJS/WolfSSH and saved FAT checks in
+artifacts/cwd-stat-whpx-final-responses and
+artifacts/cwd-stat-whpx-final-chat_completions.

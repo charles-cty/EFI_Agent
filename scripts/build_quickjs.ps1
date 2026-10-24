@@ -38,6 +38,7 @@ $version = ([IO.File]::ReadAllText((Join-Path $Source 'VERSION'))).Trim()
 $compile = '--target=wasm32-wasip1', "--sysroot=$sysroot", '-O2', '-D_GNU_SOURCE',
     "-DCONFIG_VERSION=`"$version`"", "-I$Source", '-Iguests/include',
     '-Wl,-z,stack-size=1048576', '-Wl,--max-memory=67108864',
-    '-Wl,--wrap=chdir', '-Wl,--wrap=getcwd', '-Wl,--undefined=chdir', '-lm'
+    '-Wl,--wrap=chdir', '-Wl,--wrap=getcwd', '-Wl,--undefined=chdir',
+    '-Wl,--wrap=stat', '-Wl,--wrap=lstat', '-Wl,--wrap=fstatat', '-lm'
 & $clang @compile @sources -o (Join-Path $Output 'quickjs.wasm')
 Copy-Item -LiteralPath (Join-Path $Source 'LICENSE') -Destination (Join-Path $Output 'quickjs.LICENSE')

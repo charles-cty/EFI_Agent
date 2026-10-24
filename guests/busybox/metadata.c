@@ -1,4 +1,5 @@
 #include "libbb.h"
+#include "efi_filesystem.h"
 #include <wasi/api.h>
 
 /* Each applet Store owns its extraction directory anchor. */
@@ -7,10 +8,7 @@ int efi_archive_root_fd = -1;
 /* Preview 1 does not carry POSIX permissions. Share the private endpoint
  * used by the unchanged Python distribution instead of changing its ABI. */
 int __real_open(const char *path, int flags, ...);
-int __real_stat(const char *path, struct stat *info);
-int __real_lstat(const char *path, struct stat *info);
 int __real_fstat(int fd, struct stat *info);
-int __real_fstatat(int fd, const char *path, struct stat *info, int flags);
 int __real_mkdir(const char *path, mode_t mode);
 int __real_symlink(const char *target, const char *path);
 int __real_unlink(const char *path);
@@ -217,16 +215,12 @@ static int patch_stat(int result, int fd, const char *path, int follow, struct s
 
 int __wrap_stat(const char *path, struct stat *info)
 {
-    if (efi_archive_root_fd >= 0)
-        return __wrap_fstatat(AT_FDCWD, path, info, 0);
-    return patch_stat(__real_stat(path, info), AT_FDCWD, path, 1, info);
+    return __wrap_fstatat(AT_FDCWD, path, info, 0);
 }
 
 int __wrap_lstat(const char *path, struct stat *info)
 {
-    if (efi_archive_root_fd >= 0)
-        return __wrap_fstatat(AT_FDCWD, path, info, AT_SYMLINK_NOFOLLOW);
-    return patch_stat(__real_lstat(path, info), AT_FDCWD, path, 0, info);
+    return __wrap_fstatat(AT_FDCWD, path, info, AT_SYMLINK_NOFOLLOW);
 }
 
 int __wrap_fstat(int fd, struct stat *info)
@@ -239,7 +233,7 @@ int __wrap_fstatat(int fd, const char *path, struct stat *info, int flags)
     fd = path_fd(fd, path);
     if (fd == -1)
         return -1;
-    return patch_stat(__real_fstatat(fd, path, info, flags), fd, path,
+    return patch_stat(efi_filesystem_fstatat(fd, path, info, flags), fd, path,
         !(flags & AT_SYMLINK_NOFOLLOW), info);
 }
 

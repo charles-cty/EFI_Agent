@@ -30,6 +30,7 @@ $link = '-Wall', '-Wextra', '-Werror', 'guests/wolfssh/main.c', 'guests/posix/ne
     $library, (Join-Path $WolfSsl 'lib/libwolfssl.a'),
     '-Wl,--fatal-warnings', '-Wl,-z,stack-size=1048576', '-Wl,--max-memory=67108864',
     '-Wl,--wrap=chdir', '-Wl,--wrap=getcwd', '-Wl,--undefined=chdir',
+    '-Wl,--wrap=stat', '-Wl,--wrap=lstat', '-Wl,--wrap=fstatat',
     '-o', (Join-Path $Output 'wolfssh.wasm')
 & $clang @flags @link
 Copy-Item -LiteralPath (Join-Path $Source 'LICENSING') -Destination (Join-Path $Output 'wolfssh.LICENSING')

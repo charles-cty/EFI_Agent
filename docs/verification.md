@@ -1,5 +1,38 @@
 # Verification record
 
+## 2026-10-24: C cwd metadata correction
+
+Shared C stat/lstat/fstatat now pass original path components through an
+explicit directory descriptor before libc can normalize the private cwd route.
+Relative dot paths describe the actual cwd directory; an explicit proc cwd
+link retains its no-follow metadata. BusyBox's strong wrappers still restore
+namespace modes and allocated bytes. Curl, QuickJS and WolfSSH use the same
+shared routing wrappers.
+
+All 21 native BusyBox regression scripts pass with rebuilt BusyBox in
+artifacts/cwd-stat-native-test_busybox_*.log, including tar and independent
+saved archives, metadata, links and containment. Native C/application checks
+pass in artifacts/cwd-stat-c-ports-native.log. Boundary cases distinguish
+dot from the proc symlink, absolute from fd-relative paths, trailing slashes,
+link/parent ordering with distinct decoy bytes, missing parents, empty paths,
+renamed cwd and deleted cwd. All four C applications were rebuilt; evidence
+is in artifacts/cwd-stat-*-build.log.
+
+Both actual 512 MiB WHPX API flows pass the C/application sequence and
+independent saved FAT bytes in artifacts/cwd-stat-whpx-final-responses and
+artifacts/cwd-stat-whpx-final-chat_completions. Fresh packaging succeeds in
+artifacts/cwd-stat-package. The first VM invocation selected the package root
+instead of its esp child and failed before boot; the corrected invocation
+uses the packaged esp directory.
+
+The full application retry passes ordinary POSIX networking but fails the
+refusal expectation in artifacts/environment-applications-whpx-cwd-fixed.
+The returned WASI errno 15 is ECONNRESET; ECONNREFUSED is 14. Earlier notes
+misidentified these values. UEFI reports reset after the observed host RST,
+and the fixture now checks that explicit platform outcome without changing
+transport error mapping. Timeout and refusal remain separately selectable.
+The complete combination is being rerun; it is not yet a passed gate.
+
 ## 2026-10-24: Final environment regression corrections and open failures
 
 The full application harness now runs Windows WHPX with qemu64 and explicit

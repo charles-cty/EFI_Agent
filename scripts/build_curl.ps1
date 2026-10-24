@@ -87,7 +87,7 @@ export RANLIB="$sdk/bin/llvm-ranlib.exe"
 export CPPFLAGS="-I$project/guests/posix/include -I$project/guests/include -DWOLFSSL_USER_SETTINGS -I$wolfssl/include -include $wolfssl/include/user_settings.h"
 export CFLAGS='-O2 -ffunction-sections -fdata-sections'
 export LDFLAGS="-L$library"
-export LIBS='-Wl,--wrap=chdir -Wl,--wrap=getcwd -Wl,--undefined=chdir -Wl,--undefined=efi_filesystem_initialize -lefi_posix'
+export LIBS='-Wl,--wrap=chdir -Wl,--wrap=getcwd -Wl,--wrap=stat -Wl,--wrap=lstat -Wl,--wrap=fstatat -Wl,--undefined=chdir -Wl,--undefined=efi_filesystem_initialize -lefi_posix'
 export PKG_CONFIG=false
 configured=0
 if test ! -f Makefile; then

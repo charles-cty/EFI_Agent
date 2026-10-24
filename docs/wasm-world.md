@@ -245,6 +245,12 @@ logical hard-link groups through FAT staging, and recreate physical host hard
 links on save. Conflict checks include changes in those groups. Snapshot bytes
 are shared in memory and count once toward the workspace byte limit.
 
+The common C adapter routes stat, lstat and fstatat through explicit directory
+descriptors. Relative dot operands refer to the retained cwd directory, while
+an explicit /proc/self/cwd still reports its symlink with lstat. Link/parent
+ordering and trailing slashes survive libc routing. BusyBox, curl, QuickJS and
+WolfSSH use this shared adapter.
+
 Date uses upstream BusyBox UTC parsing and formatting, RFC/ISO output,
 nanosecond fields and file reference times. Invalid -D input tails, unavailable
 clock reads, oversized formatted output and closed stdout fail explicitly.

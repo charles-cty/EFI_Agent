@@ -8,6 +8,18 @@ def child(arguments, expected=b'', **options):
     result = subprocess.run(arguments, capture_output=True, **options)
     assert (result.returncode, result.stdout, result.stderr) == (0, expected, b''), result
 
+os.makedirs('/c-port-cwd/metadata/base')
+os.makedirs('/c-port-cwd/metadata/other/inner')
+with open('/c-port-cwd/metadata/base/value', 'wb') as target:
+    target.write(b'bad')
+with open('/c-port-cwd/metadata/other/value', 'wb') as target:
+    target.write(b'correct')
+os.symlink('../other/inner', '/c-port-cwd/metadata/base/link')
+child(['cwd_probe', '/c-port-cwd/metadata/base', 'metadata'], b'C_CWD_OK\n',
+      cwd='/c-port-cwd/metadata/base')
+child(['ash', '-c', 'test -d . && ! test -L . && test -L /proc/self/cwd && find . -type f'],
+      b'./value\n', cwd='/c-port-cwd/metadata/base')
+
 os.makedirs('/c-port-cwd/before/work')
 with open('/c-port-cwd/before/work/input', 'wb') as target:
     target.write(payload)

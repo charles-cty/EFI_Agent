@@ -1,6 +1,7 @@
 /* Check standard libc calls against the shared retained-cwd adapter. */
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +29,26 @@ static void check_path(const char *expected)
     free(buffer);
 }
 
+static void check_metadata(void)
+{
+    struct stat current, info, root;
+    assert(stat(".", &current) == 0 && S_ISDIR(current.st_mode));
+    assert(lstat(".", &info) == 0 && S_ISDIR(info.st_mode));
+    assert(info.st_ino == current.st_ino && info.st_dev == current.st_dev);
+    assert(lstat("./.", &info) == 0 && S_ISDIR(info.st_mode));
+    assert(lstat("/proc/self/cwd", &info) == 0 && S_ISLNK(info.st_mode));
+    assert(lstat("/proc/self/cwd/", &info) == 0 && S_ISDIR(info.st_mode));
+    assert(fstatat(AT_FDCWD, ".", &info, AT_SYMLINK_NOFOLLOW) == 0);
+    assert(info.st_ino == current.st_ino && S_ISDIR(info.st_mode));
+    assert(stat("/", &root) == 0 && S_ISDIR(root.st_mode));
+    assert(fstatat(3, ".", &info, AT_SYMLINK_NOFOLLOW) == 0);
+    assert(info.st_ino == root.st_ino && info.st_dev == root.st_dev);
+    errno = 0;
+    assert(lstat("", &info) == -1 && errno == ENOENT);
+    errno = 0;
+    assert(lstat("cwd-missing/../.", &info) == -1 && errno == ENOENT);
+}
+
 int main(int argc, char **argv)
 {
     assert(argc == 3);
@@ -35,6 +56,25 @@ int main(int argc, char **argv)
         assert(getchar() == 'x');
     if (!strcmp(argv[2], "rename"))
         assert(rename("/c-port-cwd/before", "/c-port-cwd/moved") == 0);
+    if (strcmp(argv[2], "inherited"))
+        check_metadata();
+    if (!strcmp(argv[2], "metadata")) {
+        struct stat target, info;
+        assert(stat("../other", &target) == 0);
+        assert(lstat("link", &info) == 0 && S_ISLNK(info.st_mode));
+        assert(lstat("link/", &info) == 0 && S_ISDIR(info.st_mode));
+        assert(lstat("link/..", &info) == 0 && S_ISDIR(info.st_mode));
+        assert(info.st_ino == target.st_ino && info.st_dev == target.st_dev);
+        assert(stat("link/../value", &info) == 0 && info.st_size == 7);
+        assert(lstat("link/../value", &info) == 0 && info.st_size == 7);
+        int directory = open(".", O_RDONLY | O_DIRECTORY);
+        assert(directory >= 0);
+        assert(fstatat(directory, "value", &info, AT_SYMLINK_NOFOLLOW) == 0);
+        assert(info.st_size == 3);
+        assert(fstatat(directory, "/c-port-cwd/metadata/other/value", &info, 0) == 0);
+        assert(info.st_size == 7);
+        assert(close(directory) == 0);
+    }
     if (!strcmp(argv[1], "deleted")) {
         errno = 0;
         assert(!getcwd(NULL, 0) && errno == ENOENT);
