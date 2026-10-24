@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 from prepare_text_applets import prepare_text_applets
 from prepare_xargs import prepare_xargs
+from prepare_compression import prepare_compression
 
 
 ENABLED = {
@@ -29,6 +30,8 @@ ENABLED = {
     "FEATURE_XARGS_SUPPORT_TERMOPT", "FEATURE_XARGS_SUPPORT_ZERO_TERM",
     "FEATURE_XARGS_SUPPORT_REPL_STR", "FEATURE_XARGS_SUPPORT_PARALLEL",
     "FEATURE_XARGS_SUPPORT_ARGS_FILE", "ECHO",
+    "GZIP", "GUNZIP", "ZCAT", "FEATURE_GZIP_DECOMPRESS",
+    "FEATURE_GZIP_LONG_OPTIONS", "FEATURE_GUNZIP_LONG_OPTIONS", "FEATURE_GZIP_LEVELS",
     "MONOTONIC_SYSCALL",
     "DATE", "FEATURE_DATE_ISOFMT", "FEATURE_DATE_NANO",
     "SORT", "FEATURE_SORT_BIG", "UNIQ", "CUT", "FEATURE_CUT_REGEX",
@@ -424,6 +427,9 @@ def main():
                  "mkdir", "rmdir", "rm", "touch", "cp", "mv")),
              args.source / "libbb/copy_file.c", args.source / "libbb/inode_hash.c",
              args.source / "findutils/xargs.c",
+             args.source / "archival/gzip.c", args.source / "archival/bbunzip.c",
+             args.source / "archival/libarchive/decompress_gunzip.c",
+             args.source / "include/bb_archive.h",
              args.source / "coreutils/od.c", args.source / "util-linux/hexdump.c",
              args.source / "libbb/dump.c", args.source / "libbb/xatonum.c",
              args.source / "coreutils/uudecode.c", args.source / "libbb/uuencode.c",
@@ -453,6 +459,7 @@ def main():
         lines.append(f"#define IF_{name}(...) {'__VA_ARGS__' if enabled else ''}")
         lines.append(f"#define IF_NOT_{name}(...) {'' if enabled else '__VA_ARGS__'}")
     lines.extend(["#define HAVE_DEV_FD 0", "#define CONFIG_FEATURE_EDITING_MAX_LEN 1024",
+                  "#define CONFIG_GZIP_FAST 0",
                   "#define CONFIG_SHA3_SMALL 0", "#define CONFIG_MD5_SMALL 0",
                   "#define CONFIG_SHA1_SMALL 0",
                   "#define CONFIG_LAST_SUPPORTED_WCHAR 0x2ffff",
@@ -463,6 +470,7 @@ def main():
     prepare_streams(args.source, args.output)
     prepare_mutations(args.source, args.output)
     prepare_xargs(args.source, args.output, replace_once)
+    prepare_compression(args.source, args.output, replace_once)
     prepare_date(args.source, args.output)
     prepare_text_applets(args.source, args.output, replace_once)
     prepare_dump(args.source, args.output)

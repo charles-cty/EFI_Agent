@@ -6,6 +6,9 @@
 #include <sys/time.h>
 
 #define ALIGN4 __attribute__((aligned(4)))
+#define PACKED __attribute__((packed))
+#define USE_FOR_NOMMU(...)
+#define SEAMLESS_COMPRESSION 0
 #define BUILD_BUG_ON(condition) _Static_assert(!(condition), "invalid BusyBox buffer size")
 #define GETOPT_RESET() (optind = 0)
 #define No_argument "\0"
@@ -17,6 +20,9 @@
 #define exit_SUCCESS() exit(EXIT_SUCCESS)
 #define MAXINT(T) (T)(((T)-1) > 0 ? (T)-1 : (T)~((T)1 << (sizeof(T)*8-1)))
 #define MIN(left, right) ((left) < (right) ? (left) : (right))
+#define MAX(left, right) ((left) > (right) ? (left) : (right))
+#define SET_PTR_TO_GLOBALS(value) (ptr_to_globals = (void *)(value))
+int gunzip_main(int argc, char **argv);
 typedef uint64_t uoff_t;
 #define OFF_FMT "ll"
 #define HUMAN_READABLE_MAX_WIDTH_STR "7"
@@ -77,6 +83,13 @@ int bb_ask_y_confirmation(void);
 int bb_ask_y_confirmation_FILE(FILE *stream);
 void xstat(const char *path, struct stat *metadata);
 void xclose(int fd);
+void xunlink(const char *path);
+uint32_t *crc32_new_table_le(void);
+uint32_t *crc32_filltable(uint32_t *table, int endian);
+uint32_t *global_crc32_new_table_le(void);
+extern uint32_t *global_crc32_table;
+uint32_t crc32_block_endian0(uint32_t value, const void *buffer, unsigned length,
+    uint32_t *table);
 int parse_datestr(const char *text, struct tm *value);
 int index_in_substrings(const char *strings, const char *key);
 time_t validate_tm_time(const char *text, struct tm *value);
@@ -104,6 +117,7 @@ typedef uint32_t bb__aliased_uint32_t FIX_ALIASING;
 typedef uint64_t bb__aliased_uint64_t FIX_ALIASING;
 #define BB_BIG_ENDIAN 0
 #define BB_LITTLE_ENDIAN 1
+#define BB_UNALIGNED_MEMACCESS_OK 1
 #define ALIGN8 __attribute__((aligned(8)))
 #define bb_bswap_64(value) __builtin_bswap64(value)
 #define SWAP_LE32(value) (value)

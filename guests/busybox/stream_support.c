@@ -16,6 +16,12 @@ void xclose(int fd)
         bb_simple_perror_msg_and_die("close");
 }
 
+void xunlink(const char *path)
+{
+    if (unlink(path) < 0)
+        bb_simple_perror_msg_and_die(path);
+}
+
 int fputs_stdout(const char *text)
 {
     return fputs(text, stdout);

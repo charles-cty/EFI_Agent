@@ -6,11 +6,12 @@ expansion. Initial native/firmware interfaces do not establish full completion.
 The shared image currently uses upstream ls, find, awk, sed, grep, chmod, cat, head,
 tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true,
 false, od, hexdump, base64, sha256sum and realpath, plus mkdir, rmdir, rm,
-touch, date, sort, uniq, cut, tr, cp, mv, which and xargs. Other
+touch, date, sort, uniq, cut, tr, cp, mv, which, xargs, gzip, gunzip and zcat. Other
 utility applets still need upstream replacement or addition.
 Upstream `stat` now reports file and symlink metadata, ownership, permissions,
 timestamps and custom/terse formats. Filesystem mode (`stat -f`) remains
-disabled until the namespace exposes capacity statistics.
+disabled until guest filesystem-statistics interfaces and mount accounting are
+available. Raw native and firmware capacity providers already exist.
 Date currently supports UTC; other TZ values fail explicitly and timezone
 support remains pending.
 Firmware monotonic waits now use a reported hardware-counter rate. General mount
@@ -65,7 +66,19 @@ empty and NUL records, replacements, argument files, batching and -x, child
 statuses, concurrent progress and independent saved completion files. Upstream
 echo is exposed for the default command. Interactive -p/-o require the absent
 /dev/tty and fail explicitly; the shared 32-process quota bounds concurrency.
-The missing required applets are du, df, tar, gzip, gunzip, unzip, zcat and ln.
+Gzip, gunzip and zcat now use upstream compression/decompression and CRC32
+helpers. The build enables compression levels and long options; levels 1-3 use
+upstream's level-4 implementation. Zcat handles gzip streams directly; seamless
+auto-detection of other compression formats is disabled. Native integration
+uses independent Python gzip/zlib vectors for stored, fixed and dynamic blocks,
+concatenated members, header extensions and checksums, binary stream boundaries,
+file replacement/deletion, permissions, times and errors. Host Python separately
+decodes the saved compressed files. Independent applets now enter the shared
+Asyncify jump driver so decompressor recovery does not trap.
+The same checks and independent saved FAT decoding pass both 512 MiB WHPX
+model APIs in artifacts/compression-whpx-responses and
+artifacts/compression-whpx-chat_completions.
+The missing required applets are du, df, tar, unzip and ln.
 
 ## Delivery requirements
 

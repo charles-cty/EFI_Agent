@@ -1,5 +1,63 @@
 # Verification record
 
+## 2026-10-24: Upstream gzip, gunzip and zcat
+
+The shared image now builds BusyBox 1.37.0 gzip, bbunzip, DEFLATE decompression,
+CRC32 and direct transformer helpers. Compression levels and long options are
+enabled. Upstream maps levels 1-3 to level 4. Zcat reads gzip directly; the
+fork-based seamless multi-format transformer is excluded. The unchanged
+CPython interpreter and its standard library remain untouched.
+
+Native Release integration passes independent Python gzip/zlib inputs with
+stored, fixed and dynamic Huffman blocks, concatenated members, binary data,
+optional names/comments, header CRC and extra-field sizes
+0/16383/16384/16385/65535. Wrong header CRC, reserved flags, unknown methods,
+invalid blocks, truncation, CRC and size failures return failure. A damaged
+member followed by a valid one still fails. File checks cover -c/-k/-f/-t,
+multiple inputs, .tgz renaming, unknown suffixes, mode/timestamp propagation,
+deletion on success, and retained sources/deleted partial destinations on
+integrity errors. Stream-input and closed-output failures return failure.
+Round trips cross 32767/32768/32769, 65535/65536/65537,
+524287/524288/524289 and 1048576 bytes. A host Python gzip decoder independently
+verifies saved outputs, payloads, modes, times and names. Evidence:
+`artifacts/compression-native.log` and `artifacts/compression-build.log`.
+
+Actual 512 MiB Windows WHPX/OVMF passes the same command sequence under both
+Responses and Chat Completions, including independent host decoding of saved
+FAT outputs and saved metadata/name checks. Evidence:
+`artifacts/compression-whpx-responses` and
+`artifacts/compression-whpx-chat_completions`. Windows Release EFI and launcher
+packaging pass in `artifacts/compression-package.log`. Python source and guest
+fixture syntax checks and Git whitespace checks pass.
+
+High-risk tests distinguish an incomplete optional field from a valid field
+larger than the internal buffer, an early corrupt member from later success,
+and a real source deletion from an error path. Expected compressed inputs come
+from the host standard library; host output checks do not call guest code.
+
+Integration corrections:
+
+- Gzip previously treated read errors as EOF. Read failures now fail explicitly.
+- Decompression validates reserved flags and header CRC, streams large extra
+  fields, retains trailing read errors and stops after an invalid member size.
+- Independent applets previously bypassed the Asyncify setjmp/longjmp driver;
+  gunzip's first setjmp trapped. All applet entries now use the existing driver.
+  Its error helper retains a return epilogue for Asyncify unwinding.
+- The initial build lacked gzip's global-state pointer, shared declarations
+  and unaligned-memory configuration. These now match wasm32 and upstream.
+  One staging marker was corrected to include the actual switch branch.
+- A shell quoting error broke an initial Python syntax probe. A literal
+  PowerShell script and Python source string resolved it. Packaging initially
+  lacked EFI_AGENT_MODEL; explicit local test settings resolved it.
+- Existing upstream string-offset warnings remain nonfatal; QEMU reports
+  nonfatal interrupt-vector and host application-manifest warnings.
+
+Awk, sed, grep, streams, basic commands, text commands, xargs, copy/move,
+mutation, PATH and 17 CPython cases pass native regression. All host workspace
+tests, host/UEFI Clippy and Rust formatting pass. Complete network application
+regression remains a separate delivery gate. General mounts, remaining applets,
+installation manifests and retained tool sessions remain incomplete.
+
 ## 2026-10-24: Upstream xargs with cooperative children
 
 The shared BusyBox image now uses upstream xargs with exact argument vectors,
@@ -37,10 +95,7 @@ Corrections and verification issues:
   existing descriptor-duplication adapter. A duplicate ISSPACE macro was removed.
 - Initial fixture expectations assumed different usage/read-error wording;
   assertions now check stable context together with exit status and effects.
-- Existing upstream string-offset compiler warnings remain nonfatal. A source
-  inspection used an absent generated path; the upstream source was inspected
-  directly. A documentation patch had an unmatched context and was reapplied
-  with the correct context; it did not change production code.
+- Existing upstream string-offset compiler warnings remain nonfatal.
 
 ## 2026-10-24: Upstream copy and move applets
 

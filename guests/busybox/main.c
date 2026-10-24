@@ -7,6 +7,6 @@ int main(int argc, char **argv)
     efi_busybox_restore_cwd();
     if (argc > 0 && strcmp(bb_basename(argv[0]), "ash") != 0
         && strcmp(bb_basename(argv[0]), "sh") != 0)
-        return efi_busybox_applet(argc, argv);
+        return efi_sjlj_run(efi_busybox_applet, argc, argv);
     return efi_sjlj_run(ash_main, argc, argv);
 }

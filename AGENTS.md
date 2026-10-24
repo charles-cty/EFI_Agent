@@ -9,6 +9,21 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Upstream gzip/gunzip/zcat now build into the shared image with CRC32 and
+direct stream transformers. Native Release integration and both 512 MiB WHPX
+model APIs pass independent gzip/zlib stored/fixed/dynamic inputs, concatenated
+members, optional headers and CRC, binary boundaries through 1 MiB, source
+retention after errors and saved output decoding by host Python. Evidence:
+artifacts/compression-whpx-responses and compression-whpx-chat_completions.
+Staged fixes reject read failures, header CRC/reserved flags and corrupt member
+lengths, and stream extra fields through 65535 bytes. Standalone applets now
+enter the existing Asyncify jump driver. Native awk/sed/grep/streams/basic/text/
+xargs/copy-move/mutation/PATH/CPython regressions, all host tests, host/UEFI
+Clippy, format and syntax checks pass. Compression levels and long options are
+enabled; upstream maps levels 1-3 to 4. Seamless non-gzip formats are disabled.
+The remaining required applets are du, df, tar, unzip and ln. Mount, manifest
+and retained-session gates remain incomplete.
+
 Upstream xargs now uses cooperative spawn/wait with exact argument vectors,
 inherited descriptors and concurrent children. Quotes, empty words, NUL input,
 replacement, argument files, batching, trace and child-status propagation pass
