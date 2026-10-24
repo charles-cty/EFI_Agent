@@ -1,5 +1,17 @@
 # Verification record
 
+## 2026-10-25: Default VM RAM is 256 MiB
+
+The launcher now supplies 256 MiB to QEMU when --memory-mib is omitted.
+Explicit positive --memory-mib values still select the requested size. The
+README documents the new default; the VM and WASM test scripts already default
+to 256 MiB. The prior full network application measurement supplies firmware
+acceptance evidence at this size.
+
+Windows-native launcher tests pass all 24 cases. The Release launcher build,
+workspace formatting check and git diff --check pass. No intermediate errors
+occurred in this change.
+
 ## 2026-10-25: Complete network application RAM boundary
 
 The Release artifacts from memory optimization commit 893001f are tested with

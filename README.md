@@ -118,7 +118,7 @@ New-Item -ItemType Directory -Force -Path ./workspace | Out-Null
 
 You can also supply `artifacts/esp` or `artifacts/efi-agent-vm.img` as the boot
 input after packaging. Release builds use `release` in the executable paths.
-Append `--memory-mib 256` to allocate 256 MiB (default: 128 MiB).
+The default guest RAM is 256 MiB. Use `--memory-mib <MiB>` to change it.
 
 The launcher copies the host workspace into a private writable FAT disk. Guest
 file tools operate there; changed files are saved back after QEMU stops. Host

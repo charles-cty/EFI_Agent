@@ -47,7 +47,8 @@ After the memory changes below, the complete application combination passes at
 startup, with explicit ENOMEM on repeat. This is the measured 1-MiB boundary for that fixed sequence, including
 explicit module registrations and concurrent Python, rather than a general
 Python/ash memory requirement. Evidence: artifacts/network-memory-boundary.
-The previous 256-MiB pass provides headroom. Both model API session flows
+The previous 256-MiB pass provides headroom. The VM launcher defaults to
+256 MiB; --memory-mib selects another size. Both model API session flows
 pass at 192 MiB, including an additional Python process, clear and saved bytes.
 The 192 MiB cancellation flow preserves an independent background root.
 

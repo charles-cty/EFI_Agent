@@ -126,7 +126,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         }
         value
     } else {
-        128
+        256
     };
     let memory = memory_mib.to_string();
     crate::boot::configuration()?;
