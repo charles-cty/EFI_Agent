@@ -19,10 +19,8 @@ unsigned efi_ash_inherit_fds(struct efi_process_fd_mapping mappings[127])
     return count;
 }
 
-/* Run a fresh registered instance without replacing the caller's memory.
- * Ordinary commands return the child's status; the exec builtin exits below.
- */
-int efi_ash_run(char *const arguments[], char *const environment[])
+/* Spawn a fresh guest instance with the caller's inheritable descriptors. */
+int efi_ash_spawn(char *const arguments[], char *const environment[])
 {
     uint32_t count = 0;
     uint32_t environment_count = 0;
@@ -61,6 +59,14 @@ int efi_ash_run(char *const arguments[], char *const environment[])
         }
         return -1;
     }
+    return pid;
+}
+
+int efi_ash_run(char *const arguments[], char *const environment[])
+{
+    int32_t pid = efi_ash_spawn(arguments, environment);
+    if (pid < 0)
+        return -1;
     int32_t status;
     if (efi_process_waitpid((uint32_t)pid, &status) != pid) {
         __builtin_trap();

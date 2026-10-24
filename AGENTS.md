@@ -9,6 +9,18 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+Upstream xargs now uses cooperative spawn/wait with exact argument vectors,
+inherited descriptors and concurrent children. Quotes, empty words, NUL input,
+replacement, argument files, batching, trace and child-status propagation pass
+native integration and both 512 MiB WHPX model APIs in
+artifacts/xargs-whpx-responses and artifacts/xargs-whpx-chat_completions.
+Staged fixes enforce -x, reject incomplete quoting and empty replacements,
+report read/output errors, and drain parallel children without losing fatal
+status. Upstream echo is also available as an external command. Interactive
+tty options fail because /dev/tty is absent; the runtime's 32-process quota
+still applies. All host tests, host/UEFI Clippy, format and Python/copy-move/
+descriptor regressions pass. The wider environment requirements remain open.
+
 Upstream cp/mv now replace the handwritten subsets and link shared copy-file,
 inode-hash and coreutils stat helpers. Long options, recursive/archive copies,
 symlink policies, prompts, update and multioperand moves work through ash.

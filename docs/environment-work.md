@@ -6,7 +6,7 @@ expansion. Initial native/firmware interfaces do not establish full completion.
 The shared image currently uses upstream ls, find, awk, sed, grep, chmod, cat, head,
 tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true,
 false, od, hexdump, base64, sha256sum and realpath, plus mkdir, rmdir, rm,
-touch, date, sort, uniq, cut, tr, cp, mv and which. Other
+touch, date, sort, uniq, cut, tr, cp, mv, which and xargs. Other
 utility applets still need upstream replacement or addition.
 Upstream `stat` now reports file and symlink metadata, ownership, permissions,
 timestamps and custom/terse formats. Filesystem mode (`stat -f`) remains
@@ -58,6 +58,14 @@ Long options and symbolic links are enabled. Hard-link creation/preservation,
 special node creation and reflinks still require provider support; reflink and
 automatic hard-link preservation features are disabled. Cross-mount move
 fallback remains unverified until mount support is complete.
+
+Xargs now preserves argument vectors through cooperative serial/parallel
+children. Native integration and both 512 MiB WHPX model APIs verify quotes,
+empty and NUL records, replacements, argument files, batching and -x, child
+statuses, concurrent progress and independent saved completion files. Upstream
+echo is exposed for the default command. Interactive -p/-o require the absent
+/dev/tty and fail explicitly; the shared 32-process quota bounds concurrency.
+The missing required applets are du, df, tar, gzip, gunzip, unzip, zcat and ln.
 
 ## Delivery requirements
 

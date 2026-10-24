@@ -37,6 +37,7 @@ int find_main(int argc, char **argv);
 int which_main(int argc, char **argv);
 int cp_main(int argc, char **argv);
 int mv_main(int argc, char **argv);
+int xargs_main(int argc, char **argv);
 int ls_main(int argc, char **argv);
 int mkdir_main(int argc, char **argv);
 int rmdir_main(int argc, char **argv);
@@ -55,6 +56,8 @@ int efi_busybox_applet(int argc, char **argv)
     applet_name = name;
     xfunc_error_retval = EXIT_FAILURE;
     if (strcmp(name, "cat") == 0) return cat_main(argc, argv);
+    if (strcmp(name, "echo") == 0) return echo_main(argc, argv);
+    if (strcmp(name, "xargs") == 0) return xargs_main(argc, argv);
     if (strcmp(name, "head") == 0) return head_main(argc, argv);
     if (strcmp(name, "tail") == 0) return tail_main(argc, argv);
     if (strcmp(name, "wc") == 0) return wc_main(argc, argv);

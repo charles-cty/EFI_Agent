@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 import re
 from prepare_text_applets import prepare_text_applets
+from prepare_xargs import prepare_xargs
 
 
 ENABLED = {
@@ -24,6 +25,10 @@ ENABLED = {
     "BASENAME", "DIRNAME", "PWD", "ENV", "PRINTENV", "SEQ", "YES", "TRUE", "FALSE",
     "MKDIR", "RMDIR", "RM", "TOUCH", "FEATURE_TOUCH_SUSV3", "FEATURE_VERBOSE",
     "CP", "MV", "FEATURE_CP_LONG_OPTIONS", "FEATURE_VERBOSE_CP_MESSAGE",
+    "XARGS", "FEATURE_XARGS_SUPPORT_CONFIRMATION", "FEATURE_XARGS_SUPPORT_QUOTES",
+    "FEATURE_XARGS_SUPPORT_TERMOPT", "FEATURE_XARGS_SUPPORT_ZERO_TERM",
+    "FEATURE_XARGS_SUPPORT_REPL_STR", "FEATURE_XARGS_SUPPORT_PARALLEL",
+    "FEATURE_XARGS_SUPPORT_ARGS_FILE", "ECHO",
     "MONOTONIC_SYSCALL",
     "DATE", "FEATURE_DATE_ISOFMT", "FEATURE_DATE_NANO",
     "SORT", "FEATURE_SORT_BIG", "UNIQ", "CUT", "FEATURE_CUT_REGEX",
@@ -418,6 +423,7 @@ def main():
                  "dirname", "pwd", "env", "printenv", "seq", "yes", "true", "false",
                  "mkdir", "rmdir", "rm", "touch", "cp", "mv")),
              args.source / "libbb/copy_file.c", args.source / "libbb/inode_hash.c",
+             args.source / "findutils/xargs.c",
              args.source / "coreutils/od.c", args.source / "util-linux/hexdump.c",
              args.source / "libbb/dump.c", args.source / "libbb/xatonum.c",
              args.source / "coreutils/uudecode.c", args.source / "libbb/uuencode.c",
@@ -456,6 +462,7 @@ def main():
     (args.output / "NUM_APPLETS.h").write_text("#define NUM_APPLETS 1\n", encoding="utf-8")
     prepare_streams(args.source, args.output)
     prepare_mutations(args.source, args.output)
+    prepare_xargs(args.source, args.output, replace_once)
     prepare_date(args.source, args.output)
     prepare_text_applets(args.source, args.output, replace_once)
     prepare_dump(args.source, args.output)

@@ -1,5 +1,47 @@
 # Verification record
 
+## 2026-10-24: Upstream xargs with cooperative children
+
+The shared BusyBox image now uses upstream xargs with exact argument vectors,
+cooperative spawn/wait, inherited descriptors and independent parallel child
+tracking. The default command uses an externally installed upstream echo;
+ash's builtin precedence is unchanged. Native Release integration checks
+quotes/escapes, empty words, NUL records, end markers, replacements, trace,
+argument files, size/count batching, -x boundaries, invalid options, input and
+output errors, executable lookup and statuses 123/124/126/127. Stream checks
+cross 65535/65536/65537 and 524289 bytes. One hundred serial batches verify
+reaping beyond the live-process quota. Two workers each wait for the other's
+start file, so serial execution cannot satisfy the -P2/-P0 concurrency check.
+A fatal worker and a delayed failing worker verify draining and retained status
+124. Saved completion files and executable modes are checked independently.
+
+Windows Release EFI/launcher packaging and actual 512 MiB WHPX/OVMF pass
+Responses and Chat Completions tool flows in `artifacts/xargs-whpx-responses`
+and `artifacts/xargs-whpx-chat_completions`. Both independently verify saved
+FAT bytes and modes. All host workspace tests, host and UEFI Clippy, formatting,
+17 CPython cases, 50 copy/move cases and ten ash descriptor cases pass.
+The complete networking application combination was not rerun in this step.
+Interactive -p/-o fail explicitly without /dev/tty. Parallelism remains subject
+to the runtime's 32-process quota, including ancestors and other roots.
+
+Corrections and verification issues:
+
+- Upstream -x was parsed but ignored. Partial-word and exactly full batches now
+  reject additional input when the requested argument count has not been met;
+  EOF/trailing whitespace and count-limited subsequent batches still succeed.
+- Empty quoted words are preserved; unfinished quotes/escapes and empty -I
+  replacement strings fail. Read and trace/output errors propagate.
+- Spawn errno is saved before diagnostics. Fatal parallel status is retained
+  while all outstanding children are drained.
+- Linking libc dup introduced a duplicate dup2. The port's dup now uses the
+  existing descriptor-duplication adapter. A duplicate ISSPACE macro was removed.
+- Initial fixture expectations assumed different usage/read-error wording;
+  assertions now check stable context together with exit status and effects.
+- Existing upstream string-offset compiler warnings remain nonfatal. A source
+  inspection used an absent generated path; the upstream source was inspected
+  directly. A documentation patch had an unmatched context and was reapplied
+  with the correct context; it did not change production code.
+
 ## 2026-10-24: Upstream copy and move applets
 
 Cp and mv now link the upstream 1.37.0 parsers, copy_file, inode_hash and

@@ -151,6 +151,11 @@ int efi_ash_dupfd(int source, int minimum)
     return result;
 }
 
+int dup(int source)
+{
+    return efi_ash_dupfd(source, 0);
+}
+
 int efi_ash_input_snapshot(const void *bytes, size_t size)
 {
     int32_t descriptor = efi_process_input_snapshot(bytes, (uint32_t)size);

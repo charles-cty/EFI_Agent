@@ -37,6 +37,8 @@ const QUANTUM: u64 = 50_000;
 const ASH_APPLETS: &[&str] = &[
     "ash",
     "sh",
+    "echo",
+    "xargs",
     "cat",
     "cp",
     "date",

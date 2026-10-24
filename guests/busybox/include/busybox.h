@@ -102,6 +102,7 @@ enum {
 int efi_ash_spawn_task(union node *node, uint32_t input, uint32_t output, unsigned flags);
 int efi_ash_exec(const char *path, char *const arguments[], char *const environment[]);
 int efi_ash_run(char *const arguments[], char *const environment[]);
+int efi_ash_spawn(char *const arguments[], char *const environment[]);
 struct passwd {
     char *pw_name;
     uid_t pw_uid;

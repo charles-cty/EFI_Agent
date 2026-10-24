@@ -58,6 +58,7 @@ $sources = (Join-Path $build 'ash.c'), (Join-Path $build 'shell_read.c'), (Join-
     (Join-Path $build 'which.c'), (Join-Path $build 'executable.c'),
     (Join-Path $build 'cp.c'), (Join-Path $build 'mv.c'), (Join-Path $build 'copy_file.c'),
     (Join-Path $Source 'coreutils/libcoreutils/cp_mv_stat.c'), (Join-Path $Source 'libbb/inode_hash.c'),
+    (Join-Path $build 'xargs.c'), 'guests/busybox/xargs_support.c',
     (Join-Path $Source 'libbb/replace.c'),
     (Join-Path $build 'ls.c'), (Join-Path $Source 'libbb/human_readable.c'),
     (Join-Path $Source 'libbb/auto_string.c'), (Join-Path $Source 'libbb/printable_string.c'),

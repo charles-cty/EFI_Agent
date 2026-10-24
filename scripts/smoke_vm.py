@@ -39,6 +39,8 @@ from wasm_stat_fixture import STAT_CHECK
 from wasm_program_paths_fixture import PROGRAM_PATHS_CHECK
 from wasm_copy_move_fixture import COPY_MOVE_CHECK
 from test_busybox_copy_move import verify_copy_move
+from wasm_xargs_fixture import XARGS_CHECK
+from test_busybox_xargs import verify_xargs
 from test_busybox_stat import verify_stat
 
 from cryptography import x509
@@ -291,6 +293,7 @@ def main():
     parser.add_argument("--find-applet", action="store_true", help="Run upstream basic and find applet WHPX checks")
     parser.add_argument("--program-paths", action="store_true", help="Verify guest PATH and shebang dispatch through WHPX")
     parser.add_argument("--copy-move-applets", action="store_true", help="Verify upstream cp/mv and independently saved filesystem effects")
+    parser.add_argument("--xargs-applet", action="store_true", help="Verify upstream xargs parsing, concurrent children and saved bytes")
     args = parser.parse_args()
     if args.code_cancel_only and not args.code_workspace:
         parser.error("--code-cancel-only requires --code-workspace")
@@ -449,13 +452,14 @@ def main():
         Provider.code_expected.append('UPSTREAM_DATE_OK')
     applet_modes = sum((args.text_applets, args.base64_applet, args.sha256_applet,
                         args.realpath_applet, args.stat_applet, args.ls_applet,
-                        args.find_applet, args.program_paths, args.copy_move_applets))
+                        args.find_applet, args.program_paths, args.copy_move_applets, args.xargs_applet))
     if applet_modes:
         if not args.code_workspace or args.filesystem_tools or args.code_cancel_only:
             parser.error("Applet checks require --code-workspace and exclude other code modes")
         if applet_modes != 1:
             parser.error("Select one applet check mode")
-        fixture = (COPY_MOVE_CHECK if args.copy_move_applets else
+        fixture = (XARGS_CHECK if args.xargs_applet else
+                   COPY_MOVE_CHECK if args.copy_move_applets else
                    PROGRAM_PATHS_CHECK if args.program_paths else
                    None if args.find_applet else
                    LS_CHECK if args.ls_applet else
@@ -463,7 +467,8 @@ def main():
                    REALPATH_CHECK if args.realpath_applet else
                    SHA256_CHECK if args.sha256_applet else
                    BASE64_CHECK if args.base64_applet else TEXT_APPLETS_CHECK)
-        marker = ('UPSTREAM_COPY_MOVE_OK' if args.copy_move_applets else
+        marker = ('UPSTREAM_XARGS_OK' if args.xargs_applet else
+                  'UPSTREAM_COPY_MOVE_OK' if args.copy_move_applets else
                   'PROGRAM_PATHS_OK' if args.program_paths else
                   'UPSTREAM_BASIC_APPLETS_OK' if args.find_applet else
                   'UPSTREAM_LS_OK' if args.ls_applet else
@@ -584,7 +589,7 @@ def main():
                 wait("Conversation cleared")
             if (args.text_applets or args.base64_applet or args.sha256_applet
                     or args.realpath_applet or args.stat_applet or args.ls_applet
-                    or args.find_applet or args.program_paths or args.copy_move_applets):
+                    or args.find_applet or args.program_paths or args.copy_move_applets or args.xargs_applet):
                 send("Exercise code tools")
                 wait("CODE_TOOLS_VERIFIED", args.code_timeout)
                 send("/exit")
@@ -623,6 +628,8 @@ def main():
                         verify_stat(workspace)
                     elif args.copy_move_applets:
                         verify_copy_move(workspace)
+                    elif args.xargs_applet:
+                        verify_xargs(workspace)
                     elif args.realpath_applet:
                         verify_realpath(workspace)
                     elif args.sha256_applet:
