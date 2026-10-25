@@ -1,5 +1,65 @@
 # Verification record
 
+## 2026-10-25: Clean Windows VM-only rebuild
+
+The build scripts accept `-VmOnly` on Windows and `--vm-only` on Linux.
+The launcher package command accepts a final `--vm-only` argument. This mode
+creates only artifacts/esp and artifacts/efi-agent-vm.img, boots Agent directly,
+and packages without UEFI Shell or API credentials. Runtime API configuration
+is supplied at launch.
+
+Removed 1,195 old top-level artifact entries, including the task-specific
+JavaScript delivery directory, earlier verification outputs, old VM/native
+packages and prepared guest build output. Cargo clean removed 51,847 files
+and 32.0 GiB. Retained firmware, Windows toolchains, upstream guest source
+caches and the official CPython ZIP. Removed the unused source-built CPython
+cache and the duplicate prebuilt archive. Earlier artifact references in this
+document are historical; their generated evidence was removed in this cleanup.
+
+Rebuilt BusyBox, QuickJS, wolfSSL, curl and WolfSSH with Windows WASI SDK 34.
+Re-extracted CPython and copied the current startup adapters. Windows Release
+EFI and launcher builds pass. The standard `scripts/build.ps1 -VmOnly` build
+passes with API and Shell environment variables absent. No native package,
+task-specific delivery directory or packaged API configuration remains.
+
+All 25 launcher tests pass, including an actual FAT pack/extract check of the
+VM-only entry point and exclusion of native assets. Launcher Release Clippy,
+workspace Rust formatting, PowerShell parsing and Bash syntax/help pass.
+An independent Python FAT reader compares all 1,160 declared asset files in
+both the standard tree and disk against the freshly prepared sources. Both
+packaged EFI entry points match the Release application. The unchanged Python
+binary and all 537 upstream library files match the official ZIP. The VM disk
+is 136,314,880 bytes. Hashes are in artifacts/verification/builds.tsv.
+
+The standard VM tree boots with the actual Windows launcher and WHPX at
+256 MiB. Native ConPTY checks pass multiline clipboard paste, Unicode cursor
+editing, `/exit`, double Ctrl+C and return to the Windows shell. Evidence:
+artifacts/verification/windows-whpx.log and its screen captures.
+The 256 MiB WHPX Responses flow also passes retained shell/JavaScript state,
+zx quoting and Bash features, reset/cancel isolation, independent roots and
+independently checked saved FAT bytes. It uses the freshly packaged application
+and libraries with a local DNS/TLS model-provider fixture. Evidence:
+artifacts/verification/sessions-responses.log and sessions-responses/.
+The temporary Windows console test workspace was removed after verification.
+
+The launcher still imports a host workspace snapshot into a private FAT disk,
+then exports logical changes on exit. New namespace files can use private
+backing objects. Live host-directory sharing remains an outstanding requirement;
+the clean build and VM tests do not establish live synchronization.
+
+Current evidence is under artifacts/verification: guests-build.log,
+efi-build.log, launcher-checks.log, vm-build.log and package-checks.log.
+
+Intermediate issues: the first formatting check required a Rust line wrap;
+the corrected check passes. A read-only diff stalled while scanning the dirty
+Shell submodule; it was stopped and repeated with submodule scanning disabled.
+Scoped reads corrected guessed file paths. Upstream C string-pointer and
+CMake diagnostics remain in the build log; compilation completes successfully.
+A process-inspection CIM filter lost quotes at the shell boundary; the corrected
+query confirms the completed tests leave no QEMU process.
+An empty process query created no log file; cleanup initially tried to remove
+that absent optional file. The remaining cleanup and artifact hash checks pass.
+
 ## 2026-10-25: Retained JavaScript tool replaces Python tool
 
 The provider tool set is read, write, edit, shell, js and reset_js. The removed python

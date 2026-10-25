@@ -344,26 +344,37 @@ pub fn extract(image: &Path, destination: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-/// Assemble distinct VM and native packages from one compiled EFI application.
+/// Assemble VM and native packages, or only the VM package when requested.
 pub fn package(args: Vec<String>) -> Result<(), Error> {
+    let vm_only = args.last().is_some_and(|arg| arg == "--vm-only");
+    let args = if vm_only {
+        &args[..args.len() - 1]
+    } else {
+        &args[..]
+    };
     if !(2..=3).contains(&args.len()) {
         return Err(
-            "Usage: efi-agent package <application.efi> <output-directory> [prepared-directory]"
+            "Usage: efi-agent package <application.efi> <output-directory> [prepared-directory] [--vm-only]"
                 .into(),
         );
     }
     let efi = Path::new(&args[0]);
-    configuration()?;
-    let ShellAssets {
-        binary: shell,
-        license,
-        source,
-    } = shell_assets()?;
+    let shell = if vm_only {
+        None
+    } else {
+        configuration()?;
+        Some(shell_assets()?)
+    };
+    let modes: &[(&str, &str)] = if vm_only {
+        &[("vm", "esp")]
+    } else {
+        &[("vm", "esp"), ("native", "native-esp")]
+    };
     let output = Path::new(&args[1]);
     let mut installations = std::collections::BTreeMap::new();
     if let Some(prepared) = args.get(2) {
         let assets = crate::installation::assets(Path::new(prepared))?;
-        for name in ["esp", "native-esp"] {
+        for &(_, name) in modes {
             let work = output.join(name).join("work");
             let previous = if work.exists() {
                 crate::workspace::guest(&work, &crate::workspace::Snapshot::new())?
@@ -373,19 +384,21 @@ pub fn package(args: Vec<String>) -> Result<(), Error> {
             installations.insert(name, crate::installation::overlay(&previous, &assets)?);
         }
     }
-    for (mode, name) in [("vm", "esp"), ("native", "native-esp")] {
+    for &(mode, name) in modes {
         let tree = output.join(name);
         fs::create_dir_all(tree.join("EFI/BOOT"))?;
         fs::create_dir_all(tree.join("EFI/AGENT"))?;
         fs::create_dir_all(tree.join("EFI/AGENT/DRIVERS"))?;
-        fs::create_dir_all(tree.join("EFI/TOOLS"))?;
         if let Some(installation) = installations.get(name) {
             crate::installation::stage(installation, &tree.join("work"))?;
         }
         fs::copy(efi, tree.join("EFI/AGENT/AGENT.EFI"))?;
-        fs::write(tree.join("EFI/TOOLS/SHELLX64.EFI"), &shell)?;
-        fs::write(tree.join("EFI/TOOLS/SHELL-LICENSE.TXT"), &license)?;
-        fs::write(tree.join("EFI/TOOLS/SHELL-SOURCE.TXT"), &source)?;
+        if let Some(shell) = &shell {
+            fs::create_dir_all(tree.join("EFI/TOOLS"))?;
+            fs::write(tree.join("EFI/TOOLS/SHELLX64.EFI"), &shell.binary)?;
+            fs::write(tree.join("EFI/TOOLS/SHELL-LICENSE.TXT"), &shell.license)?;
+            fs::write(tree.join("EFI/TOOLS/SHELL-SOURCE.TXT"), &shell.source)?;
+        }
         if mode == "vm" {
             fs::copy(efi, tree.join("EFI/BOOT/BOOTX64.EFI"))?;
             fs::write(tree.join("EFI/AGENT/VM.TXT"), b"serial\n")?;
@@ -395,7 +408,13 @@ pub fn package(args: Vec<String>) -> Result<(), Error> {
                 fs::remove_file(config_path)?;
             }
         } else {
-            fs::write(tree.join("EFI/BOOT/BOOTX64.EFI"), &shell)?;
+            fs::write(
+                tree.join("EFI/BOOT/BOOTX64.EFI"),
+                &shell
+                    .as_ref()
+                    .expect("Native package requires Shell")
+                    .binary,
+            )?;
             fs::write(tree.join("EFI/BOOT/startup.nsh"), SHELL_STARTUP)?;
             let marker = tree.join("EFI/AGENT/VM.TXT");
             if marker.exists() {
@@ -425,6 +444,43 @@ pub fn package(args: Vec<String>) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn vm_only_package_contains_the_application_without_native_assets() {
+        let directory = std::env::temp_dir().join(format!(
+            "efi-vm-package-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let application = directory.join("application.efi");
+        let output = directory.join("output");
+        fs::write(&application, b"test EFI application").unwrap();
+        package(vec![
+            application.to_string_lossy().into(),
+            output.to_string_lossy().into(),
+            "--vm-only".into(),
+        ])
+        .unwrap();
+        assert!(!output.join("native-esp").exists());
+        assert!(!output.join("efi-agent-native.img").exists());
+        assert!(!output.join("esp/EFI/TOOLS").exists());
+        assert!(!output.join("esp/EFI/AGENT/CONFIG.JSON").exists());
+        let extracted = directory.join("extracted");
+        extract(&output.join("efi-agent-vm.img"), &extracted).unwrap();
+        assert_eq!(
+            fs::read(extracted.join("EFI/BOOT/BOOTX64.EFI")).unwrap(),
+            b"test EFI application"
+        );
+        assert_eq!(
+            fs::read(extracted.join("EFI/AGENT/VM.TXT")).unwrap(),
+            b"serial\n"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn actual_fat_save_preserves_host_changes_and_refuses_conflicting_edits() {
         for conflict in [false, true] {

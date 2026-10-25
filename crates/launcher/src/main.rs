@@ -24,7 +24,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some("catalog") => installation::catalog(args.collect()),
         _ => {
             println!(
-                "EFI Agent\n  vm <qemu> <OVMF_CODE.fd> <OVMF_VARS.fd> <EFI-file-or-ESP-directory-or-image> <workspace> [--memory-mib <MiB>]\n  pack <ESP-directory> <new-disk.img>\n  package <application.efi> <output-directory> [prepared-directory]\n  catalog <prepared-directory>\n  install <prepared-directory> <workspace>"
+                "EFI Agent\n  vm <qemu> <OVMF_CODE.fd> <OVMF_VARS.fd> <EFI-file-or-ESP-directory-or-image> <workspace> [--memory-mib <MiB>]\n  pack <ESP-directory> <new-disk.img>\n  package <application.efi> <output-directory> [prepared-directory] [--vm-only]\n  catalog <prepared-directory>\n  install <prepared-directory> <workspace>"
             );
             Ok(())
         }

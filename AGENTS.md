@@ -86,9 +86,18 @@ cancel/reap partial child trees. Subtree cancellation stops parents first so
 suspended waits cannot reap children mid-cleanup. See docs/memory-analysis.md
 and artifacts/memory-resource-lifecycle for allocation evidence.
 
-Prepared default guests are current. Fresh VM/native packages are under
-artifacts/js-tool/delivery-package; hashes are in artifacts/js-tool/builds.tsv.
-The original user workspace and vendor/uefi-shell contents remain untouched.
+Prepared default guests were rebuilt from a clean Windows build directory.
+The VM-only build is `scripts/build.ps1 -VmOnly`; its outputs are artifacts/esp
+and artifacts/efi-agent-vm.img. It requires API settings only when launching.
+Old task-specific packages and verification outputs were removed; historical
+artifact references below describe previous runs. Current hashes and evidence
+are under artifacts/verification. User workspace changes and vendor/uefi-shell
+contents remain untouched.
+The clean standard package passes actual Windows WHPX at 256 MiB through the
+native console launcher and the Responses shell/JavaScript session flow,
+including reset/cancel isolation and independently checked saved FAT bytes.
+The VM launcher currently stages a private FAT disk and exports workspace
+changes on exit. Live host-directory sharing remains an outstanding requirement.
 Detailed scope, acceptance evidence and remaining port limits are in
 [docs/environment-work.md](docs/environment-work.md),
 [docs/verification.md](docs/verification.md) and

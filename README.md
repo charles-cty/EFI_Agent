@@ -201,6 +201,10 @@ bash scripts/build.sh
 ./scripts/build.ps1
 ```
 
+Use `./scripts/build.ps1 -VmOnly` or `bash scripts/build.sh --vm-only` to build
+only the VM package. This mode does not require UEFI Shell or API credentials.
+Configure the API before launching the VM.
+
 Select Debug with `--profile debug` or `-Profile debug`. Set `CARGO_TARGET_DIR`
 to change the target directory for both builds. Both scripts use the compiled
 launcher's `package` command and create:
@@ -251,7 +255,8 @@ specified in the config. Operating-system NIC support alone is not sufficient.
    and read a small file. Native tools use the configured boot-volume directory.
    `/exit` returns to Shell when started from Shell, or to firmware when booted directly.
 
-Both trees include `EFI/TOOLS/SHELLX64.EFI` and its license. `/caps` reports
+Combined builds include `EFI/TOOLS/SHELLX64.EFI` and its license in both trees.
+VM-only packages boot Agent directly. `/caps` reports
 whether the Shell protocol is available. Model-driven Shell command tools are
 not yet implemented. Shell cannot supply missing NIC drivers or TCP4.
 Agent can load explicitly listed boot-volume drivers at startup, then connect
