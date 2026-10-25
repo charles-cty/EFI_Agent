@@ -50,7 +50,9 @@ fn session_stream_waits_without_consuming_stdin_and_cannot_escape_through_c_impo
         .set_filesystem(Rc::new(Namespace::temporary(65536, 32, 1, None)))
         .unwrap();
     world.register("ash", &module).unwrap();
-    let mut session = world.start_session(false).unwrap();
+    let mut session = world
+        .start_session(efi_agent_wasm::session::SessionKind::Shell)
+        .unwrap();
     for _ in 0..100 {
         world.step();
     }

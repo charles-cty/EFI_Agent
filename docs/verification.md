@@ -1,5 +1,158 @@
 # Verification record
 
+## 2026-10-25: Retained JavaScript tool replaces Python tool
+
+The provider tool set is read, write, edit, shell, js and reset_js. The removed python
+tool is rejected rather than aliased. Ordinary Python executables, standard
+subprocess support and quoted ash heredocs remain available. The private Python
+session driver is removed from source and freshly prepared libraries. Python
+binary bytes remain unchanged.
+
+Each conversation starts ash and QuickJS on first use. The private bounded
+source/completion channel remains separate from finite command stdin. QuickJS
+retains global let/const/var declarations, functions and closures across calls.
+It supports print, console.log/error, quit and the asynchronous $ command
+template with top-level await. Redeclaring a lexical global fails. Ordinary
+exceptions, rejected Promises and syntax errors preserve the context. Quit,
+trap, cancellation and clear release it. Pending top-level Promises with no
+event source fail explicitly and reset the session; saved resolvers cannot
+resume a failed request in a later call. Unhandled rejections fail the current request.
+Errors cancel/reap outstanding command children and close capture descriptors.
+Failed evaluations that remain suspended on a Promise also reset the session;
+abandoned command Promises can remain pending in user globals. Each $ command
+uses a fresh ash child, independent of the shell tool's retained variables/cwd.
+Node.js APIs, file module loading and timers remain unavailable.
+
+Native integration uses actual QuickJS and ash in retained Stores. It checks
+global declarations, closures, redeclaration failure without state loss,
+ordinary and Promise failures, failure with a live sleep child, subsequent
+async recovery, concurrent command capture, shell-word quoting, finite stdin,
+stderr, shell state/anchored cwd, quit, fatal shell syntax, clear and cancellation.
+Pending-await reset checks include both a missing event source and an unhandled
+rejection while the outer evaluation is suspended; saved resolvers are absent
+from the next interpreter and stale continuation output never appears.
+The independent workspace reader verifies saved bytes. The generic private
+descriptor ABI test still verifies channel ownership, blocking, frame bounds
+and rejection of duplication/renumber/inheritance paths.
+
+The counting allocator reports exactly 3,767,524 initialized live bytes
+(3.59 MiB) in six cycles, alternating quit and cancellation. Both paths leave
+25,804 bytes before reap and no remaining process after reap. This excludes
+firmware/UI, the separate ash tool session, user data growth and active children.
+Evidence: artifacts/js-tool/lifecycle-zx-release/js-sessions.tsv. The previous Python
+session measurement was approximately 55.3 MiB.
+
+The pinned npm distribution zx@8.8.5-lite is vendored unchanged under vendor/zx.
+The build selects its quote/buildCmd/substitute and ProcessOutput implementations;
+the WASI process adapter is separate. No npm install or network download is needed
+at build time. The package catalog ships the zx and third-party licenses.
+See vendor/zx/PORT.md for the supported API and explicit Node runtime limits.
+
+Real-ash oracles check 98 structured words containing quotes, backslashes,
+control characters, Unicode, shell metacharacters and injection-like strings.
+Expected NUL-separated output is computed directly from the input words; the
+injection marker file must remain absent. Further checks cover Promise/output
+interpolation, ProcessOutput error/ok/message/text/JSON/lines/bytes, 196613-byte
+completed pipelines, stderr/stdall pipes, concurrent stdin isolation, merged
+capture order, malformed template escapes, NUL rejection and 524288/524289-byte
+input boundaries. Unsupported options fail before process creation.
+
+ASH_BASH_COMPAT is enabled with its upstream parser. The missing xgettimeofday
+helper now uses the WASI clock and reports failure. Task serialization includes
+NTO2 (&>), tested through an actual pipeline. Native and firmware fixtures also
+exercise function, [[ ]]/regex, substitution/slicing, ANSI-C quoting, pipefail
+with distinct nonzero stage statuses, source, xtrace descriptors across tasks,
+EPOCH variables, SHLVL and wait -n. Upstream &>> and full Bash array/process
+substitution limitations remain documented.
+
+Repeated reset_js calls, including before use, do not initialize QuickJS. A
+started session loses its bindings after reset; ash variables, anchored cwd,
+open fd 7 and saved file bytes survive. An independent background root remains
+active through the actual firmware reset sequence.
+
+Validation evidence under artifacts/js-tool:
+
+- sessions-zx-release.log: native retained shell/JavaScript, Bash extension,
+  upstream quoting/output and explicit reset integration.
+- lifecycle-zx-release: six measured session exit/cancel cycles.
+- quickjs-zx-final.log: real QuickJS command ABI, concurrency and upstream quoting.
+- whpx-sessions-responses-zx-idle and whpx-sessions-chat_completions-zx-idle:
+  actual 256 MiB WHPX tools for both APIs, Bash
+  extensions, zx APIs and explicit JS reset, with independent saved FAT checks.
+- whpx-tools-responses-delivery and whpx-tools-chat_completions-delivery:
+  both complete regular provider flows pass tool execution, Python heredocs,
+  capture boundaries, cancellation, further requests and saved FAT byte checks.
+- cpython.log: all 17 unchanged-Python command-line integration cases pass,
+  including finite stdin and ash heredocs.
+- workspace-tests-zx-final.log, clippy-host-zx-final.log, clippy-uefi-zx-final.log: host default-member
+  tests and both Clippy targets pass. Formatting and git diff --check pass for
+  project-owned changes. The unchanged upstream zx distribution retains its
+  original trailing whitespace and EOF formatting.
+- regressions-zx.log and regressions-zx-rest.log: all 21 BusyBox suites and
+  the three ash descriptor/here-document/math suites pass with ASH_BASH_COMPAT.
+- network-zx-whpx-256: complete actual Windows WHPX network application sequence
+  passes all 20 checks at 256 MiB, including TCP/DNS/POSIX, HTTP/TLS/SSH,
+  QuickJS/Python-to-ash chains, cancellation, concurrent Python and saved FAT bytes.
+
+Fresh Windows Release EFI and launcher builds are complete. Prepared guests
+are under artifacts/wasm-guests; fresh VM/native trees and disk images are under
+artifacts/js-tool/delivery-package. Artifact hashes are in artifacts/js-tool/builds.tsv.
+The user workspace and vendor/uefi-shell contents remain untouched.
+
+Reproduce native sessions and allocation checks from Windows with:
+
+```powershell
+& artifacts/toolchains/uv-current/uv.exe run --no-project scripts/test_sessions.py --runner target/release/examples/run_guest.exe --quickjs artifacts/wasm-guests/quickjs.wasm --ash artifacts/wasm-guests/ash.wasm
+& artifacts/toolchains/uv-current/uv.exe run --no-project scripts/test_resource_lifecycle.py --runner target/release/examples/run_guest.exe --guests artifacts/wasm-guests --output artifacts/js-tool/lifecycle-zx-release --case js-sessions
+```
+
+Intermediate issues: JavaScript replacement-string syntax expanded a literal
+$ template prefix during batch editing; affected edits were regenerated and
+checked. Windows line endings prevented two test-harness substitutions until
+the edited file was normalized. QuickJS stdout buffering hid a cancellation
+marker before a long child wait; print now flushes stdout, and the retained
+session test passes. A nested PowerShell/Python inspection lost quotes; a file
+or module invocation replaced it. Two searches used nonexistent paths.
+Packaging first lacked local test provider settings, then used an absent
+default Shell path; explicit local test settings and the existing built Shell
+resolved both. Clippy rejected a manual range expression in the allocation
+test; RangeInclusive::contains passes. The first Responses session run timed
+out reading the final independent-root reap marker with visibly corrupted
+serial screen text; its evidence is retained separately from the retry.
+Upstream zx ANSI-C quotes first exposed the disabled ash parser feature;
+ASH_BASH_COMPAT now enables the upstream behavior. Enabling that configuration
+also exposed a missing xgettimeofday helper, supplied through the existing
+WASI clock. An initial fixture expected &>>, which upstream BusyBox does not
+implement; it now checks the supported &> and standard append redirection.
+A malformed tagged-template escape produced an undefined cooked segment;
+the adapter now rejects it before spawning, as upstream zx does. The fixture
+uses explicit backslashes for shell octal escapes. An empty Rust argument
+struct accepted []; reset_js now parses an empty JSON object explicitly.
+A temporary regression driver stopped at an optional --case argument; the
+remaining suites resumed without repeating completed suites. The first
+extended firmware runs reused visible completion/cancellation text and sent
+later input before the UI was idle. The driver now uses unique round markers
+and waits for Ready before proceeding. Original failed serial/provider records
+remain separate from the final reruns. Existing upstream string-plus-integer
+compiler warnings remain nonfatal. QEMU's ignored interrupt-vector and unrelated
+missing Windows application-manifest warnings do not prevent the passing runs.
+Read-only searches that named absent files
+were corrected with scoped file discovery. A patch with an empty hunk was
+reissued with the intended context.
+Final binary inspection found that a prompt edit overlapped the preceding EFI
+build. The Release EFI and launcher are rebuilt after that edit; binary string
+inspection verifies the Bash extension prompt before the final package.
+The final prompt-only refresh also clarifies explicit JS command stdin and
+lists reset_js in help. Execution evidence above precedes that text refresh;
+the core suite passes again and the final package is checked against the
+rebuilt EFI, current guest files and declared installation assets.
+Both final package trees contain 1160 declared installation files with bytes
+equal to the prepared sources, including zx licenses. The VM BOOTX64.EFI and
+native EFI/AGENT/AGENT.EFI match the rebuilt app. The first native comparison
+incorrectly targeted its BOOTX64.EFI Shell loader; checking the application's
+documented path resolves that probe error. Evidence: package-byte-checks.txt.
+Temporary editing/launch scripts are removed after verification.
+
 ## 2026-10-25: Default VM RAM is 256 MiB
 
 The launcher now supplies 256 MiB to QEMU when --memory-mib is omitted.

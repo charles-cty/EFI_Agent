@@ -1,5 +1,8 @@
 //! Native integration driver for the same retained guest session protocol.
-use efi_agent_wasm::{Status, World, session::Session};
+use efi_agent_wasm::{
+    Status, World,
+    session::{Session, SessionKind},
+};
 use std::{
     fs,
     io::{self, Write},
@@ -37,6 +40,13 @@ pub fn run(world: &mut World, requests: &[String]) -> Result<(), Error> {
     }
     let mut sessions: [Option<Session>; 2] = [None, None];
     for (index, request) in requests.chunks_exact(2).enumerate() {
+        if request[0] == "reset_js" {
+            if let Some(session) = sessions[SessionKind::JavaScript.slot()].take() {
+                stop(world, session.pid(), false)?;
+            }
+            println!("SESSION_JS_RESET {index}");
+            continue;
+        }
         if request[0] == "clear" {
             for session in &mut sessions {
                 if let Some(session) = session.take() {
@@ -46,16 +56,16 @@ pub fn run(world: &mut World, requests: &[String]) -> Result<(), Error> {
             println!("SESSION_CLEAR {index}");
             continue;
         }
-        let (python, cancel) = match request[0].as_str() {
-            "shell" => (false, false),
-            "python" => (true, false),
-            "cancel-shell" => (false, true),
-            "cancel-python" => (true, true),
+        let (kind, cancel) = match request[0].as_str() {
+            "shell" => (SessionKind::Shell, false),
+            "js" => (SessionKind::JavaScript, false),
+            "cancel-shell" => (SessionKind::Shell, true),
+            "cancel-js" => (SessionKind::JavaScript, true),
             _ => return Err("Unknown session operation".into()),
         };
-        let slot = usize::from(python);
+        let slot = kind.slot();
         if sessions[slot].is_none() {
-            sessions[slot] = Some(world.start_session(python)?);
+            sessions[slot] = Some(world.start_session(kind)?);
         }
         let session = sessions[slot].as_mut().unwrap();
         session.submit(&fs::read_to_string(&request[1])?)?;

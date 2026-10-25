@@ -19,6 +19,8 @@ import subprocess
 import tempfile
 import threading
 import time
+from wasm_zx_fixture import ZX_CHECK
+from wasm_bash_fixture import BASH_COMPAT_CHECK
 from textwrap import dedent
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from wasm_time_fixture import TIME_CHECK
@@ -77,6 +79,13 @@ from dissect.util.stream import RangeStream
 from wasm_namespace_fixture import FatWorkspace
 
 
+def python_step(source):
+    compile(source, '<python-shell-fixture>', 'exec')
+    delimiter = 'EFI_PYTHON_FIXTURE'
+    assert delimiter not in source.splitlines()
+    return ('shell', {'command': f"python - <<'{delimiter}'\n{source}\n{delimiter}\n"})
+
+
 class DNS(socketserver.BaseRequestHandler):
     queries = 0
 
@@ -112,14 +121,16 @@ class Provider(BaseHTTPRequestHandler):
         ("shell", {"command": "printf '%s\\n' 'a b' '中' > code-shell.txt\necho shell-out; echo shell-err >&2"}),
         ("shell", {"command": "export TOOL_SESSION_VALUE=retained; echo session-ash"}),
         ("shell", {"command": "test \"$TOOL_SESSION_VALUE\" = retained || exit 9; echo retained-ash"}),
-        ("python", {"code": "import subprocess\nfrom pathlib import Path\nr = subprocess.run(\"printf '%s' 'python child 中'\", shell=True, capture_output=True, text=True, check=True)\nPath('code-python.txt').write_text(r.stdout)\nprint(r.stdout)"}),
+        ("js", {"code": "let retained = 731; const result = await $`printf '%s' 'js child 中' > code-js.txt`; print('js child 中');"}),
         ("shell", {"command": "echo failure-out; echo failure-err >&2; exit 7"}),
-        ("python", {"code": "raise ValueError('code-error-419')"}),
-        ("python", {"code": "import sys\nsys.stdout.write('A' * 65536)\nsys.stderr.write('B' * 65537)"}),
+        ("js", {"code": "throw Error('code-error-419');"}),
+        ("js", {"code": "print('A'.repeat(65535)); console.error('B'.repeat(65537));"}),
         ("shell", {"command": "echo forbidden\u0000"}),
-        ("python", {"code": "print('retained-interpreter', 'subprocess' in globals())"}),
+        ("js", {"code": "print('retained-interpreter', retained === 731);"}),
+        ("shell", {"command": "python - <<'PY'\nprint('PYTHON_HEREDOC_OK')\nPY\n"}),
     ]
-    code_expected = ["shell-out", "session-ash", "retained-ash", "python child 中", "Exit code: 7", "code-error-419", "[Output truncated at 64 KiB]", "Tool error: Code must contain no NUL", "retained-interpreter True"]
+    code_expected = ["shell-out", "session-ash", "retained-ash", "js child 中", "Exit code: 7", "code-error-419", "[Output truncated at 64 KiB]", "Tool error: Code must contain no NUL", "retained-interpreter true", "PYTHON_HEREDOC_OK"]
+    code_verified = "CODE_TOOLS_VERIFIED"
     filesystem_tools = False
 
     def log_message(self, *_):
@@ -168,7 +179,7 @@ class Provider(BaseHTTPRequestHandler):
                 assert previous["extra_content"] == {"signature": "SIGNED_419"}
         tools = request["tools"]
         names = {tool["name"] if responses else tool["function"]["name"] for tool in tools}
-        assert names == {"read", "write", "edit", "shell", "python"}, names
+        assert names == {"read", "write", "edit", "shell", "js", "reset_js"}, names
         if prompt == "Quota error":
             body = b'{"error":{"message":"Insufficient quota"}}'
             self.send_response(402)
@@ -208,7 +219,7 @@ class Provider(BaseHTTPRequestHandler):
                 assert expected in result, (step, result)
                 if expected == "[Output truncated at 64 KiB]":
                     assert result.count("[Output truncated at 64 KiB]") == 1
-                    assert "A" * 65536 in result and "B" * 65536 in result
+                    assert "A" * 65535 in result and "B" * 65536 in result
                 if expected == "Tool error: Code must contain no NUL":
                     assert "forbidden\n" not in result
             if step < len(Provider.code_steps):
@@ -216,10 +227,10 @@ class Provider(BaseHTTPRequestHandler):
                 call = {"id": f"code-{step+1}", "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}, "extra_content": {"signature": "SIGNED_419"}}
                 text = ""
             else:
-                text = "CODE_TOOLS_VERIFIED"
-        elif prompt == "Cancel Python code tool":
-            code = "import subprocess\np = subprocess.Popen(['sleep', '100'])\np.wait()"
-            call = {"id": "cancel-code", "type": "function", "function": {"name": "python", "arguments": json.dumps({"code": code})}, "extra_content": {"signature": "SIGNED_419"}}
+                text = Provider.code_verified
+        elif prompt == "Cancel JS code tool":
+            code = "await $`sleep 100`;"
+            call = {"id": "cancel-code", "type": "function", "function": {"name": "js", "arguments": json.dumps({"code": code})}, "extra_content": {"signature": "SIGNED_419"}}
             text = ""
         elif prompt == "Cancel code tool":
             command = "echo started > code-cancel-started.txt; (sleep 30) & wait" if Provider.filesystem_tools else "echo started > code-cancel-started.txt; (while :; do :; done) & wait"
@@ -308,12 +319,12 @@ def run(services):
     parser.add_argument("--tls-failure", choices=["untrusted", "hostname", "expired", "random"])
     parser.add_argument("--http", action="store_true", help="Use plaintext HTTP to test local-only transport and clean TCP EOF")
     parser.add_argument("--driver", type=Path, help="Optional EFI boot-service driver fixture")
-    parser.add_argument("--code-workspace", type=Path, help="Stage ash, Python and its library; exercise real model code tools")
+    parser.add_argument("--code-workspace", type=Path, help="Stage ash, QuickJS, Python and its library; exercise real model code tools")
     parser.add_argument("--c-port-cwd", action="store_true", help="Verify shared C cwd support and real curl, QuickJS and WolfSSH relative paths")
     parser.add_argument("--cwd-probe", type=Path, help="C cwd fixture binary; required with --c-port-cwd")
     parser.add_argument("--executable-freshness", action="store_true", help="Verify live and cached executable images across source mutation")
     parser.add_argument("--installation", action="store_true", help="Verify manifest-installed commands, libraries and licenses")
-    parser.add_argument("--sessions", action="store_true", help="Verify consecutive live shell/Python tool state and clear")
+    parser.add_argument("--sessions", action="store_true", help="Verify consecutive live shell/JavaScript tool state and clear")
     parser.add_argument("--code-timeout", type=float, default=480, help="Maximum seconds for the complete code-tool sequence")
     parser.add_argument("--code-cancel-only", action="store_true", help="Run only code cancellation/isolation checks; requires --code-workspace")
     parser.add_argument("--filesystem-tools", action="store_true", help="Verify nested file-tool writes, mkdir, large writes and finite Python stdin")
@@ -348,7 +359,7 @@ def run(services):
         Provider.code_steps = [
             ("write", {"path": "scripts/deep/input.py", "content": "print('NESTED_SCRIPT_OK')\n"}),
             ("shell", {"command": "python scripts/deep/input.py"}),
-            ("python", {"code": dedent("""
+            python_step(dedent("""
                 import os
                 os.makedirs('data/space dir')
                 payload = bytes(range(256)) * 32768
@@ -364,10 +375,10 @@ def run(services):
                             offset += len(block)
                     assert offset == size
                 print('FILESYSTEM_WRITES_OK')
-                """)}),
+                """)),
             ("shell", {"command": "python - <<'PY'\nimport os\nassert not os.isatty(0)\nprint('HEREDOC_SCRIPT_OK')\nPY\n"}),
-            ("python", {"code": "import os, subprocess\nassert not any(os.isatty(fd) for fd in (0, 1, 2))\nfor source, expected in [(b'', b''), (b'print(731)\\n', b'731\\n')]:\n    r = subprocess.run(['python', '-'], input=source, capture_output=True)\n    assert (r.returncode, r.stdout, r.stderr) == (0, expected, b''), r\nprint('FINITE_STDIN_OK')"}),
-            ("python", {"code": dedent("""
+            python_step("import os, subprocess\nassert not any(os.isatty(fd) for fd in (0, 1, 2))\nfor source, expected in [(b'', b''), (b'print(731)\\n', b'731\\n')]:\n    r = subprocess.run(['python', '-'], input=source, capture_output=True)\n    assert (r.returncode, r.stdout, r.stderr) == (0, expected, b''), r\nprint('FINITE_STDIN_OK')"),
+            python_step(dedent("""
                 import errno, os, stat, subprocess
                 os.makedirs('mutation/empty')
                 with open('mutation/original', 'wb') as f:
@@ -419,9 +430,9 @@ def run(services):
                 os.umask(0o022)
                 os.chdir('/')
                 print('PERMISSIONS_CWD_OK')
-                """)}),
+                """)),
             ("shell", {"command": "read -r result < moved-mutation/result; printf '%s\\n' \"$result\""}),
-            ("python", {"code": dedent("""
+            python_step(dedent("""
                 import subprocess
                 payload = (bytes(range(256)) * 2050)[:524289]
                 long_line = b'x' * 1100003
@@ -453,8 +464,8 @@ def run(services):
                         assert bool(result.stderr) == bool(status), (command, result.stderr)
                 assert open('stream-copy', 'rb').read() == payload
                 print('UPSTREAM_STREAMS_OK')
-                """)}),
-            ("python", {"code": dedent("""
+                """)),
+            python_step(dedent("""
                 import compileall, importlib.util, os, py_compile, subprocess, sys
                 os.makedirs('cache-check')
                 with open('cache-check/cached_module.py', 'w') as source:
@@ -485,14 +496,14 @@ def run(services):
                 assert (no_cache.returncode, no_cache.stdout, no_cache.stderr) == (0, b'', b''), no_cache
                 assert not os.path.exists(importlib.util.cache_from_source('cache-check/no_cache_module.py'))
                 print('PYTHON_CACHE_OK')
-                """)}),
+                """)),
         ]
         Provider.code_expected = ["File saved", "NESTED_SCRIPT_OK", "FILESYSTEM_WRITES_OK", "HEREDOC_SCRIPT_OK", "FINITE_STDIN_OK", "PERMISSIONS_CWD_OK", "MUTATION_SHARED_OK", "UPSTREAM_STREAMS_OK", "PYTHON_CACHE_OK"]
-        Provider.code_steps.append(('python', {'code': TIME_CHECK}))
+        Provider.code_steps.append(python_step(TIME_CHECK))
         Provider.code_expected.append('MONOTONIC_WAIT_OK')
-        Provider.code_steps.append(('python', {'code': BASIC_APPLETS_CHECK}))
+        Provider.code_steps.append(python_step(BASIC_APPLETS_CHECK))
         Provider.code_expected.append('UPSTREAM_BASIC_APPLETS_OK')
-        Provider.code_steps.append(('python', {'code': MUTATION_APPLETS_CHECK + DATE_CHECK}))
+        Provider.code_steps.append(python_step(MUTATION_APPLETS_CHECK + DATE_CHECK))
         Provider.code_expected.append('UPSTREAM_DATE_OK')
     applet_modes = sum((args.text_applets, args.base64_applet, args.sha256_applet,
                         args.realpath_applet, args.stat_applet, args.ls_applet,
@@ -557,7 +568,7 @@ def run(services):
                   'UPSTREAM_REALPATH_OK' if args.realpath_applet else
                   'UPSTREAM_SHA256_OK' if args.sha256_applet else
                   'UPSTREAM_BASE64_OK' if args.base64_applet else 'UPSTREAM_TEXT_APPLETS_OK')
-        Provider.code_steps = [('python', {'code': BASIC_APPLETS_CHECK})]
+        Provider.code_steps = [python_step(BASIC_APPLETS_CHECK)]
         Provider.code_expected = ['UPSTREAM_BASIC_APPLETS_OK']
         if args.mount_paths:
             Provider.code_steps.extend([
@@ -565,23 +576,20 @@ def run(services):
                 ('edit', {'path': '/tmp/model-tools/deep/input.py', 'old_text': 'ORIGINAL', 'new_text': 'EDITED'}),
                 ('read', {'path': '/tmp/model-tools/deep/input.py'}),
                 ('shell', {'command': 'python /tmp/model-tools/deep/input.py; cat /tmp/model-tools/deep/input.py > shared-mount-tool-source; cp ash.wasm /tmp/model-tools/ash-copy.wasm'}),
-                ('python', {'code': "import os; assert os.path.isfile('/tmp/model-tools/deep/input.py'); print('SHARED_MOUNT_PYTHON_OK')"}),
+                python_step("import os; assert os.path.isfile('/tmp/model-tools/deep/input.py'); print('SHARED_MOUNT_PYTHON_OK')"),
             ])
             Provider.code_expected.extend([
                 'File saved', 'File edited', "print('SHARED_MOUNT_MODEL_EDITED')",
                 'SHARED_MOUNT_MODEL_EDITED', 'SHARED_MOUNT_PYTHON_OK',
             ])
         if fixture is not None:
-            Provider.code_steps.append(('python', {'code': fixture}))
+            Provider.code_steps.append(python_step(fixture))
             Provider.code_expected.append(marker)
         if args.sessions:
-            Provider.code_steps = [('python', {'code': BASIC_APPLETS_CHECK})] + [(language, {'code' if language == 'python' else 'command': source})
-                                   for language, source, _ in SESSION_STEPS]
-            Provider.code_expected = ['UPSTREAM_BASIC_APPLETS_OK'] + [expected for _, _, expected in SESSION_STEPS]
+            Provider.code_steps = [python_step(BASIC_APPLETS_CHECK)] + [(language, {'code' if language == 'js' else 'command': source})
+                                   for language, source, _ in SESSION_STEPS[:11]]
+            Provider.code_expected = ['UPSTREAM_BASIC_APPLETS_OK'] + [expected for _, _, expected in SESSION_STEPS[:11]]
         Provider.filesystem_tools = False
-    for index, (name, arguments) in enumerate(Provider.code_steps, 1):
-        if name == 'python':
-            compile(arguments['code'], f'guest-tool-step-{index}', 'exec')
     args.output.mkdir(parents=True, exist_ok=True)
     Provider.requests.clear()
     Provider.errors.clear()
@@ -622,7 +630,7 @@ def run(services):
                 subprocess.run([str(args.launcher.resolve()), 'install', str(args.code_workspace.resolve()),
                                 str((tree / 'work').resolve()), '--guest'], check=True, timeout=120)
             else:
-                for name in ("ash.wasm", "python.wasm"):
+                for name in ("ash.wasm", "quickjs.wasm", "python.wasm"):
                     shutil.copyfile(args.code_workspace / name, tree / "work" / name)
                 shutil.copytree(args.code_workspace / "lib", tree / "work/lib")
                 shutil.copytree(args.code_workspace / "share", tree / "work/share")
@@ -658,7 +666,7 @@ def run(services):
             connection, _ = console.accept()
             connection.settimeout(.1)
 
-            def wait(marker, timeout=40):
+            def wait(marker, timeout=40, *, idle=False):
                 deadline = time.monotonic() + timeout
                 while time.monotonic() < deadline:
                     try:
@@ -672,7 +680,7 @@ def run(services):
                     except socket.timeout:
                         pass
                     visible = "\n".join(screen.display)
-                    if marker in visible:
+                    if marker in visible and (not idle or screen.display[-1].strip().startswith('Ready')):
                         return visible
                     if Provider.errors:
                         raise AssertionError(Provider.errors)
@@ -697,15 +705,22 @@ def run(services):
                 wait("Conversation cleared")
             if applet_modes:
                 send("Exercise code tools")
-                wait("CODE_TOOLS_VERIFIED", args.code_timeout)
+                wait("CODE_TOOLS_VERIFIED", args.code_timeout, idle=True)
                 if args.sessions:
+                    Provider.code_steps = [(language, {'code' if language == 'js' else 'command': source})
+                                           for language, source, _ in SESSION_STEPS[11:]]
+                    Provider.code_expected = [expected for _, _, expected in SESSION_STEPS[11:]]
+                    Provider.code_verified = 'JS_SESSION_ERRORS_VERIFIED'
+                    send('Exercise code tools')
+                    wait('JS_SESSION_ERRORS_VERIFIED', args.code_timeout, idle=True)
+                    Provider.code_verified = 'SESSION_CLEAR_VERIFIED'
                     send('/clear')
                     wait('Conversation cleared')
-                    Provider.code_steps = [(language, {'code' if language == 'python' else 'command': source})
+                    Provider.code_steps = [(language, {'code' if language == 'js' else 'command': source})
                                            for language, source, _ in CLEAR_STEPS]
                     Provider.code_expected = [expected for _, _, expected in CLEAR_STEPS]
                     send('Exercise code tools')
-                    wait('CODE_TOOLS_VERIFIED', args.code_timeout)
+                    wait('SESSION_CLEAR_VERIFIED', args.code_timeout, idle=True)
                     send('/wasm start ash background-loop.sh')
                     visible = wait('WASM: ash background-loop.sh')
                     background_pid = int(re.search(r'WASM: ash background-loop.sh.*PID (\d+)', visible).group(1))
@@ -713,26 +728,45 @@ def run(services):
                     wait('Running shell')
                     time.sleep(1)
                     connection.sendall(b'\x1b')
-                    wait('Request cancelled')
+                    wait('Request cancelled', idle=True)
                     Provider.code_steps = [
-                        ('shell', {'command': 'test "${CANCEL_SESSION_TOKEN-unset}" = unset || exit 61; test "$(pwd)" = / || exit 62; export SURVIVE_PYTHON_CANCEL=retained; echo SHELL_CANCEL_RESET_OK'}),
-                        ('python', {'code': 'assert survivor == 71; print("PYTHON_SURVIVED_SHELL_CANCEL")'}),
+                        ('shell', {'command': 'test "${CANCEL_SESSION_TOKEN-unset}" = unset || exit 61; test "$(pwd)" = / || exit 62; export SURVIVE_JS_CANCEL=retained; echo SHELL_CANCEL_RESET_OK'}),
+                        ('js', {'code': 'if (survivor !== 71) throw Error("Lost survivor"); print("JS_SURVIVED_SHELL_CANCEL");'}),
                     ]
-                    Provider.code_expected = ['SHELL_CANCEL_RESET_OK', 'PYTHON_SURVIVED_SHELL_CANCEL']
+                    Provider.code_expected = ['SHELL_CANCEL_RESET_OK', 'JS_SURVIVED_SHELL_CANCEL']
+                    Provider.code_verified = 'SHELL_CANCEL_VERIFIED'
                     send('Exercise code tools')
-                    wait('CODE_TOOLS_VERIFIED', args.code_timeout)
-                    send('Cancel Python code tool')
-                    wait('Running python')
+                    wait('SHELL_CANCEL_VERIFIED', args.code_timeout, idle=True)
+                    send('Cancel JS code tool')
+                    wait('Running js')
                     time.sleep(1)
                     connection.sendall(b'\x1b')
-                    wait('Request cancelled')
+                    wait('Request cancelled', idle=True)
                     Provider.code_steps = [
-                        ('python', {'code': 'assert "survivor" not in globals(); print("PYTHON_CANCEL_RESET_OK")'}),
-                        ('shell', {'command': 'test "$SURVIVE_PYTHON_CANCEL" = retained || exit 63; echo SHELL_SURVIVED_PYTHON_CANCEL'}),
+                        ('js', {'code': 'if (typeof survivor !== "undefined") throw Error("Cancel retained state"); print("JS_CANCEL_RESET_OK");'}),
+                        ('shell', {'command': 'test "$SURVIVE_JS_CANCEL" = retained || exit 63; echo SHELL_SURVIVED_JS_CANCEL'}),
                     ]
-                    Provider.code_expected = ['PYTHON_CANCEL_RESET_OK', 'SHELL_SURVIVED_PYTHON_CANCEL']
+                    Provider.code_expected = ['JS_CANCEL_RESET_OK', 'SHELL_SURVIVED_JS_CANCEL']
+                    Provider.code_verified = 'JS_CANCEL_VERIFIED'
                     send('Exercise code tools')
-                    wait('CODE_TOOLS_VERIFIED', args.code_timeout)
+                    wait('JS_CANCEL_VERIFIED', args.code_timeout, idle=True)
+                    Provider.code_steps = [
+                        ('reset_js', {}), ('reset_js', {}),
+                        ('js', {'code': 'if (typeof survivor !== "undefined") throw Error("Reset kept state"); let resetToken = 731; print("JS_EXPLICIT_RESET_OK");'}),
+                        ('shell', {'command': 'test "$SURVIVE_JS_CANCEL" = retained || exit 64; mkdir -p /tmp/zx-reset; cd /tmp/zx-reset; exec 7> /reset-fd; printf first >&7; echo SHELL_SURVIVED_JS_RESET'}),
+                        ('shell', {'command': BASH_COMPAT_CHECK}),
+                        ('js', {'code': ZX_CHECK}),
+                        ('reset_js', {}),
+                        ('js', {'code': 'if (typeof resetToken !== "undefined" || typeof checkZx !== "undefined") throw Error("Reset kept globals"); print("JS_RESET_FRESH_OK");'}),
+                        ('shell', {'command': 'test "$SURVIVE_JS_CANCEL" = retained && test "$(pwd)" = /tmp/zx-reset || exit 65; printf second >&7; test "$(cat /reset-fd)" = firstsecond || exit 66; echo SHELL_RESET_FD_OK'}),
+                    ]
+                    Provider.code_expected = ['JavaScript session reset.', 'JavaScript session reset.',
+                        'JS_EXPLICIT_RESET_OK', 'SHELL_SURVIVED_JS_RESET', 'ASH_BASH_COMPAT_VERIFIED', 'ZX_PORT_VERIFIED',
+                        'JavaScript session reset.', 'JS_RESET_FRESH_OK', 'SHELL_RESET_FD_OK']
+                    Provider.code_verified = 'ZX_RESET_VERIFIED'
+                    send('Exercise code tools')
+                    wait('ZX_RESET_VERIFIED', args.code_timeout, idle=True)
+                    Provider.code_verified = 'CODE_TOOLS_VERIFIED'
                     send('/clear')
                     wait('Conversation cleared')
                     send('/wasm ps')
@@ -832,7 +866,7 @@ def run(services):
                         verify_base64(workspace)
                     elif args.text_applets:
                         verify_text_applets(workspace)
-                print("PASS WHPX upstream applets and saved FAT bytes", flush=True)
+                print("PASS WHPX retained shell/JavaScript sessions, reset/cancel isolation and saved FAT bytes" if args.sessions else "PASS WHPX upstream applets and saved FAT bytes", flush=True)
                 return
             send("Stream text")
             if args.tls_failure:
@@ -863,7 +897,7 @@ def run(services):
                         wait("CODE_TOOLS_VERIFIED", args.code_timeout)
                         send("/wasm ps")
                         wait("Ready  •")
-                        print("PASS file tools, 8 MiB writes, finite stdin, mutations, permissions, inherited cwd/umask, upstream BusyBox applets and monotonic waits" if args.filesystem_tools else "PASS real model shell/Python tools, retained interpreters, source preservation, subprocess, failure and capture boundaries", flush=True)
+                        print("PASS file tools, 8 MiB writes, finite stdin, mutations, permissions, inherited cwd/umask, upstream BusyBox applets and monotonic waits" if args.filesystem_tools else "PASS real model shell/JavaScript tools, retained interpreters, Python heredoc, failure and capture boundaries", flush=True)
                     send("/clear")
                     wait("Conversation cleared")
                     send("/wasm start ash background-loop.sh")
@@ -955,7 +989,7 @@ def run(services):
                                 for removed in ('mutation', 'moved-mutation/empty', 'moved-mutation/original', 'moved-mutation/replaced'):
                                     assert removed not in workspace.entries, removed
                             else:
-                                for name, expected in [("code-shell.txt", "a b\n中\n"), ("code-python.txt", "python child 中")]:
+                                for name, expected in [("code-shell.txt", "a b\n中\n"), ("code-js.txt", "js child 中")]:
                                     assert workspace.read(name) == expected.encode()
                         assert workspace.read('code-cancel-started.txt') == b"started\n"
                     assert 'must-not-exist.txt' not in workspace.entries, 'Truncated tool call wrote a file'

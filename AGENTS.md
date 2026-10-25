@@ -21,12 +21,24 @@ agree across ash, env/xargs and Python subprocess. BusyBox date now uses upstrea
 musl timezone rules with validated TZif buffers and packaged IANA 2026e data.
 C stat/lstat/fstatat preserve retained cwd and original link/parent components.
 
-Each conversation creates ash and Python interpreters on first use and retains
-each started interpreter. Source/completion
-frames use a private bounded channel separate from finite empty command stdin.
-Variables, globals, environment and cwd persist. Exit/trap/cancel report resets;
-clear resets both sessions. Unfinished descendants are reaped without disturbing
+The model tools are read, write, edit, shell, js and reset_js. Each conversation creates
+ash and QuickJS interpreters on first use and retains each started interpreter.
+JavaScript global declarations, functions and closures persist. Top-level await,
+print, console.log/error, quit and asynchronous $ shell commands are available.
+The QuickJS WASI adapter uses vendored zx@8.8.5-lite quoting, interpolation and
+ProcessOutput. Supported options and port limits are in vendor/zx/PORT.md.
+BusyBox ASH_BASH_COMPAT is enabled. Bash extensions cross fresh shell tasks,
+including serialized &> redirections. Process substitution remains unavailable.
+Python runs as an ordinary command through ash scripts or quoted heredocs and
+exits after each invocation. Source/completion frames use a private bounded
+channel separate from finite empty command stdin.
+Shell state, environment and cwd persist; JavaScript globals persist.
+reset_js releases only the JavaScript session, preserving shell state, files
+and independent roots. Exit/trap/cancel report resets; clear resets both sessions. Unfinished
+descendants are reaped without disturbing
 independent roots. Each tool call has one readable collapsed disclosure.
+An unresolved top-level JavaScript await with no event source resets the
+session to prevent an earlier request from resuming during a later call.
 
 CPython remains the unchanged prebuilt 3.14.7 WASI SDK 24 binary. All 537 upstream
 library files match the distribution bytes; private site startup adapters supply
@@ -42,7 +54,7 @@ artifacts/environment-final-filesystem-* and environment-final-assets-*.
 The complete 512 MiB WHPX application combination passes in
 artifacts/environment-applications-whpx-idle, including independent saved bytes,
 TCP/DNS/TLS/SSH, concurrent Python, pipelines, descriptors and here-documents.
-After the memory changes below, the complete application combination passes at
+After the memory changes below and before the JavaScript-tool change, the complete application combination passes at
 198 MiB in two independent full runs; 197 MiB fails twice at Python subprocess
 startup, with explicit ENOMEM on repeat. This is the measured 1-MiB boundary for that fixed sequence, including
 explicit module registrations and concurrent Python, rather than a general
@@ -65,8 +77,9 @@ exact linear-memory growth, and reads unused modules only when requested.
 Each file image owns an Engine; weak revision caches share it across active
 instances and release its code on final exit. Explicit byte registrations remain
 snapshots. Eager compilation and the unchanged Python bytes are preserved.
-Native retained Python sessions use about 55.3 MiB; exit/cancel leaves about
-45 KiB of runtime metadata before reap. Repeated Python/curl/SSH and pipeline
+The former retained Python session used about 55.3 MiB. The retained QuickJS
+session uses about 3.59 MiB, with about 25 KiB left after exit/cancel before reap.
+Repeated Python/curl/SSH and pipeline
 process exits leave about 25 KiB after reap without growth across cycles.
 Pipeline failures close pending endpoints, free serialization buffers and
 cancel/reap partial child trees. Subtree cancellation stops parents first so
@@ -74,7 +87,7 @@ suspended waits cannot reap children mid-cleanup. See docs/memory-analysis.md
 and artifacts/memory-resource-lifecycle for allocation evidence.
 
 Prepared default guests are current. Fresh VM/native packages are under
-artifacts/memory-optimization-package; hashes are in memory-optimization-builds.tsv.
+artifacts/js-tool/delivery-package; hashes are in artifacts/js-tool/builds.tsv.
 The original user workspace and vendor/uefi-shell contents remain untouched.
 Detailed scope, acceptance evidence and remaining port limits are in
 [docs/environment-work.md](docs/environment-work.md),
@@ -445,7 +458,7 @@ require explicit passing; host environment variables are never copied implicitly
 
 The UEFI application owns direct model HTTP/HTTPS requests, DNS A queries over
 TCP, SSE parsing for Chat Completions and Responses, reasoning state, usage
-statistics, cancellation, and the read/write/edit/shell/python tool loop. There is no relay,
+statistics, cancellation, and the read/write/edit/shell/js/reset_js tool loop. There is no relay,
 HostBridge, RPC model service, or `serve` command. All file tools use the boot
 volume's configured workspace through EFI_SIMPLE_FILE_SYSTEM_PROTOCOL.
 
@@ -547,25 +560,17 @@ credentials are written only into the private temporary disk.
 ## UI and model behavior
 
 Slash commands: /help, /caps, /wasm, /effort [value], /status, /clear, /quit, /exit.
-A normal prompt runs at most twelve rounds of executed read/write/edit/shell/python tools.
-The model can run shell commands through `shell(command)` and Python source
-through `python(code)`. The runtime loads workspace ash.wasm once on first
-code use and python.wasm once on first Python use, reusing registered modules.
-Each call uses a fresh process with the shared workspace and empty stdin.
-Source is passed unchanged as one argument (60 KiB limit, no NUL). Results
-contain readable exit status and stdout/stderr, capped at 64 KiB per stream
-with explicit truncation. The existing tool disclosure holds the result.
-Tool completion or cancellation cancels and reaps its remaining process tree;
-independent background roots continue. Original root IDs survive adoption.
-The prompt specifies an Alpine Linux-style BusyBox ash environment, POSIX
-syntax and actual WASM limits; it does not claim a Linux kernel or apk support.
-All 117 core/wasm tests pass. Actual 256 MiB QEMU/OVMF checks pass both
-provider APIs' code-tool sequences and focused Esc tree cleanup with an
-independent background root. Evidence: artifacts/model-tools-chat,
-artifacts/model-tools-responses-final and artifacts/model-tools-cancellation.
-The Responses sequence passed before a CRLF background fixture failed;
-the corrected LF fixture passes the focused rerun. Release EFI and Clippy
-pass. The full network application combination was not rerun for these tools.
+A normal prompt runs at most twelve rounds of read/write/edit/shell/js/reset_js tools.
+The shell and JavaScript tools retain separate interpreters, loaded automatically
+from ash.wasm and quickjs.wasm. Python runs through ordinary shell commands.
+Source uses a private bounded channel (60 KiB limit, no NUL) separate from finite
+stdin. Results contain readable exit status and stdout/stderr, capped at 64 KiB
+per stream with explicit truncation. The existing tool disclosure holds the result.
+reset_js releases only the JavaScript session. Clear resets both. Tool completion
+or cancellation reaps unfinished descendants while independent roots continue.
+The prompt describes Alpine-style BusyBox ash with ASH_BASH_COMPAT and states
+its actual WASM limits. Native integration and both provider APIs are recorded
+in docs/verification.md with the current acceptance evidence.
 Edit requires one exact match, including overlap checks. Tool results enter
 model history; slash commands do not. /clear resets history, retaining local
 usage statistics. /status shows actual configuration (never the key), exact

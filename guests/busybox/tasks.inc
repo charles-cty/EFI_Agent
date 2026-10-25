@@ -145,6 +145,7 @@ static union node *efi_task_node(struct efi_task_codec *codec, union node *node)
         node->narg.backquote = efi_task_list(codec, node->narg.backquote);
         break;
     case NTO:
+    case NTO2:
     case NCLOBBER:
     case NFROM:
     case NFROMTO:

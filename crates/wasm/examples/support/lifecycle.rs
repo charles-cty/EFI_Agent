@@ -58,8 +58,8 @@ pub fn run(world: &mut World, arguments: &[String]) -> Result<(), Box<dyn std::e
         .get(2..)
         .filter(|args| !args.is_empty())
         .ok_or("Expected guest command")?;
-    if command == ["session-python"] {
-        return python_sessions(world, cycles);
+    if command == ["session-js"] {
+        return js_sessions(world, cycles);
     }
     let baseline = LIVE.load(Ordering::Relaxed);
     println!("cycle\tpeak_bytes\tterminal_bytes\treaped_bytes\tprocesses\tstatus");
@@ -122,38 +122,38 @@ pub fn run(world: &mut World, arguments: &[String]) -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-fn python_sessions(world: &mut World, cycles: usize) -> Result<(), Box<dyn std::error::Error>> {
+fn js_sessions(world: &mut World, cycles: usize) -> Result<(), Box<dyn std::error::Error>> {
     let baseline = LIVE.load(Ordering::Relaxed);
     println!("cycle\tinitialized_bytes\tterminal_bytes\tstatus");
     for cycle in 0..cycles {
-        let mut session = world.start_session(true)?;
-        session.submit("import subprocess; retained = 731")?;
+        let mut session = world.start_session(efi_agent_wasm::session::SessionKind::JavaScript)?;
+        session.submit("let retained = 731;")?;
         let deadline = Instant::now() + Duration::from_secs(60);
         loop {
             if Instant::now() > deadline {
-                return Err("Python session initialization timed out".into());
+                return Err("JavaScript session initialization timed out".into());
             }
             world.step();
             if let Some(status) = session.take_completion() {
                 if status != 0 {
-                    return Err("Python session initialization failed".into());
+                    return Err("JavaScript session initialization failed".into());
                 }
                 break;
             }
             if !world.status(session.pid())?.is_live() {
-                return Err("Python session exited early".into());
+                return Err("JavaScript session exited early".into());
             }
         }
         let initialized = LIVE.load(Ordering::Relaxed).saturating_sub(baseline);
-        if initialized < 40 * 1024 * 1024 {
-            return Err("Expected live Python linear memory".into());
+        if !(1024 * 1024..=20 * 1024 * 1024).contains(&initialized) {
+            return Err("Expected initialized QuickJS below 20 MiB".into());
         }
         let pid = session.pid();
         if cycle.is_multiple_of(2) {
-            session.submit("assert retained == 731; raise SystemExit(0)")?;
+            session.submit(r#"if (retained !== 731) throw Error("Lost state"); quit(0);"#)?;
             while world.status(pid)?.is_live() {
                 if Instant::now() > deadline {
-                    return Err("Python session exit timed out".into());
+                    return Err("JavaScript session exit timed out".into());
                 }
                 world.step();
             }
@@ -162,17 +162,17 @@ fn python_sessions(world: &mut World, cycles: usize) -> Result<(), Box<dyn std::
         }
         let expected = Status::Exited(if cycle.is_multiple_of(2) { 0 } else { 130 });
         if world.status(pid)? != &expected {
-            return Err("Unexpected Python session exit status".into());
+            return Err("Unexpected JavaScript session exit status".into());
         }
         drop(session);
         drop(world.take_output(pid)?);
         let terminal = LIVE.load(Ordering::Relaxed).saturating_sub(baseline);
         if terminal > 1024 * 1024 {
-            return Err(format!("Python session kept {terminal} bytes").into());
+            return Err(format!("JavaScript session kept {terminal} bytes").into());
         }
         world.reap(pid)?;
         if world.process_ids().next().is_some() {
-            return Err("Python session left descendants".into());
+            return Err("JavaScript session left descendants".into());
         }
         println!("{cycle}\t{initialized}\t{terminal}\t{expected:?}");
     }

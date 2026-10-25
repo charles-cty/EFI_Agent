@@ -189,7 +189,7 @@ pub fn catalog(args: Vec<String>) -> Result<(), Error> {
                 "quickjs.wasm",
                 &["quickjs", "qjs"],
                 &[],
-                &["quickjs.LICENSE"],
+                &["quickjs.LICENSE", "zx.LICENSE", "zx-third-party.LICENSE"],
             ),
             module(
                 "wolfssh.wasm",

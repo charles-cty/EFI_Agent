@@ -6,6 +6,12 @@ char bb_common_bufsiz1[COMMON_BUFSIZE] __attribute__((aligned(16)));
 const char bb_msg_standard_input[] = "standard input";
 const char bb_msg_invalid_arg_to[] = "invalid argument '%s' to '%s'";
 
+void xgettimeofday(struct timeval *tv)
+{
+    if (gettimeofday(tv, NULL) != 0)
+        bb_simple_perror_msg_and_die("gettimeofday");
+}
+
 DIR *warn_opendir(const char *path)
 {
     DIR *directory = opendir(path);

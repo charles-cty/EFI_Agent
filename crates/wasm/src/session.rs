@@ -75,18 +75,29 @@ impl Session {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum SessionKind {
+    Shell,
+    JavaScript,
+}
+
+impl SessionKind {
+    pub fn slot(self) -> usize {
+        match self {
+            Self::Shell => 0,
+            Self::JavaScript => 1,
+        }
+    }
+}
+
 impl World {
-    pub fn start_session(&mut self, python: bool) -> Result<Session, Error> {
+    pub fn start_session(&mut self, kind: SessionKind) -> Result<Session, Error> {
         let channel = Rc::new(RefCell::new(Channel::default()));
-        let args = if python {
-            vec![
-                String::from("python"),
-                String::from("-c"),
-                String::from("import _efi_session; _efi_session.run()"),
-            ]
-        } else {
-            vec![String::from("ash"), String::from("--efi-session")]
+        let program = match kind {
+            SessionKind::Shell => "ash",
+            SessionKind::JavaScript => "quickjs",
         };
+        let args = vec![String::from(program), String::from("--efi-session")];
         let pid = self.spawn_child(
             0,
             args,

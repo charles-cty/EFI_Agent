@@ -120,6 +120,14 @@ You can also supply `artifacts/esp` or `artifacts/efi-agent-vm.img` as the boot
 input after packaging. Release builds use `release` in the executable paths.
 The default guest RAM is 256 MiB. Use `--memory-mib <MiB>` to change it.
 
+The model has `read`, `write`, `edit`, `shell`, `js` and `reset_js` tools. Shell and QuickJS
+state persist across calls. JavaScript supports top-level `await`, `print`,
+`console.log/error` and the asynchronous `$` shell command template. Run Python
+through shell scripts or `python - <<'PY'` heredocs. `reset_js` releases only the
+JavaScript session; `/clear` resets both. Ash enables BusyBox Bash extensions.
+The WASI zx adapter uses vendored zx@lite quoting and output handling; see
+[the supported APIs and limits](vendor/zx/PORT.md).
+
 The launcher copies the host workspace into a private writable FAT disk. Guest
 file tools operate there; changed files are saved back after QEMU stops. Host
 files do not change during the session. Conflicting host edits prevent saving;

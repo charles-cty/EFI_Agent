@@ -25,6 +25,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -34,6 +35,7 @@ typedef struct uni_stat_t {
     unsigned unicode_width;
 } uni_stat_t;
 DIR *warn_opendir(const char *path);
+void xgettimeofday(struct timeval *tv);
 
 #define FAST_FUNC
 #define MAIN_EXTERNALLY_VISIBLE

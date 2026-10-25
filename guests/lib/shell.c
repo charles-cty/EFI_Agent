@@ -13,6 +13,15 @@ int32_t efi_shell_start(struct efi_shell_task *task, const char *const argv[],
     char *stdout_bytes, uint32_t stdout_capacity,
     char *stderr_bytes, uint32_t stderr_capacity)
 {
+    return efi_shell_start_input(task, argv, argc, scratch, scratch_size,
+        stdout_bytes, stdout_capacity, stderr_bytes, stderr_capacity, -1);
+}
+
+int32_t efi_shell_start_input(struct efi_shell_task *task, const char *const argv[],
+    uint32_t argc, char *scratch, uint32_t scratch_size,
+    char *stdout_bytes, uint32_t stdout_capacity,
+    char *stderr_bytes, uint32_t stderr_capacity, int32_t input_fd)
+{
     *task = (struct efi_shell_task){
         .output = {{stdout_bytes, stdout_capacity, 0, -1},
                    {stderr_bytes, stderr_capacity, 0, -1}}
@@ -27,7 +36,7 @@ int32_t efi_shell_start(struct efi_shell_task *task, const char *const argv[],
         }
     }
     result = efi_process_spawn_argv_fds(argv, argc, scratch, scratch_size,
-        pipes[0][0], pipes[1][1], pipes[2][1]);
+        input_fd < 0 ? pipes[0][0] : (uint32_t)input_fd, pipes[1][1], pipes[2][1]);
     if (result < 0) {
         goto cleanup;
     }
@@ -65,6 +74,15 @@ static void drain(struct efi_shell_task *task, uint32_t stream)
         return;
     }
     uint32_t available = output->capacity - output->size;
+    if (task->combined.bytes) {
+        struct efi_shell_output *combined = &task->combined;
+        uint32_t room = combined->capacity - combined->size;
+        uint32_t copied = received < room ? received : room;
+        for (uint32_t index = 0; index < copied; ++index)
+            combined->bytes[combined->size++] = chunk[index];
+        if (copied < received && task->error == 0)
+            task->error = -27;
+    }
     uint32_t saved = received < available ? received : available;
     for (uint32_t index = 0; index < saved; ++index) {
         output->bytes[output->size++] = chunk[index];

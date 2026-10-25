@@ -17,6 +17,8 @@ struct efi_shell_task {
     int32_t status;
     int32_t error;
     struct efi_shell_output output[2];
+    /* Optional merged capture, in dispatcher read order. */
+    struct efi_shell_output combined;
 };
 
 /* Start a fresh instance with empty stdin and distinct stdout/stderr pipes.
@@ -27,6 +29,12 @@ int32_t efi_shell_start(struct efi_shell_task *task, const char *const argv[],
     uint32_t argc, char *scratch, uint32_t scratch_size,
     char *stdout_bytes, uint32_t stdout_capacity,
     char *stderr_bytes, uint32_t stderr_capacity);
+
+/* The caller retains ownership of input_fd. */
+int32_t efi_shell_start_input(struct efi_shell_task *task, const char *const argv[],
+    uint32_t argc, char *scratch, uint32_t scratch_size,
+    char *stdout_bytes, uint32_t stdout_capacity,
+    char *stderr_bytes, uint32_t stderr_capacity, int32_t input_fd);
 
 /* Drain all tasks together. Blocking mode waits for pipe readiness, unless a
  * task has closed its pipes but has not exited. Then it yields and checks exit

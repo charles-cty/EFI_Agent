@@ -72,7 +72,7 @@ def main():
             print(f"PASS {name}: {result.stdout.decode().splitlines()[-1]}")
 
         try:
-            run("python-sessions", ["session-python"])
+            run("js-sessions", ["session-js"])
             run("python", ["python", "-B", "-c", "import subprocess, json; assert subprocess.check_output('printf ok',shell=True)==b'ok'"])
             run("python-cancel", ["python", "-B", "-c", "while True: pass"], cycles=3, cancel_ms=1500)
             run("ash-pipelines", ["ash", "-c", """

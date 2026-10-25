@@ -234,7 +234,7 @@ impl Runtime {
     /// Execute model code without adding a second UI block to the tool result.
     pub fn run_tool(
         &mut self,
-        python: bool,
+        kind: efi_agent_wasm::session::SessionKind,
         source: &str,
         app: &mut App,
         refresh: &mut impl FnMut(&mut App, bool) -> Result<bool, String>,
@@ -246,10 +246,10 @@ impl Runtime {
             .discover_programs()
             .map_err(|error| format!("Discover workspace programs: {error}"))?;
         self.ensure_program("ash")?;
-        if python {
-            self.ensure_program("python")?;
+        if matches!(kind, efi_agent_wasm::session::SessionKind::JavaScript) {
+            self.ensure_program("quickjs")?;
         }
-        let index = usize::from(python);
+        let index = kind.slot();
         let mut notice = String::new();
         if let Some(session) = &self.sessions[index]
             && !self.world.status(session.pid()).is_ok_and(Status::is_live)
@@ -267,7 +267,7 @@ impl Runtime {
         if self.sessions[index].is_none() {
             self.sessions[index] = Some(
                 self.world
-                    .start_session(python)
+                    .start_session(kind)
                     .map_err(|error| error.to_string())?,
             );
         }
@@ -356,17 +356,27 @@ impl Runtime {
 
     pub fn clear_sessions(&mut self, app: &mut App) -> Result<(), String> {
         for index in 0..self.sessions.len() {
-            if let Some(session) = self.sessions[index].take() {
-                let pid = session.pid();
-                self.stop_tool_tree(pid, false, app);
-                self.tool_outputs.remove(&pid);
-                if self.world.status(pid).is_ok() {
-                    self.world.reap(pid).expect("Session is terminal");
-                }
-                self.roots.remove(&pid);
-            }
+            self.reset_session(index, app);
         }
         self.flush_workspace()
+    }
+
+    fn reset_session(&mut self, index: usize, app: &mut App) {
+        if let Some(session) = self.sessions[index].take() {
+            let pid = session.pid();
+            self.stop_tool_tree(pid, false, app);
+            self.tool_outputs.remove(&pid);
+            if self.world.status(pid).is_ok() {
+                self.world.reap(pid).expect("Session is terminal");
+            }
+            self.roots.remove(&pid);
+        }
+    }
+
+    pub fn reset_js(&mut self, app: &mut App) -> Result<String, String> {
+        self.reset_session(efi_agent_wasm::session::SessionKind::JavaScript.slot(), app);
+        self.flush_workspace()?;
+        Ok("JavaScript session reset. The next js call starts a new session. Shell state and files are preserved.".into())
     }
 
     pub fn command(

@@ -54,7 +54,7 @@ impl Default for Agent {
             messages: vec![ChatMessage::text(
                 "system",
                 String::from(
-                    "You are a coding assistant with an Alpine Linux-style environment: BusyBox ash provides POSIX shell syntax, as on Alpine Linux. Use shell for commands and python for Python 3 code. These tools execute real WASM programs in UEFI and load their interpreters automatically. The shell and Python tools each retain one live interpreter per conversation. Variables, environment and cwd persist within that tool; files are shared. Command stdin is finite and empty. Clear resets both sessions. Exit, trap or cancellation resets the affected session and reports it. Unfinished child processes are stopped after each call. Use POSIX ash syntax; Bash-only syntax, a Linux kernel, apk, and arbitrary installed Linux programs are unavailable. BusyBox applets available through ash include ls, cat, cp, mv, rm, mkdir, find, head, grep, sed, awk, date, sleep, yes, env, and which. The guest provides virtual /bin, /dev, /proc, and /tmp; /dev/null discards output. External commands use PATH, executable WASM files, and executable scripts with absolute shebang interpreters. Installed commands are available in /bin. Python supports standard subprocess APIs, including shell=True. Use read, write, and edit to inspect and change the configured workspace. Read files before editing. edit requires one exact match. Tool errors are real; do not claim an operation succeeded if it failed.",
+                    "You are a coding assistant with an Alpine Linux-style environment: BusyBox ash provides POSIX shell syntax, as on Alpine Linux. Use shell for commands and js for JavaScript code. Run Python through shell using python scripts or quoted heredocs. These tools execute real WASM programs in UEFI and load their interpreters automatically. The shell and js tools each retain one live interpreter per conversation. Shell variables, environment and cwd persist; JavaScript global bindings persist. Files are shared. JavaScript provides print, console.log, console.error, quit and an asynchronous $ command template with top-level await. Node.js APIs are unavailable. The shell tool has finite empty stdin. JavaScript commands can receive explicit text input. reset_js resets only JavaScript and releases its interpreter memory. Clear resets both sessions. Exit, trap or cancellation resets the affected session and reports it. Unfinished child processes are stopped after each call. Use POSIX ash syntax; BusyBox Bash extensions include ANSI-C quoting, function, [[ ]], string replacement/slicing, source, pipefail, &>, BASH_XTRACEFD and wait -n. Full Bash arrays, &>>, process substitution, a Linux kernel, apk, and arbitrary Linux binaries are unavailable. BusyBox applets available through ash include ls, cat, cp, mv, rm, mkdir, find, head, grep, sed, awk, date, sleep, yes, env, and which. The guest provides virtual /bin, /dev, /proc, and /tmp; /dev/null discards output. External commands use PATH, executable WASM files, and executable scripts with absolute shebang interpreters. Installed commands are available in /bin. Python supports standard subprocess APIs, including shell=True. Use read, write, and edit to inspect and change the configured workspace. Read files before editing. edit requires one exact match. Tool errors are real; do not claim an operation succeeded if it failed.",
                 ),
             )],
         }
@@ -243,7 +243,7 @@ struct Shell {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Python {
+struct JavaScript {
     code: String,
 }
 
@@ -257,10 +257,18 @@ fn operation(call: &ToolCall) -> Result<Operation, String> {
                 command: args.command,
             })
         }
-        "python" => {
-            let args: Python = serde_json::from_str(arguments)
-                .map_err(|e| format!("Invalid python arguments: {e}"))?;
-            Ok(Operation::Python { code: args.code })
+        "js" => {
+            let args: JavaScript = serde_json::from_str(arguments)
+                .map_err(|e| format!("Invalid js arguments: {e}"))?;
+            Ok(Operation::Js { code: args.code })
+        }
+        "reset_js" => {
+            let args: serde_json::Map<String, serde_json::Value> = serde_json::from_str(arguments)
+                .map_err(|e| format!("Invalid reset_js arguments: {e}"))?;
+            if !args.is_empty() {
+                return Err("reset_js takes an empty object".into());
+            }
+            Ok(Operation::ResetJs)
         }
         "read" => {
             let args: Read = serde_json::from_str(arguments)
@@ -318,8 +326,9 @@ pub fn tool_definitions() -> serde_json::Value {
         {"type":"function","function":{"name":"read","description":"Read a UTF-8 file or list a directory in the workspace.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}},
         {"type":"function","function":{"name":"write","description":"Create or overwrite a UTF-8 file in the workspace (512 KiB limit). Create missing parent directories.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":false}}},
         {"type":"function","function":{"name":"edit","description":"Replace one exact occurrence of old_text with new_text. Fails if missing or ambiguous.","parameters":{"type":"object","properties":{"path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"}},"required":["path","old_text","new_text"],"additionalProperties":false}}},
-        {"type":"function","function":{"name":"shell","description":"Run a command in an Alpine Linux-style BusyBox ash shell (POSIX syntax, not full Bash). ash.wasm loads automatically once. Runs in the shared workspace with finite empty stdin. Shell state, environment and cwd persist across calls in this conversation. Clear resets both interpreter sessions. Common BusyBox applets include ls, cat, cp, mv, rm, mkdir, head, grep, sed, awk, date, sleep, yes, env, and which; /bin, /dev, /proc, and /tmp are virtual guest directories. External commands use PATH, executable WASM files, and scripts with absolute shebang interpreters. Installed commands are in /bin; apk and Linux executables are unavailable. Returns exit status, stdout and stderr; each stream is limited to 64 KiB with explicit truncation. Esc cancels the process tree and resets this session. Exit or trap also resets this session with an explicit notice.","parameters":{"type":"object","properties":{"command":{"type":"string","description":"Shell script evaluated in the retained ash session; supports quotes, newlines, pipes and redirections."}},"required":["command"],"additionalProperties":false}}},
-        {"type":"function","function":{"name":"python","description":"Run Python 3 code in the shared workspace of the Alpine Linux-style environment. python.wasm and BusyBox ash load automatically once; the packaged Python standard library must exist. Python globals, environment and cwd persist across calls in this conversation. Files are shared with shell; each tool has its own cwd and environment. Clear resets both sessions. Standard subprocess APIs run ash commands. Native extensions, threads and ordinary Linux executables are unavailable. Returns exit status, stdout and stderr; each stream is limited to 64 KiB with explicit truncation. Esc cancels the process tree and resets this session. Exit or trap also resets this session with an explicit notice.","parameters":{"type":"object","properties":{"code":{"type":"string","description":"Python source evaluated in the retained main namespace; supports multi-line code."}},"required":["code"],"additionalProperties":false}}}
+        {"type":"function","function":{"name":"shell","description":"Run a command in an Alpine Linux-style BusyBox ash shell with ASH_BASH_COMPAT enabled (POSIX syntax plus BusyBox Bash extensions). ash.wasm loads automatically once. Runs in the shared workspace with finite empty stdin. Shell state, environment and cwd persist across calls in this conversation. Clear resets both interpreter sessions. Common BusyBox applets include ls, cat, cp, mv, rm, mkdir, head, grep, sed, awk, date, sleep, yes, env, and which; /bin, /dev, /proc, and /tmp are virtual guest directories. External commands use PATH, executable WASM files, and scripts with absolute shebang interpreters. Installed commands are in /bin; apk and Linux executables are unavailable. Returns exit status, stdout and stderr; each stream is limited to 64 KiB with explicit truncation. Esc cancels the process tree and resets this session. Exit or trap also resets this session with an explicit notice.","parameters":{"type":"object","properties":{"command":{"type":"string","description":"Shell script evaluated in the retained ash session; supports quotes, newlines, pipes and redirections."}},"required":["command"],"additionalProperties":false}}},
+        {"type":"function","function":{"name":"js","description":"Run JavaScript in a retained QuickJS context in the shared workspace. quickjs.wasm and BusyBox ash load automatically on first use. Global let/const/var bindings and functions persist across calls; redeclaring a global let/const is a syntax error. Use print or console.log for results and console.error for diagnostics. Top-level await and the $ command template are supported: const r = await $`echo hello`; print(r.stdout). Interpolated values are quoted as shell words; arrays expand to separate words. The WASI zx port uses vendored zx@8.8.5-lite quoting, interpolation and ProcessOutput. Promise and ProcessOutput interpolation are supported. A nonzero command rejects with a ProcessOutput Error (exitCode, stdout, stderr, stdall, ok; text/json/lines/buffer). Use .nothrow() to inspect failures. $({cwd, env, input, quiet, verbose, nothrow, prefix, postfix}) creates a configured command template; env overlays the child environment. .pipe`command` feeds bounded completed stdout into the next command. input accepts text up to 512 KiB. Commands capture up to 512 KiB per stream. Streaming pipes, synchronous execution, signals, timeouts and Node APIs are unavailable. reset_js resets only JavaScript and releases interpreter memory; shell state and files remain. Each command starts a fresh ash child, separate from the shell tool session. Node.js APIs, module imports and timers are unavailable. Ordinary exceptions preserve state. A top-level Promise with no event source resets this session. Python remains available through shell. Clear resets both sessions. quit(status) ends this session. Returns exit status, stdout and stderr; each stream is limited to 64 KiB with explicit truncation. Esc cancels the process tree and resets this session. Exit or trap also resets this session with an explicit notice.","parameters":{"type":"object","properties":{"code":{"type":"string","description":"JavaScript source evaluated in the retained global context; supports multiple lines and top-level await."}},"required":["code"],"additionalProperties":false}}},
+        {"type":"function","function":{"name":"reset_js","description":"Stop and release the retained JavaScript interpreter and its child processes. All JavaScript bindings and command settings are discarded. Shell state, files and independent background processes are preserved. Does not start another interpreter; the next js call starts it. Safe to call before js has run.","parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false}}}
     ])
 }
 
@@ -332,7 +341,7 @@ mod tests {
     fn code_tools_preserve_source_and_reject_invalid_calls() {
         for (name, field, source) in [
             ("shell", "command", "printf '%s\\n' 'a b'\necho 中 >&2"),
-            ("python", "code", "value = 'a b'\nprint(value, '中')"),
+            ("js", "code", "let value = 'a b';\nprint(value, '中')"),
         ] {
             let mut call: ToolCall = serde_json::from_value(serde_json::json!({
                 "id": "code", "type": "function", "function": {
@@ -342,7 +351,7 @@ mod tests {
             .unwrap();
             let actual = match operation(&call).unwrap() {
                 Operation::Shell { command } => command,
-                Operation::Python { code } => code,
+                Operation::Js { code } => code,
                 _ => panic!("Code tool must dispatch a code operation"),
             };
             assert_eq!(actual, source);
@@ -362,7 +371,22 @@ mod tests {
             .iter()
             .map(|tool| tool["function"]["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, ["read", "write", "edit", "shell", "python"]);
+        assert_eq!(names, ["read", "write", "edit", "shell", "js", "reset_js"]);
+        let removed: ToolCall = serde_json::from_value(serde_json::json!({
+            "id": "removed", "type": "function", "function": {
+                "name": "python", "arguments": "{\"code\":\"print(1)\"}"
+            }
+        }))
+        .unwrap();
+        assert!(operation(&removed).is_err());
+        let mut reset = removed;
+        reset.function.name = "reset_js".into();
+        reset.function.arguments = "{}".into();
+        assert!(matches!(operation(&reset).unwrap(), Operation::ResetJs));
+        for arguments in ["null", "[]", "{\"extra\":true}"] {
+            reset.function.arguments = arguments.into();
+            assert!(operation(&reset).is_err());
+        }
     }
     #[test]
     fn unique_edit_including_overlaps_and_unicode() {

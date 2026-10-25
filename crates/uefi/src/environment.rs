@@ -243,7 +243,9 @@ pub struct Interactive<'a> {
     pub runtime: &'a mut Runtime,
     pub poll: &'a mut dyn FnMut() -> bool,
     pub cancelled: bool,
-    pub execute_code: &'a mut dyn FnMut(bool, &str) -> Result<String, String>,
+    pub execute_code:
+        &'a mut dyn FnMut(efi_agent_wasm::session::SessionKind, &str) -> Result<String, String>,
+    pub reset_js: &'a mut dyn FnMut() -> Result<String, String>,
     pub filesystem: Rc<dyn efi_agent_filesystem::FileSystem>,
 }
 impl Interactive<'_> {
@@ -278,8 +280,13 @@ impl Environment for Interactive<'_> {
         let filesystem = self.filesystem.as_ref();
         use efi_agent_filesystem::text;
         match operation {
-            Operation::Shell { command } => (self.execute_code)(false, &command),
-            Operation::Python { code } => (self.execute_code)(true, &code),
+            Operation::Shell { command } => {
+                (self.execute_code)(efi_agent_wasm::session::SessionKind::Shell, &command)
+            }
+            Operation::Js { code } => {
+                (self.execute_code)(efi_agent_wasm::session::SessionKind::JavaScript, &code)
+            }
+            Operation::ResetJs => (self.reset_js)(),
             Operation::Read { path } => text::read_or_list(filesystem, &path),
             Operation::Write { path, content } => {
                 text::write(filesystem, &path, &content)?;

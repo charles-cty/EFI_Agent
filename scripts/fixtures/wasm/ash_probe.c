@@ -12,7 +12,7 @@ int main(int argc, char **argv)
         fputs("probe-error", stderr);
         return 17;
     }
-    if (strcmp(argv[2], "inspect 'a'\"'\"'b' '' 'x;$(bad)' 'λ'") != 0) {
+    if (strcmp(argv[2], "inspect $'a\\'b' $'' $'x;$(bad)' $'λ'") != 0) {
         fprintf(stderr, "Unexpected command: %s", argv[2]);
         return 98;
     }

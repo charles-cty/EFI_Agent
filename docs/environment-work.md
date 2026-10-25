@@ -36,16 +36,22 @@ Both actual 512 MiB WHPX API flows pass manifest-installed applications and
 independent saved FAT assets/modes in artifacts/installation-final-whpx-responses
 and artifacts/installation-final-whpx-chat_completions.
 
-Conversation-owned live ash and Python sessions retain interpreter state,
-environment and cwd anchors over a bounded private request channel. Command
-stdin remains finite and empty. Ordinary Python exceptions and shell nonzero
+Conversation-owned live ash and QuickJS sessions retain interpreter state over
+a bounded private request channel. Ash retains environment and cwd anchors;
+QuickJS retains global bindings, functions and closures. Python runs as an
+ordinary ash command. Command stdin remains finite and empty. JavaScript
+exceptions and shell nonzero
 results retain state. Exit, fatal shell syntax errors and cancellation report
 resets. Top-level shell return stops only its current request. Clear resets both
 interpreters, and each completed request stops/reaps unfinished descendants
 without affecting unrelated roots. Native lifecycle/private-descriptor checks
-and both actual 512 MiB WHPX APIs pass, including independent saved FAT bytes,
-in artifacts/sessions-final-whpx-responses and
-artifacts/sessions-final-whpx-chat_completions.
+and both actual 256 MiB WHPX APIs pass, including independent saved FAT bytes,
+under artifacts/js-tool/whpx-sessions-*. An unresolved top-level await with no
+event source resets the JavaScript session to discard its suspended continuation.
+The reset_js tool releases only QuickJS, preserving ash, files and independent
+roots. Vendored zx@8.8.5-lite supplies quoting, interpolation and ProcessOutput;
+the WASI adapter and its limits are documented in vendor/zx/PORT.md. BusyBox
+ASH_BASH_COMPAT is enabled, including &> transfer through fresh tasks.
 
 The shared image currently uses upstream ls, find, awk, sed, grep, chmod, cat, head,
 tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true,
@@ -305,8 +311,8 @@ artifacts/executable-revision-whpx-chat_completions.
   Prepared curl, QuickJS/qjs and WolfSSH work without manual registration.
   Additional supplied node/git modules follow the same rules; advertise them
   only when working binaries are installed.
-- Conversation-owned live shell and Python sessions retain interpreter state,
-  environment and cwd. Use bounded private framing separate from finite command
+- Conversation-owned live shell and JavaScript sessions retain interpreter
+  state. Ash retains environment and cwd. Use bounded private framing separate from finite command
   stdin. Preserve readable captured results and one collapsed tool disclosure.
   Clear resets sessions; exit, failure and cancellation report any state reset,
   reap abandoned children, and preserve unrelated background roots.

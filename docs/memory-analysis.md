@@ -260,3 +260,27 @@ It therefore measures a larger peak than the native Python-plus-ash session.
 256 MiB supplies 58 MiB above the lowest passing configuration. Larger scripts,
 more concurrent processes and growing output/history can need additional RAM.
 The previous ash-only boundary still requires a separate post-optimization run.
+
+## Retained JavaScript replaces the Python tool (2026-10-25)
+
+The model now uses shell and js code tools. The JavaScript tool retains one
+QuickJS context; Python is started through ordinary ash commands and exits
+after each invocation. The private Python session startup driver is removed.
+The upstream Python executable and library remain unchanged.
+
+The Release counting allocator measures 3,767,524 bytes (3.59 MiB) for an
+initialized QuickJS session containing a retained global binding. All six
+independent start/end cycles report the same value. Alternating normal quit
+and host cancellation leaves 25,804 bytes before reap. This compares with the
+former Python session's approximately 55.3 MiB under the same allocator and
+file-backed runtime. It excludes firmware/UI, a retained ash tool session,
+large user objects and active command children.
+
+QuickJS starts with 1.125 MiB of linear memory; the unchanged Python executable
+starts with 40 MiB. The QuickJS 32-MiB JavaScript heap limit is an upper bound,
+not an initial allocation. WASM linear memory remains at its largest reached
+size until the process ends; garbage collection reuses heap space rather than
+shrinking that linear memory. Source frames, completed jobs and command capture buffers
+are released between requests. JavaScript bindings deliberately persist until
+quit, cancellation, reset_js or clear. Vendored zx quoting/output handling and
+the WASI process adapter are included in this measurement. Evidence: artifacts/js-tool/lifecycle-zx-release/js-sessions.tsv.

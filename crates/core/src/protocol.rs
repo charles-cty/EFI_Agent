@@ -10,9 +10,10 @@ pub enum Operation {
     Shell {
         command: String,
     },
-    Python {
+    Js {
         code: String,
     },
+    ResetJs,
     Status,
     Effort {
         value: Option<String>,

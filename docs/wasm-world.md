@@ -286,21 +286,24 @@ regex mode rejects NUL and empty-string matches explicitly. Cut -c remains
 byte-oriented as in upstream BusyBox. Tr enables classes and equivalence sets
 and operates on all byte values. All four propagate input/output errors.
 
-The model receives `shell(command)` and `python(code)` in addition to the
+The model receives `shell(command)`, `js(code)` and `reset_js()` in addition to the
 read/write/edit file tools. Each conversation owns one live ash process and one
-live Python process. Ash evaluates source in its retained shell; Python compiles
-and executes source in its retained `__main__` namespace. Source preserves
-whitespace, quotes and newlines, must be at most 60 KiB and cannot contain NUL.
-The tools load workspace `ash.wasm` on first use, and `python.wasm` on first
-Python use. A registered name is reused, including a module loaded manually.
-Python requires the prepared standard library and startup adapter in `lib`.
+live QuickJS process, both created on first use. Ash evaluates source in its
+retained shell; QuickJS evaluates source in its retained global context. Source
+preserves whitespace, quotes and newlines, must be at most 60 KiB and cannot contain NUL.
+The tools load workspace `ash.wasm` on first use, and `quickjs.wasm` on first
+JavaScript use. A registered name is reused, including a module loaded manually.
+Python remains a standard executable through ash, including quoted heredocs;
+it requires the prepared standard library and startup adapter in `lib`.
 Code and completion frames use a private, bounded process-local channel, separate
 from empty finite command stdin and captured output. The endpoint opens once,
 is hidden from proc fd views, and cannot be duplicated, overwritten, renumbered
 or inherited by children. Shell variables, functions, aliases, options, user
-descriptors and previous status persist. Python globals persist, including after
-ordinary exceptions. Each tool retains its own environment, cwd anchor and umask;
-both tools share files. Standalone CLI invocations still start fresh processes.
+descriptors and previous status persist. JavaScript global let/const/var bindings,
+functions and closures persist, including after ordinary exceptions. Redeclaring
+a global let/const is a syntax error. Each process retains its own environment,
+cwd anchor and umask; both tools share files. Standalone CLI invocations still
+start fresh processes.
 
 Tool results contain readable exit status and separate stdout/stderr sections.
 Capture retains the first 64 KiB of each stream, drains further bytes and marks
@@ -309,16 +312,52 @@ The existing tool disclosure shows the result; execution adds no WASM panel.
 Esc cancels the affected tool tree. Exit, trap, cancellation and terminal-refresh
 failure end that session and return an explicit reset notice. The next call
 starts a new interpreter. A normal nonzero command result retains the interpreter;
-fatal ash syntax errors terminate it. Top-level `return` stops the current shell
-request and preserves its status for the next request. `/clear` resets both
-sessions. Unfinished descendants are stopped and reaped after each call, with a
+fatal ash syntax errors terminate it. JavaScript quit(status) ends its session.
+Top-level `return` stops the current shell request and preserves its status for
+the next request. `/clear` resets both
+sessions. `reset_js()` stops/reaps only the JavaScript session, including its
+children, and releases its interpreter memory. It preserves shell state, files
+and independent roots, and does not start a new interpreter. Repeated resets
+and resetting before first use succeed. Unfinished descendants are stopped and reaped after each call, with a
 count in the result. Independent background roots remain active. Original root
 IDs survive parent adoption. Idle session roots keep their output routing and
 do not create extra WASM panels.
 
+The JavaScript tool provides print, console.log, console.error, quit and the
+asynchronous $ command template. Top-level await is supported. Template values
+are quoted as shell words; arrays expand to separate words. Each command starts
+a fresh ash child, independent of the shell tool's retained state. The build
+embeds unchanged quoting, interpolation and ProcessOutput code from the pinned
+zx@8.8.5-lite distribution in vendor/zx. Promise arguments are awaited;
+ProcessOutput arguments use stdout with one trailing newline removed. NUL
+arguments and malformed template escapes fail before spawning.
+A nonzero status rejects with a ProcessOutput Error, including exitCode, stdout,
+stderr, stdall, ok and captureError. .nothrow() returns failed results. Outputs
+and ProcessPromises provide text(), json(), lines() and buffer(); buffer returns
+UTF-8 bytes as Uint8Array. Input is text, bounded to 512 KiB. Commands capture
+512 KiB per stream; stdall preserves dispatcher read order.
+`$({cwd, env, input, quiet, verbose, nothrow, prefix, postfix})` creates a configured
+template. Environment settings overlay the child environment. Settings are
+snapshotted before asynchronous execution. `.pipe\`command\`` starts its consumer
+after collecting the producer's bounded stdout. Live streams, sync execution,
+signals, timeouts and Node context APIs remain unavailable. See
+[the complete WASI integration limits](../vendor/zx/PORT.md). Use print for
+results; bare expressions do not automatically print. Node.js APIs, file module
+loading and timers are unavailable. A pending top-level Promise with no event
+source fails explicitly and resets the session so a saved resolver cannot
+resume an earlier request. Unhandled rejections fail the request. Errors cancel
+outstanding command children. Completed failed evaluations preserve the context;
+failed evaluations still suspended on a Promise reset it. Abandoned command
+Promises in a retained context can remain pending. Cancellation and clear drop
+the context.
+
 The model prompt describes an Alpine Linux-style BusyBox ash environment and
-states its actual WASM limits. POSIX shell syntax is available. Bash-only
-syntax, a Linux kernel, `apk` and arbitrary Linux binaries are unavailable.
+states its actual WASM limits. POSIX shell syntax and BusyBox ASH_BASH_COMPAT
+extensions are available, including $'...' quoting, function, [[ ]], parameter
+replacement/slicing, source, pipefail, &>, BASH_XTRACEFD, EPOCH time variables and
+wait -n. Upstream BusyBox limitations remain: full Bash arrays, &>> and process
+substitution are unavailable. A Linux kernel, `apk` and arbitrary Linux binaries
+are unavailable.
 External commands use PATH, executable WASM files and executable scripts with
 absolute shebang interpreters. Installed commands appear in `/bin`.
 
@@ -521,7 +560,8 @@ dispatcher, allowing command event loops to check exits and drain other tasks.
 
 QuickJS 2026-06-04 is built from the official source archive
 https://bellard.org/quickjs/quickjs-2026-06-04.tar.xz. The Windows build uses
-WASI SDK 34 with an explicit sysroot. No MSYS2 compiler is invoked.
+WASI SDK 34 with an explicit sysroot. Node.js embeds the vendored zx JavaScript;
+the build does not run npm or download packages. No MSYS2 compiler is invoked.
 
 ```powershell
 ./scripts/build_quickjs.ps1 -WasiSdk artifacts/toolchains/wasi-sdk-34.0-x86_64-windows
@@ -534,16 +574,19 @@ The build copies and patches engine sources under the output directory:
 disable threaded Atomics for WASI, include the allocator declaration, and
 remove dtoa's unused setjmp header. It links quickjs, dtoa, libregexp,
 libunicode and cutils. It does not link quickjs-libc. The output includes
-the upstream license. Run `quickjs -e SCRIPT`; top-level await is supported.
+the upstream license, zx.LICENSE and zx-third-party.LICENSE. The installation
+catalog includes all three. Run `quickjs -e SCRIPT`; top-level await is supported.
 The engine has a 32 MiB allocation limit and a 512 KiB JS stack limit.
 
-`$` is a tagged command template. Each substituted value is single-quoted;
-arrays expand to distinct quoted words. Empty strings, single quotes and
-Unicode are preserved. NUL is rejected. Literal segments remain shell syntax.
-The native `__shell` function starts `ash -c COMMAND` as a fresh process with
-empty stdin and separate capture pipes. It returns a Promise. Success yields
-`{exitCode, stdout, stderr, captureError}`; nonzero exit or capture failure
-rejects with the same result. Outputs are JS strings, each limited to 512 KiB.
+`$` uses the vendored zx@lite quote/buildCmd/substitute functions and
+ProcessOutput class. Safe words can remain unquoted; other words use upstream
+ANSI-C quoting, supported by ASH_BASH_COMPAT. Arrays expand to distinct words;
+Promises and command outputs follow upstream substitution rules. NUL is rejected.
+Literal segments remain shell syntax. The native `__shell` function starts
+`ash -c COMMAND` as a fresh process with bounded snapshot stdin and separate
+capture pipes. The WASI ProcessPromise adapter provides the APIs listed above;
+it is separate from the Node-specific upstream ProcessPromise implementation.
+Outputs are JS strings, each limited to 512 KiB.
 Excess bytes are drained and the child is reaped, then capture reports failure.
 `print` supplies diagnostic output. No std/os modules, module loader, Node
 process/require, filesystem API or network API is installed.

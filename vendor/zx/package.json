@@ -1,0 +1,70 @@
+{
+  "name": "zx",
+  "version": "8.8.5-lite",
+  "description": "A tool for writing better scripts",
+  "type": "module",
+  "main": "./build/core.cjs",
+  "types": "./build/core.d.ts",
+  "typesVersions": {
+    "*": {
+      ".": [
+        "./build/core.d.ts"
+      ]
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./build/core.d.ts",
+      "import": "./build/core.js",
+      "require": "./build/core.cjs",
+      "default": "./build/core.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "build/3rd-party-licenses",
+    "build/core.cjs",
+    "build/core.d.ts",
+    "build/core.js",
+    "build/deno.js",
+    "build/error.d.ts",
+    "build/esblib.cjs",
+    "build/internals.cjs",
+    "build/internals.d.ts",
+    "build/log.d.ts",
+    "build/util.cjs",
+    "build/util.d.ts",
+    "build/vendor-core.cjs",
+    "build/vendor-core.d.ts"
+  ],
+  "engines": {
+    "node": ">= 12.17.0"
+  },
+  "publishConfig": {
+    "registry": "https://wombat-dressing-room.appspot.com"
+  },
+  "keywords": [
+    "bash",
+    "bin",
+    "binary",
+    "call",
+    "child",
+    "child_process",
+    "exec",
+    "execute",
+    "invoke",
+    "pipe",
+    "process",
+    "script",
+    "shell",
+    "spawn",
+    "zx"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/google/zx.git"
+  },
+  "homepage": "https://google.github.io/zx/",
+  "author": "Anton Medvedev <anton@medv.io>",
+  "license": "Apache-2.0"
+}

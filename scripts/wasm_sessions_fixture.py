@@ -10,24 +10,14 @@ exec 7> /session-fd-output
 printf 'first-' >&7
 printf '%s' "$$" > /session-shell-pid
 false''', 'Exit code: 1'),
-    ('python', '''import os, sys, subprocess
-counter = 41
-assert not os.get_inheritable(5)
-for operation in (lambda: os.dup(5), lambda: os.dup2(5, 7),
-                  lambda: os.dup2(0, 5), lambda: os.set_inheritable(5, True),
-                  lambda: os.open('/proc/self/fd/5', os.O_RDWR)):
-    try:
-        operation()
-    except OSError:
-        pass
-    else:
-        raise AssertionError('Private session descriptor escaped')
-os.environ['PY_SESSION_VALUE'] = 'retained'
-os.mkdir('/tmp/python-session')
-os.chdir('/tmp/python-session')
-assert 'SESSION_VALUE' not in os.environ
-with open('/session-python-pid', 'w') as out: out.write(str(os.getpid()))
-print('PYTHON_SESSION_STARTED')''', 'PYTHON_SESSION_STARTED'),
+    ('js', '''let counter = 41;
+const fixed = 731;
+var mutable = 'retained';
+function add(value) { return value + fixed; }
+let closure = () => counter;
+let shellResult = await $`test -z "$SESSION_VALUE"`;
+await $`printf '%s' js-started > /session-js-started`;
+print('JS_SESSION_STARTED');''', 'JS_SESSION_STARTED'),
     ('shell', '''test "$?" -eq 1 || exit 21
 test "$SESSION_VALUE" = retained || exit 22
 test "$(pwd)" = /tmp/session-old || exit 23
@@ -37,24 +27,19 @@ session_fn kept
 session_alias
 if read unexpected; then exit 25; fi
 printf 'SHELL_SESSION_RETAINED\\n' ''', 'SHELL_SESSION_RETAINED'),
-    ('python', '''counter += 1
-assert counter == 42
-assert os.getcwd() == '/tmp/python-session'
-assert os.environ['PY_SESSION_VALUE'] == 'retained'
-os.rename('/tmp/session-old', '/tmp/session-new')
-assert sys.stdin.buffer.read() == b''
-child = subprocess.run(['python', '-c', "import os; assert not os.path.exists('/proc/self/fd/5'); print('CHILD_SESSION_PRIVATE')"], capture_output=True)
-assert (child.returncode, child.stdout, child.stderr) == (0, b'CHILD_SESSION_PRIVATE\\n', b''), child
-print('PYTHON_SESSION_RETAINED')''', 'PYTHON_SESSION_RETAINED'),
+    ('js', '''counter += 1;
+if (counter !== 42 || closure() !== 42 || add(1) !== 732 || mutable !== 'retained') throw Error('Lost globals');
+await $`mv /tmp/session-old /tmp/session-new`;
+shellResult = await $`if read value; then exit 1; fi; echo FINITE_STDIN`;
+if (shellResult.stdout.trim() !== 'FINITE_STDIN') throw Error('Unexpected stdin');
+print('JS_SESSION_RETAINED');''', 'JS_SESSION_RETAINED'),
     ('shell', '''test "$(pwd)" = /tmp/session-new || exit 31
 test "$SESSION_VALUE" = retained || exit 32
 session_fn moved
 printf 'SHELL_ANCHORED_SESSION_OK\\n' ''', 'SHELL_ANCHORED_SESSION_OK'),
-    ('python', "counter += 1\nraise ValueError('SESSION_EXPECTED_ERROR')", 'SESSION_EXPECTED_ERROR'),
-    ('python', '''assert counter == 43
-assert os.getcwd() == '/tmp/python-session'
-assert os.environ['PY_SESSION_VALUE'] == 'retained'
-print('PYTHON_EXCEPTION_STATE_RETAINED')''', 'PYTHON_EXCEPTION_STATE_RETAINED'),
+    ('js', "counter += 1; throw Error('SESSION_EXPECTED_ERROR');", 'SESSION_EXPECTED_ERROR'),
+    ('js', '''if (counter !== 43 || closure() !== 43) throw Error('Lost exception state');
+print('JS_EXCEPTION_STATE_RETAINED');''', 'JS_EXCEPTION_STATE_RETAINED'),
     ('shell', 'exit 7', 'Session reset.'),
     ('shell', '''test "${SESSION_VALUE-unset}" = unset || exit 41
 test "$(pwd)" = / || exit 42
@@ -62,22 +47,33 @@ test "$(umask)" = 0022 || exit 43
 printf 'SHELL_EXIT_RESET_OK\\n'
 export CLEAR_SESSION=pending
 cd /tmp/session-new''', 'SHELL_EXIT_RESET_OK'),
-    ('python', 'sys.exit(9)', 'Session reset.'),
-    ('python', '''import os
-assert 'counter' not in globals()
-assert 'PY_SESSION_VALUE' not in os.environ
-assert os.getcwd() == '/'
-assert not {'4', '5'} & set(os.listdir('/proc/self/fd'))
-with open('/sessions-result', 'wb') as out: out.write(b'SESSIONS_OK\\n')
-print('SESSIONS_OK')
-clear_token = 'pending'
-os.environ['CLEAR_SESSION'] = 'pending'
-os.chdir('/tmp/python-session')''', 'SESSIONS_OK'),
+    ('js', 'quit(9);', 'Session reset.'),
+    ('js', '''if (typeof counter !== 'undefined') throw Error('State survived quit');
+await $`printf 'SESSIONS_OK\\n' > /sessions-result`;
+print('SESSIONS_OK');
+let clear_token = 'pending';''', 'SESSIONS_OK'),
+    ('js', "let clear_token = 'again';", 'SyntaxError'),
+    ('js', "if (clear_token !== 'pending') throw Error('Declaration changed'); print('JS_DECLARATION_RETAINED');", 'JS_DECLARATION_RETAINED'),
+    ('js', "await Promise.reject(Error('JS_EXPECTED_REJECTION'));", 'JS_EXPECTED_REJECTION'),
+    ('js', "let handled = Promise.reject(Error('JS_HANDLED')); handled.catch(() => {}); print('JS_HANDLED_REJECTION_OK');", 'JS_HANDLED_REJECTION_OK'),
+    ('js', "Promise.reject(Error('JS_UNHANDLED_REJECTION'));", 'JS_UNHANDLED_REJECTION'),
+    ('js', "$`sleep 100`; throw Error('JS_CANCEL_PENDING_ON_ERROR');", 'JS_CANCEL_PENDING_ON_ERROR'),
+    ('js', '''shellResult = await $`printf '%s' ${["a b", "'quoted'", '中', '$HOME']}`;
+if (shellResult.stdout !== "a b'quoted'中$HOME") throw Error('Word quoting failed');
+try { await $`echo bad >&2; exit 7`; throw Error('Command succeeded'); }
+catch (error) { if (error.exitCode !== 7 || error.stderr !== 'bad\\n') throw error; }
+await Promise.all([$`printf a`, $`printf b`]);
+print('JS_ASYNC_RECOVERED');''', 'JS_ASYNC_RECOVERED'),
+    ('js', "if (typeof clear_token !== 'string') throw Error('Lost state'); console.error('JS_STDERR_OK');", 'JS_STDERR_OK'),
+    ('js', "let lateResolve; await new Promise(resolve => { lateResolve = resolve; }); print('STALE_REQUEST_RESUMED');", 'Session reset.'),
+    ('js', "if (typeof lateResolve !== 'undefined') throw Error('Old continuation survived'); let clear_token = 'pending'; print('JS_PENDING_RESET_OK');", 'JS_PENDING_RESET_OK'),
+    ('js', "let rejectedResolve; Promise.reject(Error('JS_UNHANDLED_WHILE_PENDING')); await new Promise(resolve => { rejectedResolve = resolve; }); print('STALE_REQUEST_RESUMED');", 'Session reset.'),
+    ('js', "if (typeof rejectedResolve !== 'undefined') throw Error('Rejected continuation survived'); let clear_token = 'pending'; print('JS_REJECTED_PENDING_RESET_OK');", 'JS_REJECTED_PENDING_RESET_OK'),
 ]
 
 CLEAR_STEPS = [
     ('shell', 'test "${CLEAR_SESSION-unset}" = unset || exit 51; test "$(pwd)" = / || exit 52; export CANCEL_SESSION_TOKEN=pending; cd /tmp/session-new; echo SHELL_CLEAR_OK', 'SHELL_CLEAR_OK'),
-    ('python', "assert 'clear_token' not in globals(); import os; assert 'CLEAR_SESSION' not in os.environ; assert os.getcwd() == '/'; survivor = 71; print('PYTHON_CLEAR_OK')", 'PYTHON_CLEAR_OK'),
+    ('js', "if (typeof clear_token !== 'undefined') throw Error('Clear retained state'); let survivor = 71; print('JS_CLEAR_OK');", 'JS_CLEAR_OK'),
     ('shell', 'return 5; echo RETURN_DID_NOT_STOP', 'Exit code: 5'),
     ('shell', 'test "$?" -eq 5 || exit 71; test "$CANCEL_SESSION_TOKEN" = pending || exit 72; echo SHELL_RETURN_OK', 'SHELL_RETURN_OK'),
     ('shell', 'if then', 'Session reset.'),
@@ -87,7 +83,7 @@ CLEAR_STEPS = [
 
 def verify_sessions(workspace):
     assert workspace.read('sessions-result') == b'SESSIONS_OK\n'
+    assert workspace.read('session-js-started') == b'js-started'
     assert workspace.read('session-fd-output') == b'first-second'
     assert workspace.read('session-shell-pid').isdigit()
-    assert workspace.read('session-python-pid').isdigit()
     assert not any(path.startswith(('tmp/', 'proc/', 'dev/')) for path in workspace.entries)
