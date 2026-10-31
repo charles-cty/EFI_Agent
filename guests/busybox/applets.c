@@ -57,6 +57,29 @@ int tr_main(int argc, char **argv);
 
 int grep_main(int argc, char **argv);
 
+int dd_main(int argc, char **argv);
+int mktemp_main(int argc, char **argv);
+int readlink_main(int argc, char **argv);
+int truncate_main(int argc, char **argv);
+int split_main(int argc, char **argv);
+int paste_main(int argc, char **argv);
+int comm_main(int argc, char **argv);
+int tac_main(int argc, char **argv);
+int nl_main(int argc, char **argv);
+int fold_main(int argc, char **argv);
+int strings_main(int argc, char **argv);
+int cmp_main(int argc, char **argv);
+int diff_main(int argc, char **argv);
+int patch_main(int argc, char **argv);
+int expr_main(int argc, char **argv);
+int bc_main(int argc, char **argv);
+int dc_main(int argc, char **argv);
+int cksum_main(int argc, char **argv);
+int bzip2_main(int argc, char **argv);
+int bunzip2_main(int argc, char **argv);
+int unxz_main(int argc, char **argv);
+int unlzma_main(int argc, char **argv);
+
 int efi_busybox_applet(int argc, char **argv)
 {
     const char *name = bb_basename(argv[0]);
@@ -111,6 +134,33 @@ int efi_busybox_applet(int argc, char **argv)
     if (strcmp(name, "sed") == 0) return sed_main(argc, argv);
     if (strcmp(name, "chmod") == 0) return chmod_main(argc, argv);
     if (strcmp(name, "awk") == 0) return awk_main(argc, argv);
+    if (strcmp(name, "dd") == 0) return dd_main(argc, argv);
+    if (strcmp(name, "mktemp") == 0) return mktemp_main(argc, argv);
+    if (strcmp(name, "readlink") == 0) return readlink_main(argc, argv);
+    if (strcmp(name, "truncate") == 0) return truncate_main(argc, argv);
+    if (strcmp(name, "split") == 0) return split_main(argc, argv);
+    if (strcmp(name, "paste") == 0) return paste_main(argc, argv);
+    if (strcmp(name, "comm") == 0) return comm_main(argc, argv);
+    if (strcmp(name, "tac") == 0) return tac_main(argc, argv);
+    if (strcmp(name, "nl") == 0) return nl_main(argc, argv);
+    if (strcmp(name, "fold") == 0) return fold_main(argc, argv);
+    if (strcmp(name, "strings") == 0) return strings_main(argc, argv);
+    if (strcmp(name, "cmp") == 0) return cmp_main(argc, argv);
+    if (strcmp(name, "diff") == 0) return diff_main(argc, argv);
+    if (strcmp(name, "patch") == 0) return patch_main(argc, argv);
+    if (strcmp(name, "expr") == 0) return expr_main(argc, argv);
+    if (strcmp(name, "bc") == 0) return bc_main(argc, argv);
+    if (strcmp(name, "dc") == 0) return dc_main(argc, argv);
+    if (strcmp(name, "cksum") == 0) return cksum_main(argc, argv);
+    if (strcmp(name, "crc32") == 0) return cksum_main(argc, argv);
+    if (strcmp(name, "md5sum") == 0) return md5_sha1_sum_main(argc, argv);
+    if (strcmp(name, "sha1sum") == 0) return md5_sha1_sum_main(argc, argv);
+    if (strcmp(name, "sha512sum") == 0) return md5_sha1_sum_main(argc, argv);
+    if (strcmp(name, "bzip2") == 0) return bzip2_main(argc, argv);
+    if (strcmp(name, "bunzip2") == 0) return bunzip2_main(argc, argv);
+    if (strcmp(name, "xz") == 0) return unxz_main(argc, argv);
+    if (strcmp(name, "unxz") == 0) return unxz_main(argc, argv);
+    if (strcmp(name, "lzma") == 0) return unlzma_main(argc, argv);
     fputs("busybox: applet is unavailable\n", stderr);
     return 127;
 }

@@ -128,6 +128,9 @@ JavaScript session; `/clear` resets both. Ash enables BusyBox Bash extensions.
 The WASI zx adapter uses vendored zx@lite quoting and output handling; see
 [the supported APIs and limits](vendor/zx/PORT.md).
 
+The BusyBox command set and deferred applets are listed in
+[BusyBox applet selection](docs/busybox-applets.md).
+
 Use `/enter shell` (or `/enter`) and `/enter js` to open a terminal in those
 shared sessions. Shell `exit`, JavaScript `quit()` or idle Ctrl+D ends the
 interpreter and returns to conversation. All terminal text goes directly to

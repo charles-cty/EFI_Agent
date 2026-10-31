@@ -202,6 +202,9 @@
 //usage:       "64\n"
 
 #include "libbb.h"
+
+/* Each WASM applet owns its globals in a fresh instance. */
+static struct globals *ptr_to_globals;
 #include "common_bufsiz.h"
 
 #if !ENABLE_BC && !ENABLE_FEATURE_DC_BIG

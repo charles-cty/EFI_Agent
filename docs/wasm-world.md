@@ -781,8 +781,9 @@ configuration. `guests/busybox/sources.txt` lists the directly compiled sources.
 `scripts/build_busybox.py` is the shared native build driver for Windows and
 Linux; `build_busybox.ps1` is its Windows entry point. Set WASI_SDK_PATH and
 BINARYEN_PATH, or pass the toolchain directories explicitly. The build
-includes all 48 required applets,
-aliases, getopts, command, internal glob, echo, 64-bit arithmetic and NOFORK.
+installs 78 command names; see [the applet selection](busybox-applets.md).
+Ash includes aliases, getopts, command, internal glob, echo, 64-bit arithmetic
+and NOFORK.
 The port header declares the WASI and BusyBox utility boundaries. Real ash
 echo, quoted expansion,
 functions, loops, conditions, exit status and syntax errors pass in host wasmi.

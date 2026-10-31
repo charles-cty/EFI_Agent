@@ -1,5 +1,34 @@
 # Verification record
 
+## 2026-11-01: Additional upstream BusyBox applets
+
+Enabled 27 additional upstream applets in the maintained BusyBox image, for
+78 installed command names including ash/sh. The selection and deferred
+commands are documented in busybox-applets.md. The build uses 165 distinct
+source files and retains every previously enabled feature. diff, patch and bc
+use per-instance globals. Added shared helpers for aligned dd buffers,
+temporary files/directories, line reads and quiet diagnostics. Regular named
+files accept NONBLOCK on open and retain the flag in descriptor metadata.
+
+The Windows WASI SDK 34 / Binaryen 133 build passed. The actual WASM integration
+suite scripts/test_busybox_extra.py passed through unchanged CPython. Checks
+cover dd skip/seek/alignment, truncate shrink/zero extension, split boundaries,
+temporary file/directory modes, link resolution, text tools, quiet comparison,
+64-bit expr, arbitrary precision bc/dc, and diff/patch dry-run/apply/reverse.
+Host hashlib checks independent hashes at 0, 1, 4095, 4096 and 65537 bytes;
+host zlib checks CRC32; host-produced bzip2/xz/lzma streams decode in guests.
+Host bzip2 decoding and saved-byte comparisons check guest-produced files.
+The existing text (142 cases), gzip compression and filesystem mutation suites
+also pass with independent saved-byte/metadata checks.
+
+Intermediate issues: initial compilation exposed missing port declarations,
+feature macros and helper implementations. ar/cpio were excluded after their
+additional archive/ownership/process requirements became clear. A source edit
+during Windows compilation returned EINVAL; it succeeded after the compiler
+closed the file. The first extra-applet integration stopped at truncate because
+its O_NONBLOCK open was rejected; synchronous named files now accept that flag.
+No stubs or pretend-success paths were added for deferred applets.
+
 ## 2026-11-01: Writable vvfat did not pass workspace acceptance
 
 Tested a separate writable FAT16 vvfat drive with the native Windows launcher,

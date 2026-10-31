@@ -454,12 +454,9 @@ fn open(
                 flags: flags as u16,
             })
         } else {
-            let allowed_flags = if target_kind == EntryType::CharacterDevice {
-                5
-            } else {
-                1
-            };
-            if flags & !allowed_flags != 0 {
+            // Named-file I/O completes synchronously. NONBLOCK is accepted
+            // and retained in fdstat, as it is for directory descriptors.
+            if flags & !5 != 0 {
                 return Err(58);
             }
             let options = OpenOptions {

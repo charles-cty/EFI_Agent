@@ -121,6 +121,9 @@
 //usage:     "\n	-w	Ignore all whitespace"
 
 #include "libbb.h"
+
+/* Each WASM applet owns its globals in a fresh instance. */
+static struct globals *ptr_to_globals;
 #include "common_bufsiz.h"
 
 #if 0

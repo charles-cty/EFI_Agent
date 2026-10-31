@@ -29,6 +29,8 @@ int fputs_stdout(const char *text)
 
 void bb_perror_msg(const char *format, ...)
 {
+    if (logmode == LOGMODE_NONE)
+        return;
     int error = errno;
     va_list arguments;
     va_start(arguments, format);

@@ -49,6 +49,9 @@
 
 #include "libbb.h"
 
+/* Each WASM applet owns its globals in a fresh instance. */
+static struct globals *ptr_to_globals;
+
 #define PATCH_DEBUG  0
 
 // libbb candidate?

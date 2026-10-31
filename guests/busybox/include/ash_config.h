@@ -75,9 +75,9 @@
 #define ENABLE_BIG_ENDIAN 0
 #define IF_BIG_ENDIAN(...)
 #define IF_NOT_BIG_ENDIAN(...) __VA_ARGS__
-#define ENABLE_BUNZIP2 0
-#define IF_BUNZIP2(...)
-#define IF_NOT_BUNZIP2(...) __VA_ARGS__
+#define ENABLE_BUNZIP2 1
+#define IF_BUNZIP2(...) __VA_ARGS__
+#define IF_NOT_BUNZIP2(...)
 #define ENABLE_BZCAT 0
 #define IF_BZCAT(...)
 #define IF_NOT_BZCAT(...) __VA_ARGS__
@@ -147,9 +147,9 @@
 #define ENABLE_FEATURE_AWK_LIBM 1
 #define IF_FEATURE_AWK_LIBM(...) __VA_ARGS__
 #define IF_NOT_FEATURE_AWK_LIBM(...)
-#define ENABLE_FEATURE_BZIP2_DECOMPRESS 0
-#define IF_FEATURE_BZIP2_DECOMPRESS(...)
-#define IF_NOT_FEATURE_BZIP2_DECOMPRESS(...) __VA_ARGS__
+#define ENABLE_FEATURE_BZIP2_DECOMPRESS 1
+#define IF_FEATURE_BZIP2_DECOMPRESS(...) __VA_ARGS__
+#define IF_NOT_FEATURE_BZIP2_DECOMPRESS(...)
 #define ENABLE_FEATURE_CATN 1
 #define IF_FEATURE_CATN(...) __VA_ARGS__
 #define IF_NOT_FEATURE_CATN(...)
@@ -579,12 +579,12 @@
 #define ENABLE_LZCAT 0
 #define IF_LZCAT(...)
 #define IF_NOT_LZCAT(...) __VA_ARGS__
-#define ENABLE_LZMA 0
-#define IF_LZMA(...)
-#define IF_NOT_LZMA(...) __VA_ARGS__
-#define ENABLE_MD5SUM 0
-#define IF_MD5SUM(...)
-#define IF_NOT_MD5SUM(...) __VA_ARGS__
+#define ENABLE_LZMA 1
+#define IF_LZMA(...) __VA_ARGS__
+#define IF_NOT_LZMA(...)
+#define ENABLE_MD5SUM 1
+#define IF_MD5SUM(...) __VA_ARGS__
+#define IF_NOT_MD5SUM(...)
 #define ENABLE_MKDIR 1
 #define IF_MKDIR(...) __VA_ARGS__
 #define IF_NOT_MKDIR(...)
@@ -630,9 +630,9 @@
 #define ENABLE_SEQ 1
 #define IF_SEQ(...) __VA_ARGS__
 #define IF_NOT_SEQ(...)
-#define ENABLE_SHA1SUM 0
-#define IF_SHA1SUM(...)
-#define IF_NOT_SHA1SUM(...) __VA_ARGS__
+#define ENABLE_SHA1SUM 1
+#define IF_SHA1SUM(...) __VA_ARGS__
+#define IF_NOT_SHA1SUM(...)
 #define ENABLE_SHA1_HWACCEL 0
 #define IF_SHA1_HWACCEL(...)
 #define IF_NOT_SHA1_HWACCEL(...) __VA_ARGS__
@@ -645,9 +645,9 @@
 #define ENABLE_SHA3SUM 0
 #define IF_SHA3SUM(...)
 #define IF_NOT_SHA3SUM(...) __VA_ARGS__
-#define ENABLE_SHA512SUM 0
-#define IF_SHA512SUM(...)
-#define IF_NOT_SHA512SUM(...) __VA_ARGS__
+#define ENABLE_SHA512SUM 1
+#define IF_SHA512SUM(...) __VA_ARGS__
+#define IF_NOT_SHA512SUM(...)
 #define ENABLE_SHELL_ASH 1
 #define IF_SHELL_ASH(...) __VA_ARGS__
 #define IF_NOT_SHELL_ASH(...)
@@ -720,9 +720,9 @@
 #define ENABLE_UNLZMA 0
 #define IF_UNLZMA(...)
 #define IF_NOT_UNLZMA(...) __VA_ARGS__
-#define ENABLE_UNXZ 0
-#define IF_UNXZ(...)
-#define IF_NOT_UNXZ(...) __VA_ARGS__
+#define ENABLE_UNXZ 1
+#define IF_UNXZ(...) __VA_ARGS__
+#define IF_NOT_UNXZ(...)
 #define ENABLE_UNZIP 1
 #define IF_UNZIP(...) __VA_ARGS__
 #define IF_NOT_UNZIP(...)
@@ -747,9 +747,9 @@
 #define ENABLE_XXD 0
 #define IF_XXD(...)
 #define IF_NOT_XXD(...) __VA_ARGS__
-#define ENABLE_XZ 0
-#define IF_XZ(...)
-#define IF_NOT_XZ(...) __VA_ARGS__
+#define ENABLE_XZ 1
+#define IF_XZ(...) __VA_ARGS__
+#define IF_NOT_XZ(...)
 #define ENABLE_XZCAT 0
 #define IF_XZCAT(...)
 #define IF_NOT_XZCAT(...) __VA_ARGS__
@@ -768,4 +768,123 @@
 #define CONFIG_LAST_SUPPORTED_WCHAR 0x2ffff
 #define CONFIG_SUBST_WCHAR 63
 #define CONFIG_FEATURE_COPYBUF_KB 4
+#define ENABLE_DD 1
+#define IF_DD(...) __VA_ARGS__
+#define IF_NOT_DD(...)
+#define ENABLE_MKTEMP 1
+#define IF_MKTEMP(...) __VA_ARGS__
+#define IF_NOT_MKTEMP(...)
+#define ENABLE_READLINK 1
+#define IF_READLINK(...) __VA_ARGS__
+#define IF_NOT_READLINK(...)
+#define ENABLE_TRUNCATE 1
+#define IF_TRUNCATE(...) __VA_ARGS__
+#define IF_NOT_TRUNCATE(...)
+#define ENABLE_SPLIT 1
+#define IF_SPLIT(...) __VA_ARGS__
+#define IF_NOT_SPLIT(...)
+#define ENABLE_PASTE 1
+#define IF_PASTE(...) __VA_ARGS__
+#define IF_NOT_PASTE(...)
+#define ENABLE_COMM 1
+#define IF_COMM(...) __VA_ARGS__
+#define IF_NOT_COMM(...)
+#define ENABLE_TAC 1
+#define IF_TAC(...) __VA_ARGS__
+#define IF_NOT_TAC(...)
+#define ENABLE_NL 1
+#define IF_NL(...) __VA_ARGS__
+#define IF_NOT_NL(...)
+#define ENABLE_FOLD 1
+#define IF_FOLD(...) __VA_ARGS__
+#define IF_NOT_FOLD(...)
+#define ENABLE_STRINGS 1
+#define IF_STRINGS(...) __VA_ARGS__
+#define IF_NOT_STRINGS(...)
+#define ENABLE_CMP 1
+#define IF_CMP(...) __VA_ARGS__
+#define IF_NOT_CMP(...)
+#define ENABLE_DIFF 1
+#define IF_DIFF(...) __VA_ARGS__
+#define IF_NOT_DIFF(...)
+#define ENABLE_PATCH 1
+#define IF_PATCH(...) __VA_ARGS__
+#define IF_NOT_PATCH(...)
+#define ENABLE_EXPR 1
+#define IF_EXPR(...) __VA_ARGS__
+#define IF_NOT_EXPR(...)
+#define ENABLE_BC 1
+#define IF_BC(...) __VA_ARGS__
+#define IF_NOT_BC(...)
+#define ENABLE_DC 1
+#define IF_DC(...) __VA_ARGS__
+#define IF_NOT_DC(...)
+#define ENABLE_CKSUM 1
+#define IF_CKSUM(...) __VA_ARGS__
+#define IF_NOT_CKSUM(...)
+#define ENABLE_CRC32 1
+#define IF_CRC32(...) __VA_ARGS__
+#define IF_NOT_CRC32(...)
+#define ENABLE_AR 0
+#define IF_AR(...)
+#define IF_NOT_AR(...) __VA_ARGS__
+#define ENABLE_BZIP2 1
+#define IF_BZIP2(...) __VA_ARGS__
+#define IF_NOT_BZIP2(...)
+#define ENABLE_FEATURE_DD_IBS_OBS 1
+#define IF_FEATURE_DD_IBS_OBS(...) __VA_ARGS__
+#define IF_NOT_FEATURE_DD_IBS_OBS(...)
+#define ENABLE_FEATURE_DD_STATUS 1
+#define IF_FEATURE_DD_STATUS(...) __VA_ARGS__
+#define IF_NOT_FEATURE_DD_STATUS(...)
+#define ENABLE_FEATURE_READLINK_FOLLOW 1
+#define IF_FEATURE_READLINK_FOLLOW(...) __VA_ARGS__
+#define IF_NOT_FEATURE_READLINK_FOLLOW(...)
+#define ENABLE_FEATURE_SPLIT_FANCY 1
+#define IF_FEATURE_SPLIT_FANCY(...) __VA_ARGS__
+#define IF_NOT_FEATURE_SPLIT_FANCY(...)
+#define ENABLE_EXPR_MATH_SUPPORT_64 1
+#define IF_EXPR_MATH_SUPPORT_64(...) __VA_ARGS__
+#define IF_NOT_EXPR_MATH_SUPPORT_64(...)
+#define ENABLE_FEATURE_DIFF_DIR 1
+#define IF_FEATURE_DIFF_DIR(...) __VA_ARGS__
+#define IF_NOT_FEATURE_DIFF_DIR(...)
+#define ENABLE_FEATURE_DIFF_LONG_OPTIONS 1
+#define IF_FEATURE_DIFF_LONG_OPTIONS(...) __VA_ARGS__
+#define IF_NOT_FEATURE_DIFF_LONG_OPTIONS(...)
+#define ENABLE_FEATURE_BC_LONG_OPTIONS 1
+#define IF_FEATURE_BC_LONG_OPTIONS(...) __VA_ARGS__
+#define IF_NOT_FEATURE_BC_LONG_OPTIONS(...)
+#define ENABLE_FEATURE_DC_BIG 1
+#define IF_FEATURE_DC_BIG(...) __VA_ARGS__
+#define IF_NOT_FEATURE_DC_BIG(...)
+#define ENABLE_FEATURE_CPIO_O 0
+#define IF_FEATURE_CPIO_O(...)
+#define IF_NOT_FEATURE_CPIO_O(...) __VA_ARGS__
+#define ENABLE_FEATURE_DD_THIRD_STATUS_LINE 0
+#define IF_FEATURE_DD_THIRD_STATUS_LINE(...)
+#define IF_NOT_FEATURE_DD_THIRD_STATUS_LINE(...) __VA_ARGS__
+#define ENABLE_FEATURE_DD_SIGNAL_HANDLING 0
+#define IF_FEATURE_DD_SIGNAL_HANDLING(...)
+#define IF_NOT_FEATURE_DD_SIGNAL_HANDLING(...) __VA_ARGS__
+#define ENABLE_FEATURE_BC_INTERACTIVE 0
+#define IF_FEATURE_BC_INTERACTIVE(...)
+#define IF_NOT_FEATURE_BC_INTERACTIVE(...) __VA_ARGS__
+#define ENABLE_ERROR_RETURN_POSSIBLE 0
+#define IF_ERROR_RETURN_POSSIBLE(...)
+#define IF_NOT_ERROR_RETURN_POSSIBLE(...) __VA_ARGS__
+#define ENABLE_FEATURE_CPIO_P 0
+#define IF_FEATURE_CPIO_P(...)
+#define IF_NOT_FEATURE_CPIO_P(...) __VA_ARGS__
+#define ENABLE_FEATURE_CPIO_IGNORE_DEVNO 0
+#define IF_FEATURE_CPIO_IGNORE_DEVNO(...)
+#define IF_NOT_FEATURE_CPIO_IGNORE_DEVNO(...) __VA_ARGS__
+#define ENABLE_FEATURE_CPIO_RENUMBER_INODES 0
+#define IF_FEATURE_CPIO_RENUMBER_INODES(...)
+#define IF_NOT_FEATURE_CPIO_RENUMBER_INODES(...) __VA_ARGS__
+#define ENABLE_FEATURE_LZMA_FAST 0
+#define IF_FEATURE_LZMA_FAST(...)
+#define IF_NOT_FEATURE_LZMA_FAST(...) __VA_ARGS__
+#define CONFIG_BZIP2_SMALL 0
+#define ENABLE_INCLUDE_SUSv2 0
 #endif

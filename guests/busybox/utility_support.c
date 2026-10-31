@@ -166,29 +166,68 @@ int fclose_if_not_stdin(FILE *stream)
     return stream == stdin ? 0 : fclose(stream);
 }
 
-int xmkstemp(char *name)
+enum temporary_kind { TEMPORARY_NAME, TEMPORARY_FILE, TEMPORARY_DIRECTORY };
+
+static int create_temporary(char *name, enum temporary_kind kind)
 {
     static const char alphabet[] =
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-";
     size_t length = strlen(name);
-    if (length < 6 || strcmp(name + length - 6, "XXXXXX") != 0)
-        bb_simple_error_msg_and_die("temporary name requires XXXXXX suffix");
+    if (length < 6 || strcmp(name + length - 6, "XXXXXX") != 0) {
+        errno = EINVAL;
+        return -1;
+    }
     for (unsigned attempt = 0; attempt < 128; ++attempt) {
         unsigned char bytes[6];
         __wasi_errno_t error = __wasi_random_get(bytes, sizeof(bytes));
-        if (error != 0) {
+        if (error) {
             errno = error;
-            bb_simple_perror_msg_and_die("temporary name entropy");
+            return -1;
         }
         for (unsigned index = 0; index < sizeof(bytes); ++index)
             name[length - 6 + index] = alphabet[bytes[index] & 63];
-        int fd = open(name, O_CREAT | O_EXCL | O_RDWR, 0600);
-        if (fd >= 0)
-            return fd;
-        if (errno != EEXIST)
-            bb_simple_perror_msg_and_die(name);
+        int result;
+        if (kind == TEMPORARY_FILE)
+            result = open(name, O_CREAT | O_EXCL | O_RDWR, 0600);
+        else if (kind == TEMPORARY_DIRECTORY)
+            result = mkdir(name, 0700);
+        else {
+            struct stat info;
+            if (lstat(name, &info) < 0)
+                return errno == ENOENT ? 0 : -1;
+            errno = EEXIST;
+            result = -1;
+        }
+        if (result >= 0 || errno != EEXIST)
+            return result;
     }
-    bb_simple_perror_msg_and_die(name);
+    errno = EEXIST;
+    return -1;
+}
+
+int mkstemp(char *name)
+{
+    return create_temporary(name, TEMPORARY_FILE);
+}
+
+char *mkdtemp(char *name)
+{
+    return create_temporary(name, TEMPORARY_DIRECTORY) == 0 ? name : NULL;
+}
+
+char *mktemp(char *name)
+{
+    if (create_temporary(name, TEMPORARY_NAME) < 0)
+        name[0] = '\0';
+    return name;
+}
+
+int xmkstemp(char *name)
+{
+    int fd = mkstemp(name);
+    if (fd < 0)
+        bb_simple_perror_msg_and_die(name);
+    return fd;
 }
 
 void xrename(const char *source, const char *destination)

@@ -19,6 +19,8 @@ void (*die_func)(void);
 
 void bb_error_msg(const char *format, ...)
 {
+    if (logmode == LOGMODE_NONE)
+        return;
     va_list arguments;
     va_start(arguments, format);
     vfprintf(stderr, format, arguments);
@@ -50,6 +52,8 @@ void bb_simple_error_msg_and_die(const char *text)
 }
 void bb_error_msg_and_die(const char *format, ...)
 {
+    if (logmode == LOGMODE_NONE)
+        xfunc_die();
     va_list arguments;
     va_start(arguments, format);
     vfprintf(stderr, format, arguments);

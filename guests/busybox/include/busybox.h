@@ -46,6 +46,7 @@ void xgettimeofday(struct timeval *tv);
 #define ALIGN1 __attribute__((aligned(1)))
 #define ALIGN2 __attribute__((aligned(2)))
 #define ALIGN_PTR __attribute__((aligned(sizeof(void *))))
+#define ALIGNED(size) __attribute__((aligned(size)))
 #define PUSH_AND_SET_FUNCTION_VISIBILITY_TO_HIDDEN
 #define POP_SAVED_FUNCTION_VISIBILITY
 #define BB_MMU 1
@@ -149,6 +150,48 @@ struct suffix_mult {
 };
 #define ALIGN_SUFFIX __attribute__((aligned(4)))
 extern const struct suffix_mult bkm_suffixes[];
+extern const struct suffix_mult cwbkMG_suffixes[];
+#define kMG_suffixes (cwbkMG_suffixes + 3)
+#define XATOOFF(value) xatoi_positive(value)
+#define bb_getpagesize() 65536
+#define bswap_16(value) __builtin_bswap16(value)
+void *xmmap_anon(size_t size);
+void *malloc_or_warn(size_t size);
+int xopen_stdin(const char *filename);
+char *strcpy_and_process_escape_sequences(char *destination, const char *source);
+unsigned long isqrt(unsigned long long value);
+void qsort_string_vector(char **strings, unsigned count);
+char *strrstr(const char *haystack, const char *needle);
+int bunzip2_main(int argc, char **argv);
+int mkstemp(char *name);
+char *mkdtemp(char *name);
+char *mktemp(char *name);
+#define SET_PTR_TO_GLOBALS(value) (ptr_to_globals = (value))
+#define FREE_PTR_TO_GLOBALS() free(ptr_to_globals)
+#define BB_VER "1.37.0"
+extern const int const_int_0;
+extern const char bb_hexdigits_upcase[];
+FILE *xfopen_for_read(const char *path);
+char *skip_non_whitespace(const char *text);
+char *xmalloc_reads(int fd, size_t *maximum);
+void bb_verror_msg(const char *format, va_list arguments, const char *error);
+enum { LOGMODE_NONE = 0, LOGMODE_STDIO = 1 };
+extern smallint logmode;
+uint32_t crc32_block_endian1(uint32_t value, const void *buffer, unsigned length, uint32_t *table);
+static inline uint32_t efi_get_le32(const void *source)
+{
+    uint32_t value;
+    memcpy(&value, source, sizeof(value));
+    return value;
+}
+static inline void efi_put_le32(void *destination, uint32_t value)
+{
+    memcpy(destination, &value, sizeof(value));
+}
+#define get_unaligned_le32(source) efi_get_le32(source)
+#define get_unaligned_be32(source) __builtin_bswap32(efi_get_le32(source))
+#define put_unaligned_le32(value, destination) efi_put_le32(destination, value)
+#define put_unaligned_be32(value, destination) efi_put_le32(destination, __builtin_bswap32(value))
 #include "xatonum.h"
 int printf_main(int argc, char **argv);
 int bb_putchar(int value);
