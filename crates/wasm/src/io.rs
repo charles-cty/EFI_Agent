@@ -16,6 +16,57 @@ pub(crate) const BADF: i32 = 8;
 pub(crate) const MFILE: i32 = 33;
 pub(crate) const PIPE: i32 = 64;
 
+#[derive(Default)]
+pub(crate) struct Input {
+    pub bytes: VecDeque<u8>,
+    pub open: bool,
+}
+
+impl FromIterator<u8> for Input {
+    fn from_iter<T: IntoIterator<Item = u8>>(bytes: T) -> Self {
+        Self {
+            bytes: bytes.into_iter().collect(),
+            open: false,
+        }
+    }
+}
+
+impl From<Vec<u8>> for Input {
+    fn from(bytes: Vec<u8>) -> Self {
+        bytes.into_iter().collect()
+    }
+}
+
+impl<const N: usize> From<[u8; N]> for Input {
+    fn from(bytes: [u8; N]) -> Self {
+        bytes.into_iter().collect()
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Terminal {
+    pub active: Cell<bool>,
+    pub input: Rc<RefCell<Input>>,
+    pub output: RefCell<Vec<u8>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct Output {
+    pub bytes: Rc<RefCell<Vec<u8>>>,
+    pub terminal: Rc<Terminal>,
+}
+
+impl Output {
+    fn available(&self) -> usize {
+        MAX_OUTPUT_BYTES
+            - if self.terminal.active.get() {
+                self.terminal.output.borrow().len()
+            } else {
+                self.bytes.borrow().len()
+            }
+    }
+}
+
 pub(crate) struct Readiness {
     pub bytes: usize,
     pub hangup: bool,
@@ -68,8 +119,8 @@ impl Drop for Endpoint {
 pub(crate) enum Descriptor {
     Control(Rc<RefCell<VecDeque<u8>>>),
     Session(Rc<RefCell<crate::session::Channel>>),
-    Input(Rc<RefCell<VecDeque<u8>>>),
-    Output(Rc<RefCell<Vec<u8>>>),
+    Input(Rc<RefCell<Input>>),
+    Output(Output),
     Pipe(Endpoint),
     File {
         handle: Rc<RefCell<Box<dyn File>>>,
@@ -186,8 +237,11 @@ impl Descriptor {
             }
             Self::Input(input) => {
                 let mut input = input.borrow_mut();
-                let count = maximum.min(input.len());
-                Ok(Some(input.drain(..count).collect()))
+                if input.bytes.is_empty() && input.open {
+                    return Ok(None);
+                }
+                let count = maximum.min(input.bytes.len());
+                Ok(Some(input.bytes.drain(..count).collect()))
             }
             Self::Pipe(endpoint) => {
                 let mut pipe = endpoint.pipe.borrow_mut();
@@ -242,12 +296,19 @@ impl Descriptor {
                 Ok(Some(count))
             }
             Self::Output(output) => {
-                let mut output = output.borrow_mut();
-                let count = bytes.len().min(MAX_OUTPUT_BYTES - output.len());
+                let count = bytes.len().min(output.available());
                 if count == 0 {
                     return Ok(None);
                 }
-                output.extend_from_slice(&bytes[..count]);
+                if output.terminal.active.get() {
+                    output
+                        .terminal
+                        .output
+                        .borrow_mut()
+                        .extend_from_slice(&bytes[..count]);
+                } else {
+                    output.bytes.borrow_mut().extend_from_slice(&bytes[..count]);
+                }
                 Ok(Some(count))
             }
             Self::Pipe(endpoint) => {
@@ -416,11 +477,12 @@ impl Descriptor {
         }
         match self {
             Self::Session(channel) => {
-                let size = channel.borrow().readable();
+                let channel = channel.borrow();
+                let size = channel.readable();
                 if writing {
                     ready(8, false, 0)
-                } else if size > 0 {
-                    ready(size, false, 0)
+                } else if size > 0 || channel.closed {
+                    ready(size, channel.closed && size == 0, 0)
                 } else {
                     None
                 }
@@ -455,9 +517,16 @@ impl Descriptor {
                 }
             }
             Self::Directory(_) => unreachable!("Directory is not readable or writable"),
-            Self::Input(input) => ready(input.borrow().len(), false, 0),
+            Self::Input(input) => {
+                let input = input.borrow();
+                if input.bytes.is_empty() && input.open {
+                    None
+                } else {
+                    ready(input.bytes.len(), !input.open && input.bytes.is_empty(), 0)
+                }
+            }
             Self::Output(output) => {
-                let available = MAX_OUTPUT_BYTES - output.borrow().len();
+                let available = output.available();
                 if available == 0 {
                     None
                 } else {

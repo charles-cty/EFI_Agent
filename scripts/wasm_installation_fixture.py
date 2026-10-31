@@ -8,6 +8,7 @@ with open('/programs.json') as source:
 assert manifest['version'] == 1
 commands = []
 for module in manifest['modules']:
+    assert 'licenses' not in module, module
     assert os.path.isfile('/' + module['path']), module
     assert os.stat('/' + module['path']).st_mode & 0o777 == 0o755, module
     for name in module['commands']:
@@ -18,9 +19,8 @@ for module in manifest['modules']:
         commands.append(name)
     for path in module['libraries']:
         assert os.path.exists('/' + path), path
-    for path in module['licenses']:
-        with open('/' + path, 'rb') as source:
-            assert len(source.read()) > 100, path
+assert not os.path.exists('/curl.LICENSE')
+assert not os.path.exists('/licenses')
 result = subprocess.run(['ash', '-c', 'for name do command -v "$name" || exit; done',
                          'manifest-check'] + commands, capture_output=True)
 assert result.returncode == 0 and len(result.stdout.splitlines()) == len(commands), result
@@ -51,8 +51,6 @@ def verify_installation(workspace, prepared):
     for module in manifest['modules']:
         assert workspace.read(module['path']) == (prepared / module['path']).read_bytes()
         assert workspace.entries[module['path']]['mode'] == 0o755
-        for path in module['licenses']:
-            assert workspace.read(path) == (prepared / path).read_bytes()
         for library in module['libraries']:
             root = prepared / library
             for source in root.rglob('*'):
@@ -61,6 +59,9 @@ def verify_installation(workspace, prepared):
                     assert workspace.read(path) == source.read_bytes(), path
                 else:
                     assert workspace.entries[path]['kind'] == 'Directory', path
+    for notice in (prepared / 'licenses').iterdir():
+        assert notice.name not in workspace.entries, notice.name
+    assert 'licenses' not in workspace.entries
     assert workspace.read('installation-result') == b'INSTALLATION_OK\n'
     assert workspace.read('installed-curl-version').startswith(b'curl ')
     assert workspace.read('lib/python3.14/site-packages/sitecustomize.py') == (

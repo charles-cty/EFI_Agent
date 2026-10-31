@@ -128,6 +128,13 @@ JavaScript session; `/clear` resets both. Ash enables BusyBox Bash extensions.
 The WASI zx adapter uses vendored zx@lite quoting and output handling; see
 [the supported APIs and limits](vendor/zx/PORT.md).
 
+Use `/enter shell` (or `/enter`) and `/enter js` to open a terminal in those
+shared sessions. Shell `exit`, JavaScript `quit()` or idle Ctrl+D ends the
+interpreter and returns to conversation. All terminal text goes directly to
+the interpreter. Commands and output stay outside model history. Enter runs
+code or sends stdin to a running
+command; Ctrl+D sends EOF. Up/Down recalls commands; Ctrl+J inserts a newline.
+
 The launcher copies the host workspace into a private writable FAT disk. Guest
 file tools operate there; changed files are saved back after QEMU stops. Host
 files do not change during the session. Conflicting host edits prevent saving;
@@ -286,7 +293,7 @@ CA, require no external credentials, and run with `uv`:
 ```bash
 uv run scripts/smoke_vm.py --launcher target/debug/efi-agent \
   --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd \
-  --esp artifacts/esp --output artifacts/direct-smoke
+  --esp artifacts/esp --output "${TMPDIR:-/tmp}/efi-agent/direct-smoke"
 ```
 
 Use `--api-format responses` to test Responses. Use `--tls-failure untrusted`,

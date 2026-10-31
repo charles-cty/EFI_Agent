@@ -3,6 +3,7 @@
 # ///
 """Run consecutive shell and JavaScript requests in live WASM Stores."""
 import argparse
+import json
 from pathlib import Path
 import re
 import shutil
@@ -36,6 +37,40 @@ def main():
                   ('reset_js', ''), ('reset_js', ''),
                   ('js', "if (typeof checkZx !== 'undefined') throw Error('Reset kept globals'); print('JS_EXPLICIT_RESET_OK');"),
                   ('shell', 'test "$JS_RESET_KEEP" = retained && test "$(pwd)" = /tmp/session-new || exit 81; printf second >&7; echo SHELL_SURVIVED_JS_RESET')]
+        repl_start = len(steps)
+        steps += [
+            ('js', 'var replCounter = 0; let sharedValue = 40;'),
+            ('repl-js', 'sharedValue + 2'),
+            ('repl-js', '++replCounter'),
+            ('js', "if (replCounter !== 1) throw Error('Repeated evaluation'); sharedValue += 1;"),
+            ('repl-js', 'await Promise.resolve(sharedValue + 1)'),
+            ('repl-js', '({ answer: sharedValue + 1, nested: [1, 2] })'),
+            ('repl-js', 'let replCycle = {}; replCycle.self = replCycle; replCycle;'),
+            ('repl-js', 'let getterCalls = 0; ({ get value() { getterCalls++; return 0; } })'),
+            ('js', "if (getterCalls !== 0) throw Error('Inspector invoked getter'); print('REPL_GETTER_OK');"),
+            ('repl-js', "throw Error('REPL_EXPECTED_ERROR')"),
+            ('repl-js', 'replCounter + sharedValue'),
+            ('repl-shell', 'export REPL_SHARED=yes; cd /tmp/session-new; printf shared > /repl-file'),
+            ('shell', 'test "$REPL_SHARED" = yes && test "$(pwd)" = /tmp/session-new || exit 90; echo REPL_SHELL_SHARED'),
+            ('repl-shell', '/bin/cat /repl-file'),
+            ('repl-js', "/hello/.test('hello')"),
+            ('repl-js', '(await $`printf awaited`).stdout'),
+            ('repl-js', '123n'),
+            ('repl-js', 'undefined'),
+            ('repl-js', 'quit(3)'),
+            ('repl-js', 'typeof sharedValue'),
+            ('repl-shell', 'exit 4'),
+            ('repl-shell', 'test "${REPL_SHARED-unset}" = unset || exit 91; echo REPL_SHELL_FRESH'),
+            ('js', "print('MODEL_OUTPUT_ONLY'); 650731"),
+            ('repl-shell', 'REPL_ERROR_KEEP=preserved'),
+            ('repl-shell', 'if then'),
+            ('repl-shell', 'test "$REPL_ERROR_KEEP" = preserved || exit 93; echo REPL_SYNTAX_RECOVERED'),
+            ('repl-shell', "trap 'printf SHELL_EOF_TRAP > /repl-eof-trap' EXIT; (exit 7)"),
+            ('eof-shell', ''),
+            ('repl-shell', 'test "${REPL_ERROR_KEEP-unset}" = unset && test "$(cat /repl-eof-trap)" = SHELL_EOF_TRAP || exit 94; echo REPL_EOF_FRESH'),
+            ('eof-js', ''),
+            ('repl-js', 'typeof sharedValue'),
+        ]
         command = [str(args.runner.resolve()), str(work), '--sessions']
         for index, (language, source) in enumerate(steps):
             path = root / f'source-{index}.txt'
@@ -72,12 +107,47 @@ def main():
         assert 'ZX_PORT_VERIFIED' in text and 'JS_EXPLICIT_RESET_OK' in text
         assert 'SHELL_SURVIVED_JS_RESET' in text
         assert 'ASH_BASH_COMPAT_VERIFIED' in text
-        for index in range(len(steps) - 7, len(steps)):
+        for index in range(repl_start - 7, repl_start):
             if steps[index][0] != 'reset_js':
                 assert results[index][1:] == (0, False), (index, results)
         assert DirectoryWorkspace(work).read('reset-fd') == b'firstsecond'
+        segments = {}
+        start = 0
+        for match in re.finditer(r'SESSION_RESULT (\d+) pid=\d+ code=-?\d+ reset=(?:true|false)', text):
+            segments[int(match[1])] = text[start:match.start()].strip()
+            start = match.end()
+        for offset, expected in [(0, ''), (1, '42'), (2, '1'), (3, ''), (4, '42'),
+                                 (10, '42'), (13, 'shared'), (14, 'true'),
+                                 (16, '123n'), (17, 'undefined'), (22, 'MODEL_OUTPUT_ONLY')]:
+            assert segments[repl_start + offset] == expected, (offset, segments[repl_start + offset])
+        assert re.search(r'answer: 42\b', segments[repl_start + 5])
+        assert 'self:' in segments[repl_start + 6]
+        assert 'awaited' in segments[repl_start + 15]
+        assert 'undefined' in segments[repl_start + 19]
+        assert '650731' not in text
+        assert 'REPL_EXPECTED_ERROR' in errors
+        assert 'REPL_GETTER_OK' in text and 'REPL_SHELL_SHARED' in text and 'REPL_SHELL_FRESH' in text
+        assert results[repl_start + 9][1:] == (1, False)
+        assert results[repl_start + 18][1:] == (3, True)
+        assert results[repl_start + 20][1:] == (4, True)
+        for offset in range(18):
+            if steps[repl_start + offset][0] in ('js', 'repl-js'):
+                assert results[repl_start + offset][0] == results[repl_start][0]
+        assert results[repl_start + 11][0] == results[repl_start + 12][0] == results[repl_start + 13][0]
+        assert results[repl_start + 19][0] != results[repl_start + 18][0]
+        assert results[repl_start + 21][0] != results[repl_start + 20][0]
+        assert results[repl_start + 24][1:] == (2, False)
+        assert results[repl_start + 23][0] == results[repl_start + 24][0] == results[repl_start + 25][0]
+        assert 'REPL_SYNTAX_RECOVERED' in text
+        assert results[repl_start + 26][1:] == (7, False)
+        assert results[repl_start + 27][1:] == (7, True)
+        assert results[repl_start + 28][0] != results[repl_start + 27][0]
+        assert results[repl_start + 29][1:] == (0, True)
+        assert results[repl_start + 30][0] != results[repl_start + 29][0]
+        assert json.loads(segments[repl_start + 30]) == 'undefined'
+        assert 'REPL_EOF_FRESH' in text
         verify_sessions(DirectoryWorkspace(work))
-        print('PASS live JS bindings/closures, await/rejections, shell state, finite stdin, error/quit/clear/cancel and saved bytes')
+        print('PASS live sessions, shared REPL state/value display, await/rejections, finite stdin, error/quit/clear/cancel and saved bytes')
 
 
 if __name__ == '__main__':

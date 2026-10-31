@@ -3,7 +3,12 @@ use crate::workspace::{self, Contents, Snapshot};
 use efi_agent_filesystem::installation::{
     ASH_APPLETS, MANIFEST_PATH, MAX_MANIFEST_BYTES, Manifest, Module,
 };
-use std::{collections::BTreeSet, fs, io::Read, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    io::Read,
+    path::Path,
+};
 type Error = Box<dyn std::error::Error>;
 
 fn selected(root: &Path, manifest: &Manifest, include_manifest: bool) -> Result<Snapshot, Error> {
@@ -15,7 +20,6 @@ fn selected(root: &Path, manifest: &Manifest, include_manifest: bool) -> Result<
     for module in &manifest.modules {
         for (path, directory_allowed) in std::iter::once((&module.path, false))
             .chain(module.libraries.iter().map(|path| (path, true)))
-            .chain(module.licenses.iter().map(|path| (path, false)))
         {
             let info = fs::symlink_metadata(root.join(path))
                 .map_err(|error| format!("Find installation asset {path}: {error}"))?;
@@ -49,6 +53,30 @@ pub fn assets(root: &Path) -> Result<Snapshot, Error> {
     selected(root, &Manifest::parse(&bytes)?, true)
 }
 
+/// Distribution notices are packaged outside the persistent workspace.
+pub fn licenses(root: &Path) -> Result<BTreeMap<String, Vec<u8>>, Error> {
+    let mut notices = BTreeMap::new();
+    for entry in fs::read_dir(root.join("licenses"))? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            return Err(format!(
+                "License notice must be a regular file: {}",
+                entry.path().display()
+            )
+            .into());
+        }
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| "Invalid license filename")?;
+        notices.insert(name, fs::read(entry.path())?);
+    }
+    if notices.is_empty() {
+        return Err("Prepared distribution licenses are missing".into());
+    }
+    Ok(notices)
+}
+
 pub fn overlay(workspace: &Snapshot, assets: &Snapshot) -> Result<Snapshot, Error> {
     let mut merged = workspace.clone();
     for (path, asset) in assets {
@@ -74,10 +102,7 @@ pub fn packaged(tree: &Snapshot) -> Result<Snapshot, Error> {
     let manifest = Manifest::parse(bytes)?;
     let mut paths = BTreeSet::from([MANIFEST_PATH.to_string()]);
     for module in &manifest.modules {
-        for path in std::iter::once(&module.path)
-            .chain(&module.libraries)
-            .chain(&module.licenses)
-        {
+        for path in std::iter::once(&module.path).chain(&module.libraries) {
             if !tree.contains_key(path) {
                 return Err(format!("Packaged installation asset is missing: {path}").into());
             }
@@ -158,48 +183,39 @@ pub fn catalog(args: Vec<String>) -> Result<(), Error> {
         return Err("Usage: efi-agent catalog <prepared-directory>".into());
     }
     let root = Path::new(&args[0]);
-    let module = |path: &str, commands: &[&str], libraries: &[&str], licenses: &[&str]| Module {
+    let module = |path: &str, commands: &[&str], libraries: &[&str]| Module {
         path: path.into(),
         commands: commands.iter().map(|name| (*name).into()).collect(),
         libraries: libraries.iter().map(|name| (*name).into()).collect(),
-        licenses: licenses.iter().map(|name| (*name).into()).collect(),
     };
     let manifest = Manifest {
         version: 1,
         modules: vec![
-            module(
-                "ash.wasm",
-                ASH_APPLETS,
-                &["share/zoneinfo"],
-                &["ash.LICENSE", "musl.COPYRIGHT", "tzdata.LICENSE"],
-            ),
-            module(
-                "python.wasm",
-                &["python"],
-                &["lib/python3.14"],
-                &["python.LICENSE"],
-            ),
-            module(
-                "curl.wasm",
-                &["curl"],
-                &[],
-                &["curl.LICENSE", "wolfssl.COPYING"],
-            ),
-            module(
-                "quickjs.wasm",
-                &["quickjs", "qjs"],
-                &[],
-                &["quickjs.LICENSE", "zx.LICENSE", "zx-third-party.LICENSE"],
-            ),
-            module(
-                "wolfssh.wasm",
-                &["wolfssh"],
-                &[],
-                &["wolfssh.LICENSING", "wolfssl.COPYING"],
-            ),
+            module("ash.wasm", ASH_APPLETS, &["share/zoneinfo"]),
+            module("python.wasm", &["python"], &["lib/python3.14"]),
+            module("curl.wasm", &["curl"], &[]),
+            module("quickjs.wasm", &["quickjs", "qjs"], &[]),
+            module("wolfssh.wasm", &["wolfssh"], &[]),
         ],
     };
     selected(root, &manifest, false)?;
+    let notices = licenses(root)?;
+    for name in [
+        "ash.LICENSE",
+        "musl.COPYRIGHT",
+        "tzdata.LICENSE",
+        "python.LICENSE",
+        "curl.LICENSE",
+        "wolfssl.COPYING",
+        "quickjs.LICENSE",
+        "zx.LICENSE",
+        "zx-third-party.LICENSE",
+        "wolfssh.LICENSING",
+    ] {
+        if !notices.contains_key(name) {
+            return Err(format!("Prepared distribution license is missing: {name}").into());
+        }
+    }
     let bytes = serde_json::to_vec_pretty(&manifest)?;
     // A failed catalog validation leaves the previous catalog intact.
     fs::write(root.join(MANIFEST_PATH), bytes)?;
@@ -224,19 +240,27 @@ mod tests {
         let source = root.join("prepared");
         let destination = root.join("workspace");
         fs::create_dir_all(source.join("lib")).unwrap();
+        fs::create_dir(source.join("licenses")).unwrap();
         fs::create_dir(&destination).unwrap();
         fs::write(source.join("tool.wasm"), b"\0asm\x01\0\0\0").unwrap();
-        fs::write(source.join("COPYING"), b"license").unwrap();
+        fs::write(source.join("licenses/COPYING"), b"license").unwrap();
         fs::write(source.join("lib/data"), b"library").unwrap();
         fs::create_dir(source.join("unselected-build")).unwrap();
         let sparse = fs::File::create(source.join("unselected-build/large")).unwrap();
         sparse.set_len(49 * 1024 * 1024).unwrap();
         drop(sparse);
-        fs::write(source.join(MANIFEST_PATH), br#"{"version":1,"modules":[{"path":"tool.wasm","commands":["one","two"],"libraries":["lib"],"licenses":["COPYING"]}]}"#).unwrap();
+        fs::write(source.join(MANIFEST_PATH), br#"{"version":1,"modules":[{"path":"tool.wasm","commands":["one","two"],"libraries":["lib"]}]}"#).unwrap();
         fs::write(destination.join("user.py"), b"keep").unwrap();
+        fs::write(destination.join("COPYING"), b"user notice").unwrap();
         install(&source, &destination).unwrap();
         let installed = workspace::host(&destination).unwrap();
         assert_eq!(installed.len(), 6);
+        assert!(!installed.contains_key("licenses"));
+        assert_eq!(
+            fs::read(destination.join("COPYING")).unwrap(),
+            b"user notice"
+        );
+        assert_eq!(licenses(&source).unwrap()["COPYING"], b"license");
         assert!(!installed.contains_key("unselected-build"));
         assert!(!installed.contains_key("one"));
         assert_eq!(installed["tool.wasm"].attributes.mode, 0o755);
@@ -260,7 +284,8 @@ mod tests {
         let recovered = workspace::guest(&extracted.join("work"), &Snapshot::new()).unwrap();
         assert_eq!(recovered, baseline);
         let defaults = packaged(&recovered).unwrap();
-        assert_eq!(defaults.len(), 5);
+        assert_eq!(defaults.len(), 4);
+        assert!(!defaults.contains_key("COPYING"));
         assert!(!defaults.contains_key("user.py"));
         assert_eq!(overlay(&baseline, &defaults).unwrap(), baseline);
         let guest = root.join("guest");
@@ -279,6 +304,8 @@ mod tests {
             Contents::File(std::rc::Rc::from(b"keep".as_slice()))
         );
         assert!(!installed_guest.contains_key(".efi-agent-workspace.json"));
+        assert!(!installed_guest.contains_key("COPYING"));
+        assert!(!installed_guest.contains_key("licenses"));
         fs::write(source.join("tool.wasm"), b"\0asm\x01\0\0\0changed").unwrap();
         assert!(
             install(&source, &destination)
@@ -287,8 +314,9 @@ mod tests {
                 .contains("tool.wasm")
         );
         assert_eq!(workspace::host(&destination).unwrap(), baseline);
-        fs::remove_file(source.join("COPYING")).unwrap();
-        assert!(assets(&source).unwrap_err().to_string().contains("COPYING"));
+        fs::remove_file(source.join("licenses/COPYING")).unwrap();
+        assert!(licenses(&source).is_err());
+        assert!(assets(&source).is_ok());
         assert_eq!(workspace::host(&destination).unwrap(), baseline);
         fs::remove_dir_all(root).unwrap();
     }

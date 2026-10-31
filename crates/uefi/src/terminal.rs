@@ -396,6 +396,12 @@ fn decode_console_key(key: FirmwareKey) -> Option<Key> {
     match key {
         FirmwareKey::Printable(c) => match u16::from(c) {
             3 => Some(Key::Quit),
+            4 => Some(Key::Eof),
+            1 => Some(Key::Home),
+            5 => Some(Key::End),
+            11 => Some(Key::KillEnd),
+            12 => Some(Key::ClearScreen),
+            21 => Some(Key::ClearLine),
             13 => Some(Key::Enter),
             8 => Some(Key::Backspace),
             10 => Some(Key::Newline),

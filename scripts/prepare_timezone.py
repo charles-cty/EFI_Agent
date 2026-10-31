@@ -12,9 +12,10 @@ import tzdata
 
 
 def prepare(output):
-    output.mkdir(parents=True, exist_ok=True)
+    notices = output / 'licenses'
+    notices.mkdir(parents=True, exist_ok=True)
     repository = Path(__file__).resolve().parents[1]
-    shutil.copyfile(repository / 'vendor/musl-timezone/COPYRIGHT', output / 'musl.COPYRIGHT')
+    shutil.copyfile(repository / 'vendor/musl-timezone/COPYRIGHT', notices / 'musl.COPYRIGHT')
     database = output / 'share/zoneinfo'
     if database.exists():
         shutil.rmtree(database)
@@ -27,7 +28,7 @@ def prepare(output):
                 if entry.name in ('LICENSE', 'LICENSE_APACHE')]
     if len(licenses) != 2:
         raise ValueError('The tzdata package must supply both license files')
-    with (output / 'tzdata.LICENSE').open('wb') as target:
+    with (notices / 'tzdata.LICENSE').open('wb') as target:
         for entry in sorted(licenses):
             target.write(distribution.locate_file(entry).read_bytes() + b'\n')
     print(f'Prepared IANA {tzdata.IANA_VERSION} data and timezone licenses')

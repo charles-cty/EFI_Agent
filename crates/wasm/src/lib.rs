@@ -149,7 +149,8 @@ struct Context {
     parent: Pid,
     args: Vec<String>,
     environment: Vec<String>,
-    stdin: Rc<RefCell<VecDeque<u8>>>,
+    stdin: Rc<RefCell<io::Input>>,
+    terminal: Rc<io::Terminal>,
     stdout: Rc<RefCell<Vec<u8>>>,
     stderr: Rc<RefCell<Vec<u8>>>,
     descriptors: io::Table,
@@ -572,11 +573,14 @@ impl World {
             .checked_add(1)
             .filter(|next| *next <= i32::MAX as u32)
             .ok_or(Error::ProcessLimit)?;
-        let (stdin, stdout, stderr) = if parent == 0 {
+        let (stdin, stdout, stderr, terminal) = if parent == 0 {
+            let terminal = Rc::new(io::Terminal::default());
+            terminal.input.borrow_mut().bytes = stdin.into();
             (
-                Rc::new(RefCell::new(stdin.into())),
+                terminal.input.clone(),
                 Rc::new(RefCell::new(Vec::new())),
                 Rc::new(RefCell::new(Vec::new())),
+                terminal,
             )
         } else {
             let context = self.processes[&parent].execution().store.data();
@@ -584,13 +588,26 @@ impl World {
                 context.stdin.clone(),
                 context.stdout.clone(),
                 context.stderr.clone(),
+                context.terminal.clone(),
             )
         };
         let mut descriptors = if parent == 0 {
             BTreeMap::from([
                 (0, io::Descriptor::Input(stdin.clone())),
-                (1, io::Descriptor::Output(stdout.clone())),
-                (2, io::Descriptor::Output(stderr.clone())),
+                (
+                    1,
+                    io::Descriptor::Output(io::Output {
+                        bytes: stdout.clone(),
+                        terminal: terminal.clone(),
+                    }),
+                ),
+                (
+                    2,
+                    io::Descriptor::Output(io::Output {
+                        bytes: stderr.clone(),
+                        terminal: terminal.clone(),
+                    }),
+                ),
             ])
         } else {
             // Explicit mappings read the unchanged parent table, so cycles and
@@ -660,6 +677,7 @@ impl World {
             args,
             environment,
             stdin,
+            terminal,
             stdout: stdout.clone(),
             stderr: stderr.clone(),
             descriptors: descriptors.into(),

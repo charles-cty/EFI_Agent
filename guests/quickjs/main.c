@@ -286,8 +286,13 @@ enum evaluation_status {
     EVALUATION_RESET
 };
 
+static void write_value(void *opaque, const char *bytes, size_t size)
+{
+    fwrite(bytes, 1, size, opaque);
+}
+
 static enum evaluation_status evaluate(JSContext *context, struct host *host,
-    const char *source, size_t size)
+    const char *source, size_t size, int display_result)
 {
     JSRuntime *runtime = JS_GetRuntime(context);
     JSValue evaluation = JS_Eval(context, source, size, "<command>",
@@ -345,6 +350,22 @@ static enum evaluation_status evaluate(JSContext *context, struct host *host,
         js_free(context, entry);
     }
     host->rejection_allocation_failed = 0;
+    if (!failed && display_result) {
+        /* Async global evaluation fulfills with { value: completionValue }. */
+        JSValue completed = JS_PromiseResult(context, evaluation);
+        JSValue value = JS_GetPropertyStr(context, completed, "value");
+        if (JS_IsException(value)) {
+            JSValue exception = JS_GetException(context);
+            report_exception(context, exception);
+            JS_FreeValue(context, exception);
+            failed = 1;
+        } else {
+            JS_PrintValue(context, write_value, stdout, value, NULL);
+            putchar('\n');
+        }
+        JS_FreeValue(context, value);
+        JS_FreeValue(context, completed);
+    }
     if (discard_commands(context, host) != 0)
         efi_wasi_exit(1);
     if (failed && !JS_IsException(evaluation) &&
@@ -360,6 +381,8 @@ static int read_frame(int fd, void *bytes, size_t size)
     char *cursor = bytes;
     while (size) {
         ssize_t count = read(fd, cursor, size);
+        if (count == 0 && cursor == (char *)bytes)
+            return 1;
         if (count <= 0)
             return -1;
         cursor += count;
@@ -376,8 +399,13 @@ static int run_session(JSContext *context, struct host *host)
         return 1;
     }
     for (;;) {
-        uint32_t header[2];
-        if (read_frame(fd, header, sizeof header) || header[1] > 60 * 1024)
+        uint32_t header[3];
+        int input = read_frame(fd, header, sizeof header);
+        if (input == 1) {
+            close(fd);
+            return 0;
+        }
+        if (input != 0 || header[1] > 60 * 1024 || header[2] > 1)
             break;
         char *source = malloc(header[1] + 1);
         if (!source || read_frame(fd, source, header[1])) {
@@ -385,7 +413,7 @@ static int run_session(JSContext *context, struct host *host)
             break;
         }
         source[header[1]] = '\0';
-        enum evaluation_status status = evaluate(context, host, source, header[1]);
+        enum evaluation_status status = evaluate(context, host, source, header[1], header[2]);
         free(source);
         if (status == EVALUATION_RESET) {
             close(fd);
@@ -443,7 +471,7 @@ int main(int argc, char **argv)
         JS_FreeValue(context, exception);
     } else {
         failed = session ? run_session(context, &host) :
-            evaluate(context, &host, argv[2], strlen(argv[2]));
+            evaluate(context, &host, argv[2], strlen(argv[2]), 0);
     }
     JS_FreeContext(context);
     JS_FreeRuntime(runtime);

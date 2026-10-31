@@ -22,7 +22,8 @@ struct ToolOutput {
 }
 
 impl ToolOutput {
-    fn append(&mut self, stdout: &[u8], stderr: &[u8]) {
+    fn append(&mut self, stdout: &[u8], stderr: &[u8]) -> bool {
+        let before = (self.stdout.len(), self.stderr.len(), self.truncated);
         for (index, (target, bytes)) in [(&mut self.stdout, stdout), (&mut self.stderr, stderr)]
             .into_iter()
             .enumerate()
@@ -31,6 +32,7 @@ impl ToolOutput {
             target.extend_from_slice(&bytes[..count]);
             self.truncated[index] |= count < bytes.len();
         }
+        before != (self.stdout.len(), self.stderr.len(), self.truncated)
     }
 
     fn result(&self, status: &Status) -> String {
@@ -39,7 +41,11 @@ impl ToolOutput {
             Status::Trapped(error) => format!("Trap: {error}"),
             _ => unreachable!("Tool result requires a terminal process"),
         };
-        let mut result = status;
+        self.contents(&status)
+    }
+
+    fn contents(&self, status: &str) -> String {
+        let mut result = String::from(status);
         for (index, (name, bytes)) in [
             ("Standard output", &self.stdout),
             ("Standard error", &self.stderr),
@@ -165,6 +171,15 @@ impl Runtime {
     pub fn poll(&mut self, app: &mut App) -> bool {
         let progressed = self.world.step().is_some();
         self.output_changed = false;
+        for (index, session) in self.sessions.iter().enumerate() {
+            if let Some(session) = session {
+                let bytes = session.take_terminal_output();
+                if !bytes.is_empty() {
+                    app.terminals[index].output(&bytes);
+                    self.output_changed = true;
+                }
+            }
+        }
         let pids: Vec<_> = self.world.process_ids().collect();
         // Retain each child's root even after its parent exits or is reaped.
         for &pid in &pids {
@@ -177,7 +192,7 @@ impl Runtime {
             let (stdout, stderr) = self.world.take_output(pid).expect("Listed process exists");
             let root = self.roots[&pid];
             if let Some(output) = self.tool_outputs.get_mut(&root) {
-                output.append(&stdout, &stderr);
+                self.output_changed |= output.append(&stdout, &stderr);
                 continue;
             }
             let status = match self.world.status(root) {
@@ -239,7 +254,38 @@ impl Runtime {
         app: &mut App,
         refresh: &mut impl FnMut(&mut App, bool) -> Result<bool, String>,
     ) -> Result<String, String> {
-        if source.contains('\0') || source.len() > 60 * 1024 {
+        self.run_code(kind, Some(source), false, app, refresh)
+    }
+
+    pub fn run_repl(
+        &mut self,
+        kind: efi_agent_wasm::session::SessionKind,
+        source: Option<&str>,
+        app: &mut App,
+        refresh: &mut impl FnMut(&mut App, bool) -> Result<bool, String>,
+    ) -> Result<(), String> {
+        let notice = self.run_code(kind, source, true, app, refresh)?;
+        if !notice.is_empty() {
+            app.terminals[kind.slot()].append(&notice);
+        }
+        Ok(())
+    }
+
+    pub fn session_active(&self, kind: efi_agent_wasm::session::SessionKind) -> bool {
+        self.sessions[kind.slot()]
+            .as_ref()
+            .is_some_and(|session| self.world.status(session.pid()).is_ok_and(Status::is_live))
+    }
+
+    fn run_code(
+        &mut self,
+        kind: efi_agent_wasm::session::SessionKind,
+        source: Option<&str>,
+        terminal: bool,
+        app: &mut App,
+        refresh: &mut impl FnMut(&mut App, bool) -> Result<bool, String>,
+    ) -> Result<String, String> {
+        if source.is_some_and(|source| source.contains('\0') || source.len() > 60 * 1024) {
             return Err("Code must contain no NUL and must be at most 60 KiB".into());
         }
         self.world
@@ -272,7 +318,12 @@ impl Runtime {
             );
         }
         let session = self.sessions[index].as_mut().unwrap();
-        session.submit(source).map_err(|error| error.to_string())?;
+        match source {
+            None => session.close_source(),
+            Some(source) if terminal => session.submit_terminal(source),
+            Some(source) => session.submit(source),
+        }
+        .map_err(|error| error.to_string())?;
         let pid = session.pid();
         self.roots.insert(pid, pid);
         self.tool_outputs.insert(pid, ToolOutput::default());
@@ -290,8 +341,25 @@ impl Runtime {
                     return Ok(None);
                 }
                 self.poll(app);
+                if terminal && self.output_changed {
+                    refresh(app, false)?;
+                }
                 if refresh(app, true)? {
                     return Err(String::from("Request cancelled"));
+                }
+                if terminal {
+                    while let Some(input) = app.terminals[index].input.pop_front() {
+                        let session = self.sessions[index].as_ref().unwrap();
+                        match input {
+                            efi_agent_core::repl::Input::Bytes(text) => {
+                                if session.write_stdin(text.as_bytes()).is_err() {
+                                    app.terminals[index]
+                                        .append("[stdin is closed or its 64 KiB queue is full]\n");
+                                }
+                            }
+                            efi_agent_core::repl::Input::Eof => session.close_stdin(),
+                        }
+                    }
                 }
                 crate::event_loop::dispatch();
             }
@@ -304,14 +372,24 @@ impl Runtime {
             _ => self.world.status(pid).expect("Tool root exists").clone(),
         };
         let capture = self.tool_outputs.remove(&pid).expect("Tool capture exists");
-        let mut output = notice + &capture.result(&status);
+        self.sessions[index].as_ref().unwrap().detach_terminal();
+        let mut output = if terminal {
+            match &status {
+                Status::Trapped(error) => format!("Trap: {error}\n"),
+                _ => String::new(),
+            }
+        } else {
+            notice + &capture.result(&status)
+        };
         if retained {
             self.tool_outputs.insert(pid, ToolOutput::default());
         } else {
             self.sessions[index] = None;
             self.world.reap(pid).expect("Tool root is terminal");
             self.roots.remove(&pid);
-            output.push_str("\n\nSession reset. The next call starts a new session.");
+            if !terminal {
+                output.push_str("\n\nSession reset. The next call starts a new session.");
+            }
         }
         if stopped != 0 {
             output.push_str(&format!(

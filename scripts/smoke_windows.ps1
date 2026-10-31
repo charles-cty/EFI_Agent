@@ -6,7 +6,8 @@ param(
     [string]$Launcher = '',
     [string]$Esp = '',
     [string]$Output = '',
-    [ValidateRange(1, 2147483647)][int]$MemoryMiB = 128
+    [ValidateRange(1, 2147483647)][int]$MemoryMiB = 128,
+    [switch]$Terminal
 )
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
@@ -21,7 +22,7 @@ if (-not $Psmux) {
 }
 if (-not $Launcher) { $Launcher = Join-Path $root 'target\debug\efi-agent.exe' }
 if (-not $Esp) { $Esp = Join-Path $root 'artifacts\esp' }
-if (-not $Output) { $Output = Join-Path $root 'artifacts\windows-smoke' }
+if (-not $Output) { $Output = Join-Path ([IO.Path]::GetTempPath()) 'efi-agent/windows-smoke' }
 foreach ($path in @($Qemu, $Code, $Vars, $Psmux, $Launcher, $Esp)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Missing test input: $path" }
 }
@@ -83,6 +84,47 @@ try {
     $screen = Wait-Screen 'What would you like to build?' 60
     Set-Content -LiteralPath (Join-Path $Output 'initial.txt') -Value $screen -Encoding utf8NoBOM
     Write-Output 'PASS Windows WHPX boot and ConPTY TUI'
+    if ($Terminal) {
+        Send-Text '/enter'
+        $null = Wait-Screen '$ ▏'
+        Send-Text 'printf A; printf B >&2; printf C'
+        $null = Wait-Screen 'ABC$'
+        & $Psmux send-keys -t $pane C-l
+        $null = Wait-Screen '$ ▏'
+        & $Psmux send-keys -t $pane Up
+        $null = Wait-Screen '$ printf A; printf B >&2; printf C'
+        & $Psmux send-keys -t $pane C-c
+        $null = Wait-Screen '^C'
+        Send-Text 'read line; printf "%s" "$line" > /conpty-read; printf "%s%s\n" CONPTY_ READ_DONE'
+        $null = Wait-Screen 'CONPTY_ READ_DONE'
+        Send-Text 'typed input'
+        $null = Wait-Screen 'CONPTY_READ_DONE'
+        Send-Text 'cat > /conpty-cat'
+        $null = Wait-Screen 'cat > /conpty-cat'
+        Send-Text 'finite line'
+        & $Psmux send-keys -t $pane C-d
+        $null = Wait-Screen '$ ▏'
+        Send-Text 'printf "%s%s\n" CONPTY_ CANCEL_READY; sleep 100'
+        $null = Wait-Screen 'CONPTY_CANCEL_READY'
+        & $Psmux send-keys -t $pane C-c
+        $null = Wait-Screen 'Interpreter reset after cancellation'
+        Send-Text 'printf "%s%s\n" CONPTY_ STILL_RUNNING'
+        $null = Wait-Screen 'CONPTY_STILL_RUNNING'
+        $screen = (& $Psmux capture-pane -p -t $pane | Out-String)
+        Set-Content -LiteralPath (Join-Path $Output 'terminal.txt') -Value $screen -Encoding utf8NoBOM
+        if ($screen.Contains('Standard output:') -or $screen.Contains('Exit code:')) {
+            throw 'Terminal displayed tool-result wrappers'
+        }
+        Send-Text 'exit'
+        $null = Wait-Screen 'Interpreter ended. Returned to conversation.'
+        Send-Text '/exit'
+        $null = Wait-Screen 'EFI_EXIT_0' 20
+        if ([IO.File]::ReadAllText((Join-Path $workspace 'conpty-read')) -ne 'typed input') { throw 'read input differs' }
+        if ([IO.File]::ReadAllText((Join-Path $workspace 'conpty-cat')) -ne "finite line`n") { throw 'cat input differs' }
+        Assert-MainScreen
+        Write-Output 'PASS Windows ConPTY terminal layout, history, Ctrl+C/Ctrl+D, live stdin and saved input bytes'
+        return
+    }
     Set-Clipboard -Value "/unsupported clipboard 中`r`nsecond line"
     & $Psmux send-keys -t $pane C-v
     $null = Wait-Screen 'second line' -IgnoreWhitespace

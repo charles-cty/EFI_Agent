@@ -32,7 +32,7 @@ fn command(code: i32) -> Vec<u8> {
 
 fn manifest(commands: &str) -> String {
     format!(
-        r#"{{"version":1,"modules":[{{"path":"images/shared","commands":[{commands}],"libraries":["lib"],"licenses":["COPYING"]}}]}}"#
+        r#"{{"version":1,"modules":[{{"path":"images/shared","commands":[{commands}],"libraries":["lib"]}}]}}"#
     )
 }
 
@@ -40,7 +40,6 @@ fn fixture() -> (World, Rc<Namespace>) {
     let fs = Rc::new(Namespace::temporary(2 * 1024 * 1024, 256, 1, None));
     fs.create_directory("images").unwrap();
     fs.create_directory("lib").unwrap();
-    write(fs.as_ref(), "COPYING", b"test fixture license");
     write(fs.as_ref(), "images/shared", &command(23));
     let mut world = World::new();
     world.set_filesystem(fs.clone()).unwrap();
@@ -102,13 +101,13 @@ fn invalid_installation_keeps_prior_bin_and_reports_the_failing_asset() {
         "programs.json",
         manifest(r#""second""#).as_bytes(),
     );
-    fs.unlink("COPYING").unwrap();
+    fs.remove_directory("lib").unwrap();
     let error = world.discover_programs().unwrap_err();
-    assert_eq!(error.path, "COPYING");
+    assert_eq!(error.path, "lib");
     assert_eq!(error.kind, FileError::NotFound);
     assert!(!world.has_program("second"));
     finish(&mut world, "first", 23);
-    write(fs.as_ref(), "COPYING", b"license");
+    fs.create_directory("lib").unwrap();
     fs.create_directory("bin").unwrap();
     write(fs.as_ref(), "bin/second", b"preserve");
     assert_eq!(
@@ -219,7 +218,7 @@ fn manifest_rejects_ambiguous_paths_names_versions_and_unknown_fields() {
         base.replace("\"first\"", "\"a/b\""),
         base.replace("\"first\"", "\"first\",\"first\""),
         base.replace("\"commands\"", "\"typo\""),
-        base.replace("[\"COPYING\"]", "[]"),
+        base.replace("[\"first\"]", "[]"),
     ] {
         assert!(Manifest::parse(invalid.as_bytes()).is_err(), "{invalid}");
     }

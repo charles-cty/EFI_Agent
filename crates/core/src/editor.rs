@@ -13,6 +13,13 @@ pub struct Editor {
 }
 
 impl Editor {
+    pub fn replace(&mut self, text: String) {
+        assert!(text.len() <= MAX_PROMPT_BYTES);
+        self.cursor = text.len();
+        self.text = text;
+        self.preferred_column = None;
+    }
+
     pub fn cursor(&self) -> usize {
         self.cursor
     }
@@ -92,6 +99,11 @@ impl Editor {
         self.preferred_column = None;
         self.cursor = 0;
         core::mem::take(&mut self.text)
+    }
+
+    pub fn delete_to_end(&mut self) {
+        self.preferred_column = None;
+        self.text.truncate(self.cursor);
     }
 
     /// Move between logical lines, retaining the display column across short lines.

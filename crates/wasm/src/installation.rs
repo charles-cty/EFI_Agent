@@ -117,20 +117,6 @@ impl World {
                         ));
                     }
                 }
-                for path in &module.licenses {
-                    if fs
-                        .metadata(path)
-                        .map_err(|error| InstallError::new(path, "Find module license", error))?
-                        .kind
-                        != EntryType::File
-                    {
-                        return Err(InstallError::new(
-                            path,
-                            "Check module license type",
-                            FileError::Invalid,
-                        ));
-                    }
-                }
                 sources.insert(module.path.clone());
                 for name in &module.commands {
                     pending.insert(name.clone(), module.path.clone());

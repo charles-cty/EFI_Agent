@@ -18,8 +18,9 @@ the timeout expected by the old fixture. Firmware reports connection reset
 The final network/application combination passes in
 artifacts/environment-applications-whpx-idle.
 
-Installation manifests now declare module sources, shared command aliases,
-libraries and licenses in root programs.json. Discovery validates installation
+Installation manifests declare module sources, shared command aliases and
+libraries in root programs.json. Dependency notices are distributed under
+EFI/AGENT/LICENSES, outside the user workspace. Discovery validates installation
 metadata before transactional alias publication. Binary bodies, supported
 imports and command exports are checked when the command is requested.
 Reload removes obsolete aliases and preserves explicit registrations. Standard
@@ -28,7 +29,7 @@ images. VM launch merges the packaged installation with the selected workspace,
 and content conflicts reject before staging. Native installation, actual FAT
 pack/extract and saved-asset checks pass. BusyBox non-UTC timezone support now
 passes native integration and both 512 MiB WHPX model APIs. All declared
-library files and licenses match independent saved FAT bytes in
+library files and the formerly installed license files matched independent saved FAT bytes in
 artifacts/environment-final-assets-responses and
 artifacts/environment-final-assets-chat_completions. The final combined
 application gate passes in artifacts/environment-applications-whpx-idle.
@@ -52,6 +53,19 @@ The reset_js tool releases only QuickJS, preserving ash, files and independent
 roots. Vendored zx@8.8.5-lite supplies quoting, interpolation and ProcessOutput;
 the WASI adapter and its limits are documented in vendor/zx/PORT.md. BusyBox
 ASH_BASH_COMPAT is enabled, including &> transfer through fresh tasks.
+
+Direct input uses `/enter shell` or `/enter js` and the same conversation-owned
+interpreters. Shell `exit`, JavaScript `quit()` or source EOF ends the active
+interpreter and returns to model conversation input. All REPL text goes to the
+interpreter; application slash commands apply only in conversation input.
+QuickJS displays completion values in local terminal scrollback. Manual source,
+stdin and output stay outside model history. Each language has command history.
+Enter sends stdin while a command runs; Ctrl+D closes it. Multiline editor
+submission and controls are documented in [WASM world](wasm-world.md).
+The model tools retain finite empty stdin. Interpreter state and files remain
+shared. Results and delivery corrections are recorded in
+[the verification record](verification.md). The complete
+application regression predates these input changes.
 
 The shared image currently uses upstream ls, find, awk, sed, grep, chmod, cat, head,
 tail, wc, tee, sleep, basename, dirname, pwd, env, printenv, seq, yes, true,
@@ -319,7 +333,8 @@ artifacts/executable-revision-whpx-chat_completions.
 - Packaging and save preserve additions, modifications, deletions, empty
   directories, links, modes and times. Detect host conflicts before changes,
   retain recovery disks on failure, and preserve Windows-safe virtual metadata.
-  Include program manifests, libraries and licenses without duplicating modules.
+  Include program manifests and libraries without duplicating modules. Keep
+  dependency notices under EFI/AGENT/LICENSES, outside the user workspace.
 
 ## Verification gates
 
@@ -359,7 +374,7 @@ artifacts/environment-applications-whpx-idle.
 | B12 | /dev/null redirection and builtin detection work. | character-devices-whpx-*-final; current native basic suite |
 | B13 | Tool state persists; exit/clear/cancel report resets and isolate other roots. | sessions-final-whpx-*; sessions-default-whpx-*; environment-complete-native-sessions.log |
 | B14 | python - consumes finite stdin without a REPL banner. | environment-final-filesystem-*; environment-complete-native-cpython.log |
-| B15 | Validated manifests install lazy commands, libraries and licenses. | environment-final-assets-*; timezone-host-tests.log installation/revision/cache cases |
+| B15 | Validated manifests install lazy commands and libraries. Package notices stay outside the workspace. | docs/verification.md; environment-final-assets-*; timezone-host-tests.log installation/revision/cache cases |
 
 Artifact paths in this table are under artifacts/. Existing save/recovery gates
 also pass current host tests: interrupted journal generations, deferred inode

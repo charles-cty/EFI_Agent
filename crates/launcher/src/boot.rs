@@ -372,7 +372,9 @@ pub fn package(args: Vec<String>) -> Result<(), Error> {
     };
     let output = Path::new(&args[1]);
     let mut installations = std::collections::BTreeMap::new();
+    let mut licenses = None;
     if let Some(prepared) = args.get(2) {
+        licenses = Some(crate::installation::licenses(Path::new(prepared))?);
         let assets = crate::installation::assets(Path::new(prepared))?;
         for &(_, name) in modes {
             let work = output.join(name).join("work");
@@ -391,6 +393,13 @@ pub fn package(args: Vec<String>) -> Result<(), Error> {
         fs::create_dir_all(tree.join("EFI/AGENT/DRIVERS"))?;
         if let Some(installation) = installations.get(name) {
             crate::installation::stage(installation, &tree.join("work"))?;
+        }
+        if let Some(licenses) = &licenses {
+            let directory = tree.join("EFI/AGENT/LICENSES");
+            fs::create_dir_all(&directory)?;
+            for (name, bytes) in licenses {
+                fs::write(directory.join(name), bytes)?;
+            }
         }
         fs::copy(efi, tree.join("EFI/AGENT/AGENT.EFI"))?;
         if let Some(shell) = &shell {
@@ -457,10 +466,20 @@ mod tests {
         fs::create_dir(&directory).unwrap();
         let application = directory.join("application.efi");
         let output = directory.join("output");
+        let prepared = directory.join("prepared");
+        fs::create_dir_all(prepared.join("licenses")).unwrap();
+        fs::write(prepared.join("licenses/COPYING"), b"distribution notice").unwrap();
+        fs::write(prepared.join("tool.wasm"), b"\0asm\x01\0\0\0").unwrap();
+        fs::write(
+            prepared.join("programs.json"),
+            br#"{"version":1,"modules":[{"path":"tool.wasm","commands":["tool"],"libraries":[]}]}"#,
+        )
+        .unwrap();
         fs::write(&application, b"test EFI application").unwrap();
         package(vec![
             application.to_string_lossy().into(),
             output.to_string_lossy().into(),
+            prepared.to_string_lossy().into(),
             "--vm-only".into(),
         ])
         .unwrap();
@@ -478,6 +497,16 @@ mod tests {
             fs::read(extracted.join("EFI/AGENT/VM.TXT")).unwrap(),
             b"serial\n"
         );
+        assert_eq!(
+            fs::read(extracted.join("EFI/AGENT/LICENSES/COPYING")).unwrap(),
+            b"distribution notice"
+        );
+        let installed =
+            crate::workspace::guest(&extracted.join("work"), &crate::workspace::Snapshot::new())
+                .unwrap();
+        assert!(installed.contains_key("tool.wasm"));
+        assert!(!installed.contains_key("COPYING"));
+        assert!(!installed.contains_key("licenses"));
         fs::remove_dir_all(directory).unwrap();
     }
 

@@ -17,6 +17,10 @@ pub enum Key {
     Delete,
     Newline,
     Quit,
+    Eof,
+    ClearScreen,
+    ClearLine,
+    KillEnd,
     Resize(u16, u16),
     Click(u16, u16),
     PointerMove(u16, u16),
@@ -119,6 +123,12 @@ impl Decoder {
         }
         let result = match self.pending[0] {
             3 => Some(Key::Quit),
+            4 => Some(Key::Eof),
+            1 => Some(Key::Home),
+            5 => Some(Key::End),
+            11 => Some(Key::KillEnd),
+            12 => Some(Key::ClearScreen),
+            21 => Some(Key::ClearLine),
             10 => Some(Key::Newline),
             13 if self.paste => Some(Key::Newline),
             13 => Some(Key::Enter),
@@ -136,7 +146,21 @@ impl Decoder {
             },
         };
         self.pending.clear();
-        if self.paste && matches!(result, Some(Key::Quit | Key::Backspace)) {
+        if self.paste
+            && matches!(
+                result,
+                Some(
+                    Key::Quit
+                        | Key::Eof
+                        | Key::Home
+                        | Key::End
+                        | Key::KillEnd
+                        | Key::ClearScreen
+                        | Key::ClearLine
+                        | Key::Backspace
+                )
+            )
+        {
             None
         } else {
             result

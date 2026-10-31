@@ -338,6 +338,40 @@ mod tests {
     use alloc::string::ToString;
 
     #[test]
+    fn local_terminal_transcript_is_absent_from_model_requests() {
+        struct InspectManual;
+        impl Environment for InspectManual {
+            fn complete(
+                &mut self,
+                messages: &[ChatMessage],
+                _: &mut dyn FnMut(&str),
+            ) -> Result<ChatMessage, String> {
+                assert_eq!(messages.len(), 2);
+                assert_eq!(
+                    messages[1].content.as_deref(),
+                    Some("Continue from my value")
+                );
+                Ok(ChatMessage::text("assistant", "Value is available".into()))
+            }
+            fn execute(&mut self, _: Operation) -> Result<String, String> {
+                panic!("Recording manual execution must not run a model tool");
+            }
+        }
+        let mut agent = Agent::default();
+        let before = agent.history_status().unwrap();
+        let mut terminal = crate::repl::Terminal::default();
+        terminal.begin(
+            crate::repl::Language::JavaScript,
+            "let privateValue = 41;\nprivateValue + 1",
+        );
+        terminal.output(b"42\n");
+        assert_eq!(agent.history_status().unwrap(), before);
+        agent
+            .turn("Continue from my value".into(), &mut InspectManual, |_| {})
+            .unwrap();
+    }
+
+    #[test]
     fn code_tools_preserve_source_and_reject_invalid_calls() {
         for (name, field, source) in [
             ("shell", "command", "printf '%s\\n' 'a b'\necho 中 >&2"),

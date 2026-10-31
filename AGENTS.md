@@ -7,9 +7,51 @@ instead. Keep README.md concise and clean.
 
 Maintain this document `./docs/verification.md` by yourself, too.
 
+Keep `artifacts` for the documented build outputs and dependency inputs.
+Put temporary verification files and staging packages in the host OS temporary
+directory. Deliver updated packages at the standard paths before reporting
+completion. Verification of a staging package does not verify those paths.
+
 # Current state
 
-The main Windows workspace completed a clean Release rebuild on 2026-10-31.
+Dependency notices are prepared under artifacts/wasm-guests/licenses and
+distributed under EFI/AGENT/LICENSES in both boot trees and disk images.
+programs.json declares only command modules, aliases and libraries. Installation
+and runtime discovery do not copy or require license files in the user workspace.
+Both standard packages were rebuilt and independently checked on 2026-11-01:
+each workspace contains 1,150 runtime files, with ten notices outside work.
+Removed ten unchanged installed notices from C:\Temp\work after backing them
+up in Windows temporary storage. Other file bytes remain unchanged. Focused
+installation checks passed; no VM was started for this change.
+
+Direct interpreter input is available through /enter (default: shell),
+/enter shell and /enter js. These use the same ash/QuickJS state as model tools.
+All direct text goes to the interpreter; application slash commands apply only
+in conversation input. Shell exit, QuickJS quit() and idle empty Ctrl+D end
+the interpreter and return to conversation. Source EOF runs ash EXIT traps
+and preserves the last exit status. QuickJS displays completion
+values through its upstream value printer. Direct input now has a separate
+terminal view with continuous ordered stdout/stderr, no tool-result wrappers,
+per-language command history and live line input. Enter sends stdin to running
+commands; Ctrl+D sends EOF. Manual source, stdin and output stay outside model
+history. Ctrl+J inserts a newline; Esc/Ctrl+C cancels execution or clears idle
+input. Cancellation shows a reset notice and keeps terminal mode. Interpreter
+exit returns to conversation. The other interpreter and independent roots
+survive. Model tools retain finite empty stdin. /clear clears local terminal
+history, resets both interpreters and returns to conversation. The launcher
+forwards terminal control keys and retains Ctrl+C copy for selected text.
+Terminal verification and its limits are recorded in docs/verification.md.
+On 2026-11-01, fixed a delivery omission: the updated launcher had been paired
+with an old artifacts/esp. Both standard trees and images now contain the
+current EFI and guest modules. Moved task-specific verification directories and
+duplicate packages out of artifacts to the Windows temporary directory.
+Updated the unchanged installed ash.wasm and quickjs.wasm in C:\Temp\work
+after saving their previous bytes in Windows temporary storage. The exit-routing
+update passed native checks and Release builds; earlier WHPX verification
+predates it. The complete application regression also predates these input
+changes. Native API settings remain build-only placeholders.
+
+Earlier, the main Windows workspace completed a clean rebuild on 2026-10-31.
 Removed target, prepared guests, packages, historical task outputs, EDK II build
 outputs and the earlier Linux verification checkout/logs. Retained installed
 tools, firmware, fixed source/archive inputs and the official Shell binary.
@@ -20,8 +62,8 @@ entries and mode markers match their inputs. All 22 recorded source inputs,
 Cargo.lock and the user workspace are unchanged. The native package contains
 build-only API placeholders that must be replaced before use. This rebuild
 covered compilation and packaging; no VM boot or runtime suite was run.
-Current evidence is under artifacts/verification and docs/verification.md.
-Historical artifact references below can refer to outputs removed by cleanup.
+Results for that clean rebuild are recorded in docs/verification.md.
+Historical artifact references below can refer to outputs moved or removed by cleanup.
 
 BusyBox 1.37.0 is maintained as complete source under vendor/busybox, with a
 separate pristine upstream import commit. The former build-time source
@@ -634,8 +676,9 @@ The WASM work is split into functional commits for the runtime, firmware
 providers, C guest helpers, BusyBox ash, QuickJS, CPython, POSIX networking,
 curl/wolfSSL, WolfSSH, and combined verification/documentation. The latest
 recorded complete regression is artifacts/environment-applications-whpx-idle.
-Prepared manifests include guest binaries, libraries and licenses in fresh
-VM/native packages. BusyBox uses checked-in sources with the explicit native
+Prepared manifests include guest binaries and libraries in fresh VM/native
+workspaces. Dependency licenses are packaged separately under EFI/AGENT/LICENSES.
+BusyBox uses checked-in sources with the explicit native
 WASI SDK and Binaryen. Other source-built ports require their upstream sources;
 CPython uses its unchanged prebuilt.
 

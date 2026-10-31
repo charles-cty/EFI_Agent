@@ -56,11 +56,15 @@ pub fn run(world: &mut World, requests: &[String]) -> Result<(), Error> {
             println!("SESSION_CLEAR {index}");
             continue;
         }
-        let (kind, cancel) = match request[0].as_str() {
-            "shell" => (SessionKind::Shell, false),
-            "js" => (SessionKind::JavaScript, false),
-            "cancel-shell" => (SessionKind::Shell, true),
-            "cancel-js" => (SessionKind::JavaScript, true),
+        let (kind, cancel, display_result) = match request[0].as_str() {
+            "shell" => (SessionKind::Shell, false, false),
+            "js" => (SessionKind::JavaScript, false, false),
+            "repl-shell" => (SessionKind::Shell, false, true),
+            "repl-js" => (SessionKind::JavaScript, false, true),
+            "eof-shell" => (SessionKind::Shell, false, false),
+            "eof-js" => (SessionKind::JavaScript, false, false),
+            "cancel-shell" => (SessionKind::Shell, true, false),
+            "cancel-js" => (SessionKind::JavaScript, true, false),
             _ => return Err("Unknown session operation".into()),
         };
         let slot = kind.slot();
@@ -68,7 +72,14 @@ pub fn run(world: &mut World, requests: &[String]) -> Result<(), Error> {
             sessions[slot] = Some(world.start_session(kind)?);
         }
         let session = sessions[slot].as_mut().unwrap();
-        session.submit(&fs::read_to_string(&request[1])?)?;
+        let source = fs::read_to_string(&request[1])?;
+        if request[0].starts_with("eof-") {
+            session.close_source()?;
+        } else if display_result {
+            session.submit_repl(&source)?;
+        } else {
+            session.submit(&source)?;
+        }
         let pid = session.pid();
         let deadline = Instant::now() + Duration::from_secs(60);
         let mut seen = Vec::new();
@@ -80,6 +91,9 @@ pub fn run(world: &mut World, requests: &[String]) -> Result<(), Error> {
                 std::thread::sleep(Duration::from_millis(1));
             }
             let (stdout, stderr) = world.take_output(pid)?;
+            let terminal = session.take_terminal_output();
+            seen.extend_from_slice(&terminal);
+            io::stdout().write_all(&terminal)?;
             seen.extend_from_slice(&stdout);
             io::stdout().write_all(&stdout)?;
             io::stderr().write_all(&stderr)?;

@@ -101,7 +101,6 @@ pub struct Module {
     pub path: String,
     pub commands: Vec<String>,
     pub libraries: Vec<String>,
-    pub licenses: Vec<String>,
 }
 
 pub fn valid_command(name: &str) -> bool {
@@ -165,11 +164,7 @@ impl Manifest {
             if !valid_path(&module.path) || !sources.insert(&module.path) {
                 return Err(invalid(&module.path, "Check unique module path"));
             }
-            if module.commands.is_empty()
-                || module.licenses.is_empty()
-                || module.libraries.len() > 128
-                || module.licenses.len() > 128
-            {
+            if module.commands.is_empty() || module.libraries.len() > 128 {
                 return Err(invalid(&module.path, "Check module commands and assets"));
             }
             for name in &module.commands {
@@ -178,7 +173,7 @@ impl Manifest {
                 }
             }
             let mut assets = BTreeSet::new();
-            for path in module.libraries.iter().chain(&module.licenses) {
+            for path in &module.libraries {
                 if !valid_path(path) || path == &module.path || !assets.insert(path) {
                     return Err(invalid(path, "Check module asset path"));
                 }

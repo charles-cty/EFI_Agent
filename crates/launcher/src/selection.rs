@@ -28,6 +28,10 @@ pub struct Selection {
 }
 
 impl Selection {
+    pub fn terminal_input(&self) -> bool {
+        self.view.terminal_input
+    }
+
     pub fn new(width: u16, height: u16) -> Self {
         let parser = vt100::Parser::new(height.max(1), width.max(1), 0);
         let presented = parser.screen().clone();
@@ -126,7 +130,10 @@ impl Selection {
             })
             || view.input_rows.len() > usize::from(height)
             || view.input_rows.iter().any(|&(y, first, end)| {
-                y >= height || first > end || end > width || y < view.top + view.height
+                y >= height
+                    || first > end
+                    || end > width
+                    || (!view.terminal_input && y < view.top + view.height)
             })
             || view
                 .input_cursor
@@ -165,7 +172,15 @@ impl Selection {
         if (!clamp || input_selection) && !self.view.input_rows.is_empty() {
             let first = self.view.input_rows.first()?.0;
             let last = self.view.input_rows.last()?.0;
-            if input_selection || (y >= first && y <= last) {
+            let input_hit = if self.view.terminal_input {
+                self.view
+                    .input_rows
+                    .iter()
+                    .any(|&(row, first, _)| row == y && x >= first)
+            } else {
+                y >= first && y <= last
+            };
+            if input_selection || input_hit {
                 return Some((
                     INPUT_BASE + usize::from(y.clamp(first, last)),
                     x.min(self.view.dimensions.0.saturating_sub(1)),
@@ -431,6 +446,29 @@ mod tests {
             rows: vec![(1, 2, 6), (2, 2, 8)],
             ..SelectionView::default()
         }
+    }
+
+    #[test]
+    fn terminal_input_and_output_can_share_a_row_without_copying_the_prompt() {
+        let mut selection = Selection::new(20, 4);
+        let view = SelectionView {
+            terminal_input: true,
+            dimensions: (20, 4),
+            top: 0,
+            height: 3,
+            rows: vec![(0, 0, 3)],
+            input_rows: vec![(0, 5, 8)],
+            input_cursor: Some((8, 0)),
+            ..Default::default()
+        };
+        selection.output(&frame(b"out$ cmd", &view)).unwrap();
+        assert!(selection.terminal_input());
+        selection.begin(0, 0).unwrap();
+        selection.drag(2, 0).unwrap();
+        assert_eq!(selection.text(), "out");
+        selection.begin(5, 0).unwrap();
+        selection.drag(7, 0).unwrap();
+        assert_eq!(selection.text(), "cmd");
     }
 
     #[test]

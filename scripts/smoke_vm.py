@@ -68,6 +68,7 @@ from wasm_executable_freshness_fixture import (
 )
 from wasm_installation_fixture import INSTALLATION_CHECK, verify_installation
 from wasm_sessions_fixture import SESSION_STEPS, CLEAR_STEPS, verify_sessions
+from wasm_repl_fixture import exercise_repl, verify_repl
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -323,8 +324,9 @@ def run(services):
     parser.add_argument("--c-port-cwd", action="store_true", help="Verify shared C cwd support and real curl, QuickJS and WolfSSH relative paths")
     parser.add_argument("--cwd-probe", type=Path, help="C cwd fixture binary; required with --c-port-cwd")
     parser.add_argument("--executable-freshness", action="store_true", help="Verify live and cached executable images across source mutation")
-    parser.add_argument("--installation", action="store_true", help="Verify manifest-installed commands, libraries and licenses")
+    parser.add_argument("--installation", action="store_true", help="Verify manifest-installed commands and libraries")
     parser.add_argument("--sessions", action="store_true", help="Verify consecutive live shell/JavaScript tool state and clear")
+    parser.add_argument("--repl", action="store_true", help="Verify direct shared-interpreter input, model handoff and cancellation")
     parser.add_argument("--code-timeout", type=float, default=480, help="Maximum seconds for the complete code-tool sequence")
     parser.add_argument("--code-cancel-only", action="store_true", help="Run only code cancellation/isolation checks; requires --code-workspace")
     parser.add_argument("--filesystem-tools", action="store_true", help="Verify nested file-tool writes, mkdir, large writes and finite Python stdin")
@@ -590,6 +592,8 @@ def run(services):
                                    for language, source, _ in SESSION_STEPS[:11]]
             Provider.code_expected = ['UPSTREAM_BASIC_APPLETS_OK'] + [expected for _, _, expected in SESSION_STEPS[:11]]
         Provider.filesystem_tools = False
+    if args.repl and (not args.code_workspace or applet_modes or args.filesystem_tools or args.code_cancel_only or args.tls_failure):
+        parser.error("--repl requires --code-workspace and excludes other execution check modes")
     args.output.mkdir(parents=True, exist_ok=True)
     Provider.requests.clear()
     Provider.errors.clear()
@@ -666,7 +670,7 @@ def run(services):
             connection, _ = console.accept()
             connection.settimeout(.1)
 
-            def wait(marker, timeout=40, *, idle=False):
+            def wait(marker, timeout=40, *, idle=False, predicate=None):
                 deadline = time.monotonic() + timeout
                 while time.monotonic() < deadline:
                     try:
@@ -680,7 +684,9 @@ def run(services):
                     except socket.timeout:
                         pass
                     visible = "\n".join(screen.display)
-                    if marker in visible and (not idle or screen.display[-1].strip().startswith('Ready')):
+                    if (marker in visible
+                            and (not idle or screen.display[-1].strip().startswith('Ready'))
+                            and (predicate is None or predicate(visible))):
                         return visible
                     if Provider.errors:
                         raise AssertionError(Provider.errors)
@@ -690,6 +696,16 @@ def run(services):
                 connection.sendall(text.encode() + b"\r")
 
             wait("What would you like to build?")
+            if args.repl:
+                exercise_repl(send, wait, connection, Provider, args.code_timeout)
+                send('/exit')
+                qemu.wait(timeout=15)
+                assert qemu.returncode == 0
+                with image.open('rb') as disk:
+                    fs = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
+                    verify_repl(FatWorkspace(fs))
+                print(f'PASS actual firmware terminal, {args.api_format} context isolation, shared state, live stdin/EOF, history, value display, cancellation and saved FAT bytes', flush=True)
+                return
             if args.filesystem_tools:
                 send("/caps")
                 visible = wait("Monotonic clock:")

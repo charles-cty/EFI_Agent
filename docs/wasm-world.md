@@ -271,8 +271,9 @@ BusyBox 1.37.0 sources are checked into vendor/busybox. The single musl 1.2.5
 timezone rules file and its license are checked into vendor/musl-timezone.
 The build compiles both sources directly. scripts/prepare_timezone.py uses
 uv to stage IANA 2026e data from tzdata 2026.5. The installation catalog
-includes the timezone data and both musl and tzdata licenses as shared ash
-assets. WASI SDK 34 and Binaryen 133 are external toolchain dependencies.
+includes the timezone data as a shared ash asset. The build collects the musl
+and tzdata notices under licenses for distribution outside the workspace.
+WASI SDK 34 and Binaryen 133 are external toolchain dependencies.
 
 Sort, uniq, cut and tr use upstream BusyBox parsers and algorithms. Sort and
 uniq retain record lengths across embedded NUL bytes; -z reads and writes NUL
@@ -287,6 +288,50 @@ regex mode rejects NUL and empty-string matches explicitly. Cut -c remains
 byte-oriented as in upstream BusyBox. Tr enables classes and equivalence sets
 and operates on all byte values. All four propagate input/output errors.
 
+`/enter` or `/enter shell` selects direct ash input. `/enter js` selects direct
+QuickJS input. A separate terminal view uses `$ ` or `js> `. Enter submits the full
+editor contents; Ctrl+J inserts a newline. Both modes use the same retained
+interpreters as the model tools. Manual evaluation makes no model API request.
+Conversation messages are hidden while the terminal is open. Input and output
+form continuous scrollback, with column wrapping and no message titles, tool
+panels or automatic exit-status output. Output without a final newline stays
+on the same line as the next prompt. Stdout and stderr share one ordered output
+queue during direct evaluation. UTF-8 fragments are retained across writes.
+Each language has a separate Up/Down command history, with draft restoration.
+Ctrl+A/Home and Ctrl+E/End move to line boundaries; Ctrl+U clears input,
+Ctrl+K removes text after the cursor, and Ctrl+L clears the terminal screen.
+QuickJS displays its completion value with the upstream value printer, including
+objects and awaited results. Model-tool evaluation keeps its existing output.
+
+All direct input goes unchanged to the interpreter, including slash-prefixed
+text, shell absolute paths and JavaScript regular expressions. Application
+slash commands apply only in conversation input. Shell `exit` and JavaScript
+`quit()` end the affected interpreter and return to conversation input. Its
+variables and other process state are released; files remain. Esc or Ctrl+C
+cancels running code and shows
+an explicit interpreter-reset notice, retaining terminal input mode. Either
+key clears the editor when the terminal is idle.
+Ash syntax and builtin errors report a status and preserve the direct session.
+The other interpreter and independent background roots are preserved.
+While code runs, Enter sends the edited line to its stdin. Ctrl+D sends pending
+text without a newline, or closes stdin when the editor is empty. With idle
+empty input, Ctrl+D closes the interpreter source stream. The interpreter
+exits normally; ash runs its EXIT trap and retains its last exit status.
+Stdin has a 64 KiB queue; a closed
+or full queue reports an error. Completion discards unread input and restores
+finite empty stdin for model tools. Source uses the separate control channel.
+Submit complete code, including all lines of a compound statement or
+here-document, in one request with Ctrl+J or multiline paste. The interface
+does not supply a PTY, job control, raw input or full-screen terminal emulation.
+
+Manual source, stdin and output remain local to the terminal UI. They do not
+create model-history records or consume its capacity. A later model tool can
+observe shared interpreter state and files through its explicit operations.
+Local scrollback retains the most recent 256 KiB per language. Command history
+retains up to 256 commands and 128 KiB per language. `/clear` clears both local
+histories and both interpreters. Model-tool output keeps its existing separate
+64 KiB captures and tool-result format.
+
 The model receives `shell(command)`, `js(code)` and `reset_js()` in addition to the
 read/write/edit file tools. Each conversation owns one live ash process and one
 live QuickJS process, both created on first use. Ash evaluates source in its
@@ -297,7 +342,11 @@ JavaScript use. A registered name is reused, including a module loaded manually.
 Python remains a standard executable through ash, including quoted heredocs;
 it requires the prepared standard library and startup adapter in `lib`.
 Code and completion frames use a private, bounded process-local channel, separate
-from empty finite command stdin and captured output. The endpoint opens once,
+from empty finite command stdin and captured output.
+Request headers contain three little-endian u32 values: sequence, source byte
+count and display flag (0 for model tools, 1 for REPL input). Replies contain
+sequence and status. Rebuild the runtime, ash and QuickJS together for this ABI.
+The endpoint opens once,
 is hidden from proc fd views, and cannot be duplicated, overwritten, renumbered
 or inherited by children. Shell variables, functions, aliases, options, user
 descriptors and previous status persist. JavaScript global let/const/var bindings,
@@ -580,8 +629,9 @@ malloc.h on WASI, and remove dtoa's unused setjmp header. The build compiles
 these files directly and generates only the zx bootstrap header under the
 output directory. It links quickjs, dtoa, libregexp, libunicode and cutils.
 It does not link quickjs-libc. The output includes
-the upstream license, zx.LICENSE and zx-third-party.LICENSE. The installation
-catalog includes all three. Run `quickjs -e SCRIPT`; top-level await is supported.
+the upstream license, zx.LICENSE and zx-third-party.LICENSE under licenses.
+Packaging places these notices in EFI/AGENT/LICENSES. Run `quickjs -e SCRIPT`;
+top-level await is supported.
 The engine has a 32 MiB allocation limit and a 512 KiB JS stack limit.
 
 `$` uses the vendored zx@lite quote/buildCmd/substitute functions and
@@ -938,8 +988,8 @@ bytes paths and fd lifetime, but their private proxy type differs from DirEntry.
 
 Before model code runs, the firmware reads the optional root `programs.json`
 installation manifest and discovers unclaimed root workspace `.wasm` files.
-Version 1 records each module path once, its command names, library paths and
-license paths. Paths must be normalized workspace-relative paths outside runtime
+Version 1 records each module path once, its command names and library paths.
+Paths must be normalized workspace-relative paths outside runtime
 mounts and private storage. Names, duplicate sources/commands, asset types,
 required assets, the 64 KiB manifest bound and the 48 MiB module bound are checked.
 Discovery reads manifest and file metadata only; unused command binaries do
@@ -975,10 +1025,11 @@ CPython startup name is retained to locate its unchanged packaged library,
 including under `-I`.
 
 `efi-agent catalog <prepared-directory>` writes the standard five-port catalog
-after checking prepared binaries, libraries and licenses. `efi-agent install
-<prepared-directory> <workspace>` installs the declared assets with conflict
-checks and preserves other workspace files. An explicit manifest can install
-other supported WASI command modules and aliases through the same path. The
+after checking prepared binaries, libraries and the separate licenses directory.
+`efi-agent install <prepared-directory> <workspace>` installs the declared
+runtime assets with conflict checks and preserves other workspace files. An
+explicit manifest can install other supported WASI command modules and aliases
+through the same path. The
 `--guest` install option stages a firmware directory with logical permissions,
 links and timestamps instead of writing a host-export directory. A module
 name alone does not advertise Node.js or Git.
@@ -996,11 +1047,14 @@ Native packaging prepares the official UEFI Shell 26H1 x64 binary in
 `artifacts/uefi-shell-26H1`, or uses `EFI_AGENT_SHELL`. It initializes the outer
 Shell submodule for its license and source notice; EDK II compilation and
 recursive submodule initialization are unnecessary for this prebuilt binary.
-VM-only packaging skips the Shell step. VM and native packages include each module once,
-the Python library, BusyBox/curl/QuickJS/CPython/wolfSSH notices and the linked
-wolfSSL license. Build caches and undeclared files are excluded before size
-accounting. Existing package workspaces are preserved; different same-path
-content rejects packaging before updates. VM launch merges only the package's
+VM-only packaging skips the Shell step. VM and native packages include each module once
+and the Python library in work. BusyBox/curl/QuickJS/CPython/wolfSSH notices and
+the linked wolfSSL license are collected in the prepared licenses directory and
+copied to EFI/AGENT/LICENSES, outside work. Runtime installation and discovery
+do not require these notices in the user workspace. Build caches and undeclared
+files are excluded before size accounting. Existing package workspaces are
+preserved; different same-path content rejects packaging before updates. VM
+launch merges only the package's
 declared installation into its selected workspace and checks conflicts before
 staging. Workspace save then preserves installed files through the same logical
 snapshot and host-conflict checks as user files.

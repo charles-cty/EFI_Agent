@@ -10,7 +10,8 @@ use efi_agent_core::{
     ansi::Ansi,
     ansi::Sink,
     input::{Decoder, Key},
-    ui::App,
+    repl::{Language, Mode, Submission},
+    ui::{Action, App},
 };
 use ratatui::{Terminal, layout::Size};
 use uefi::prelude::*;
@@ -61,18 +62,84 @@ fn submit(
     agent: &mut Agent,
     runtime_state: &mut Option<environment::Runtime>,
     wasm: &mut wasm::Runtime,
-    text: String,
+    action: Action,
     driver_report: &str,
     mut refresh: impl FnMut(&mut App, bool) -> Result<bool, terminal::Error>,
 ) -> Result<(), terminal::Error> {
-    if matches!(text.as_str(), "/quit" | "/exit") {
+    let (text, eof) = match action {
+        Action::Submit(text) => (text, false),
+        Action::Eof => (String::new(), true),
+    };
+    match app.input_mode.route(&text) {
+        Submission::Enter(language) => {
+            app.input_mode = Mode::Repl(language);
+            app.status = String::from("Ready");
+            refresh(app, false)?;
+            return Ok(());
+        }
+        Submission::InvalidEnter => {
+            app.message("error", String::from("Usage: /enter [shell|js]"));
+            refresh(app, false)?;
+            return Ok(());
+        }
+        Submission::Code(language, source) => {
+            app.terminals[language.slot()].begin(language, source);
+            if source.trim().is_empty() && !eof {
+                app.terminals[language.slot()].finish();
+                refresh(app, false)?;
+                return Ok(());
+            }
+            app.status = alloc::format!("Running {}", language.name());
+            refresh(app, false)?;
+            let kind = match language {
+                Language::Shell => efi_agent_wasm::session::SessionKind::Shell,
+                Language::JavaScript => efi_agent_wasm::session::SessionKind::JavaScript,
+            };
+            let mut render_error = None;
+            let source = if eof { None } else { Some(source) };
+            let result = wasm.run_repl(kind, source, app, &mut |app, poll| {
+                refresh(app, poll).map_err(|error| {
+                    render_error = Some(error);
+                    String::from("Terminal refresh failed")
+                })
+            });
+            let failed = result.is_err();
+            if let Err(error) = result {
+                let terminal = &mut app.terminals[language.slot()];
+                terminal.append(&alloc::format!("{error}\n"));
+                if terminal.interrupted {
+                    terminal.append("[Interpreter reset after cancellation]\n");
+                }
+            }
+            app.terminals[language.slot()].finish();
+            if !wasm.session_active(kind) && !failed {
+                app.input_mode = Mode::Conversation;
+                app.editor.take();
+                app.message(
+                    "system",
+                    String::from("Interpreter ended. Returned to conversation."),
+                );
+            }
+            app.status = String::from("Ready");
+            if let Some(error) = render_error {
+                return Err(error);
+            }
+            refresh(app, false)?;
+            return Ok(());
+        }
+        Submission::Application => {}
+    }
+    let command = text.trim();
+    if matches!(command, "/quit" | "/exit") {
         app.quit = true;
         return Ok(());
     }
     app.message("user", text.clone());
-    if text == "/clear" {
+    if command == "/clear" {
         let sessions = wasm.clear_sessions(app);
         agent.clear();
+        app.input_mode = Mode::Conversation;
+        app.terminals = Default::default();
         app.clear_messages();
         app.scroll = 0;
         app.status = String::from("Conversation cleared");
@@ -84,20 +151,20 @@ fn submit(
     let previous_status = app.status.clone();
     app.status = String::from("Working");
     refresh(app, false)?;
-    let response = if text.split_whitespace().next() == Some("/wasm") {
-        wasm.command(&text, app, &mut refresh)?
-    } else if text == "/caps" {
+    let response = if command.split_whitespace().next() == Some("/wasm") {
+        wasm.command(command, app, &mut refresh)?
+    } else if command == "/caps" {
         app.capabilities = alloc::format!(
             "{}\n{}",
             capabilities::detect(driver_report),
             wasm.clock_description()
         );
         app.capabilities.clone()
-    } else if text == "/help" {
+    } else if command == "/help" {
         String::from(
-            "/help  Show commands\n/caps  Probe network and CPU random generator capabilities\n/wasm  Manage WASM programs and processes\n/effort [value]  Show or set reasoning effort (provider validates values)\n/status  Show actual API, history, token and cache data\n/clear  Start a new conversation\n/quit, /exit  Exit\nSend a prompt to run the coding agent (read, write, edit, shell, js, reset_js tools).",
+            "/help  Show commands\n/enter [shell|js]  Open the local terminal (default: shell)\n/caps  Probe network and CPU random generator capabilities\n/wasm  Manage WASM programs and processes\n/effort [value]  Show or set reasoning effort (provider validates values)\n/status  Show actual API, history, token and cache data\n/clear  Start a new conversation and reset both interpreters\n/quit, /exit  Exit application\nTerminal: All text goes to the interpreter. Enter runs code or sends stdin; Ctrl+J inserts a newline; Up/Down recalls commands; Ctrl+D sends EOF. Esc/Ctrl+C cancels execution or clears idle input. Cancellation resets the affected interpreter. Shell exit and JavaScript quit() return to conversation. Terminal input and output stay outside model history.\nSend a prompt to run the coding agent (read, write, edit, shell, js, reset_js tools).",
         )
-    } else if text == "/status" {
+    } else if command == "/status" {
         let history = agent.history_status().unwrap_or_else(|error| error);
         let provider = runtime_state.as_mut().map_or_else(
             || String::from("API: unavailable (model environment not configured)"),
@@ -108,8 +175,8 @@ fn submit(
             },
         );
         alloc::format!("State before command: {previous_status}\n{history}\n{provider}")
-    } else if text.split_whitespace().next() == Some("/effort") {
-        let mut arguments = text.split_whitespace().skip(1);
+    } else if command.split_whitespace().next() == Some("/effort") {
+        let mut arguments = command.split_whitespace().skip(1);
         let value = arguments.next().map(String::from);
         if arguments.next().is_some() {
             String::from("Usage: /effort [value]")
@@ -120,7 +187,7 @@ fn submit(
         } else {
             String::from("Reasoning effort unavailable: model environment not configured")
         }
-    } else if text.starts_with('/') {
+    } else if command.starts_with('/') {
         String::from("Unknown command. Use /help.")
     } else if let Some(runtime_state) = runtime_state.as_mut() {
         app.status = String::from("Requesting model");
@@ -252,33 +319,6 @@ fn submit(
     app.status = String::from("Ready");
     refresh(app, false)?;
     Ok(())
-}
-
-/// Keep editing responsive during requests; defer only submission.
-fn request_key(app: &mut App, deferred: &mut VecDeque<Key>, key: Key) -> bool {
-    match key {
-        Key::Escape => true,
-        Key::Quit => {
-            app.quit = true;
-            true
-        }
-        Key::Enter if app.editor.text.is_empty() => {
-            // An empty editor uses Enter to toggle focused disclosure panels.
-            app.key(Key::Enter);
-            false
-        }
-        Key::Enter => {
-            // Bound buffered input to the same order of size as a prompt.
-            if deferred.len() < 65536 {
-                deferred.push_back(key);
-            }
-            false
-        }
-        key => {
-            app.key(key);
-            false
-        }
-    }
 }
 
 fn draw_serial(
@@ -413,7 +453,7 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
                                     if count == 0
                                         && let Some(key) = decoder.idle()
                                     {
-                                        stop |= request_key(app, &mut deferred, key);
+                                        stop |= app.request_key(&mut deferred, key);
                                         changed = true;
                                     }
                                     for byte in &bytes[..count] {
@@ -423,7 +463,7 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
                                                     Size::new(w.min(300), h.min(120));
                                                 terminal.autoresize()?;
                                             } else {
-                                                stop |= request_key(app, &mut deferred, key);
+                                                stop |= app.request_key(&mut deferred, key);
                                             }
                                             changed = true;
                                         }
@@ -481,11 +521,11 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
                         let mut stop = false;
                         let mut changed = !poll;
                         if poll && let Some(key) = terminal.backend().read_key() {
-                            stop = request_key(app, &mut deferred, key);
+                            stop = app.request_key(&mut deferred, key);
                             changed = true;
                         }
                         if poll && let Some(key) = pointer.poll(terminal.size()?) {
-                            stop |= request_key(app, &mut deferred, key);
+                            stop |= app.request_key(&mut deferred, key);
                             changed = true;
                         }
                         if changed {

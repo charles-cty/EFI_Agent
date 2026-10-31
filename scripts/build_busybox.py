@@ -58,7 +58,7 @@ def main():
         subprocess.run([str(optimizer), str(raw), '--asyncify',
                         '--pass-arg=asyncify-ignore-imports', '-o', str(output / 'ash.wasm')],
                        cwd=REPOSITORY, check=True)
-        shutil.copyfile(REPOSITORY / 'vendor/busybox/LICENSE', output / 'ash.LICENSE')
+        shutil.copyfile(REPOSITORY / 'vendor/busybox/LICENSE', output / 'licenses/ash.LICENSE')
         if args.build_fixtures:
             subprocess.run([
                 str(clang), *compile_args, 'scripts/fixtures/wasm/busybox_metadata.c',

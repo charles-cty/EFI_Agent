@@ -23,6 +23,7 @@ def run(*arguments, **options):
 
 
 def copy(source, destination):
+    destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, destination)
 
 
@@ -44,9 +45,9 @@ def build_quickjs(sdk, source, output):
     sources += ['guests/quickjs/main.c', 'guests/lib/process.c',
                 'guests/lib/shell.c', 'guests/lib/cwd.c']
     run(sdk / f'bin/clang{SUFFIX}', *flags, *sources, '-o', output / 'quickjs.wasm')
-    copy(source / 'LICENSE', output / 'quickjs.LICENSE')
-    copy(REPOSITORY / 'vendor/zx/LICENSE', output / 'zx.LICENSE')
-    copy(REPOSITORY / 'vendor/zx/build/3rd-party-licenses', output / 'zx-third-party.LICENSE')
+    copy(source / 'LICENSE', output / 'licenses/quickjs.LICENSE')
+    copy(REPOSITORY / 'vendor/zx/LICENSE', output / 'licenses/zx.LICENSE')
+    copy(REPOSITORY / 'vendor/zx/build/3rd-party-licenses', output / 'licenses/zx-third-party.LICENSE')
 
 
 def build_wolfssl(sdk, source, output, jobs):
@@ -94,8 +95,8 @@ def build_curl(sdk, source, wolfssl, output, jobs, msys_bash, reconfigure):
         build, jobs, wolfssl, 'windows' if os.name == 'nt' else 'linux')
     record.write_text(configuration, encoding='utf-8')
     copy(build / 'src/curl', output / 'curl.wasm')
-    copy(source / 'COPYING', output / 'curl.LICENSE')
-    copy(wolfssl / 'COPYING', output / 'wolfssl.COPYING')
+    copy(source / 'COPYING', output / 'licenses/curl.LICENSE')
+    copy(wolfssl / 'COPYING', output / 'licenses/wolfssl.COPYING')
 
 
 def build_wolfssh(sdk, source, wolfssl, output):
@@ -119,8 +120,8 @@ def build_wolfssh(sdk, source, wolfssl, output):
         '-Wl,--wrap=chdir', '-Wl,--wrap=getcwd', '-Wl,--undefined=chdir',
         '-Wl,--wrap=stat', '-Wl,--wrap=lstat', '-Wl,--wrap=fstatat',
         '-o', output / 'wolfssh.wasm')
-    copy(source / 'LICENSING', output / 'wolfssh.LICENSING')
-    copy(wolfssl / 'COPYING', output / 'wolfssl.COPYING')
+    copy(source / 'LICENSING', output / 'licenses/wolfssh.LICENSING')
+    copy(wolfssl / 'COPYING', output / 'licenses/wolfssl.COPYING')
 
 
 def prepare_python(output, archive=None):
@@ -142,7 +143,7 @@ def prepare_python(output, archive=None):
     if (output / 'lib/python3.14').exists():
         shutil.rmtree(output / 'lib/python3.14')
     shutil.copytree(distribution / 'lib', output / 'lib', dirs_exist_ok=True)
-    copy(distribution / 'LICENSE', output / 'python.LICENSE')
+    copy(distribution / 'LICENSE', output / 'licenses/python.LICENSE')
 
 
 def prepare_shell():

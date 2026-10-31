@@ -26,6 +26,7 @@ enum InterruptAction {
     Copy,
     Hint,
     Exit,
+    Send,
 }
 
 #[derive(Default)]
@@ -35,7 +36,13 @@ struct InterruptGuard {
 }
 
 impl InterruptGuard {
-    fn press(&mut self, source: InterruptSource, selected: bool, now: Instant) -> InterruptAction {
+    fn press(
+        &mut self,
+        source: InterruptSource,
+        selected: bool,
+        terminal: bool,
+        now: Instant,
+    ) -> InterruptAction {
         // Some Windows hosts deliver one press as both a console signal and
         // an input record. Count that pair once; same-source presses stay distinct.
         if self.last.is_some_and(|(time, previous)| {
@@ -48,6 +55,9 @@ impl InterruptGuard {
         if selected {
             self.armed = None;
             InterruptAction::Copy
+        } else if terminal {
+            self.armed = None;
+            InterruptAction::Send
         } else if self
             .armed
             .take()
@@ -132,11 +142,15 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     crate::boot::configuration()?;
     let interrupted = Arc::new(AtomicBool::new(false));
     let selection_active = Arc::new(AtomicBool::new(false));
+    let terminal_input = Arc::new(AtomicBool::new(false));
+    let cancel_requested = Arc::new(AtomicBool::new(false));
     let copy_requested = Arc::new(AtomicBool::new(false));
     let hint_requested = Arc::new(AtomicBool::new(false));
     let interrupt_guard = Arc::new(Mutex::new(InterruptGuard::default()));
     let signal = Arc::clone(&interrupted);
     let selected = Arc::clone(&selection_active);
+    let terminal_signal = Arc::clone(&terminal_input);
+    let cancel_signal = Arc::clone(&cancel_requested);
     let copy_signal = Arc::clone(&copy_requested);
     let hint_signal = Arc::clone(&hint_requested);
     let guard_signal = Arc::clone(&interrupt_guard);
@@ -145,12 +159,14 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             match guard.press(
                 InterruptSource::Signal,
                 selected.load(Ordering::Relaxed),
+                terminal_signal.load(Ordering::Relaxed),
                 Instant::now(),
             ) {
                 InterruptAction::Copy => copy_signal.store(true, Ordering::Relaxed),
                 InterruptAction::Hint => hint_signal.store(true, Ordering::Relaxed),
                 InterruptAction::Exit => signal.store(true, Ordering::Relaxed),
                 InterruptAction::Ignore => {}
+                InterruptAction::Send => cancel_signal.store(true, Ordering::Relaxed),
             }
         }
     })?;
@@ -287,6 +303,9 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         if copy_requested.swap(false, Ordering::Relaxed) {
             copy_selection(&selection, &mut session.clipboard)?;
         }
+        if cancel_requested.swap(false, Ordering::Relaxed) {
+            socket.write_all(&[3])?;
+        }
         if interrupted.load(Ordering::Relaxed) {
             break;
         }
@@ -308,6 +327,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                     selection.resize(w, h)?;
                 }
                 let (changed, rendered) = selection.output(&output)?;
+                terminal_input.store(selection.terminal_input(), Ordering::Relaxed);
                 selection_active.store(selection.active(), Ordering::Relaxed);
                 if changed {
                     mouse_down = None;
@@ -447,6 +467,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                             .press(
                                 InterruptSource::Keyboard,
                                 selection.active(),
+                                selection.terminal_input(),
                                 Instant::now(),
                             );
                         match action {
@@ -458,6 +479,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                             }
                             InterruptAction::Exit => break,
                             InterruptAction::Ignore => {}
+                            InterruptAction::Send => socket.write_all(&[3])?,
                         }
                         continue;
                     }
@@ -493,6 +515,17 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                     let bytes = match key.code {
                         KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             vec![10]
+                        }
+                        KeyCode::Char('d' | 'D')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            vec![4]
+                        }
+                        KeyCode::Char(c)
+                            if key.modifiers.contains(KeyModifiers::CONTROL)
+                                && c.is_ascii_alphabetic() =>
+                        {
+                            vec![c.to_ascii_lowercase() as u8 & 0x1f]
                         }
                         KeyCode::Char(c) => c.to_string().into_bytes(),
                         KeyCode::Enter
@@ -666,6 +699,43 @@ mod tests {
     }
 
     #[test]
+    fn terminal_interrupts_are_forwarded_and_selection_still_copies() {
+        let mut guard = InterruptGuard::default();
+        let now = Instant::now();
+        assert!(matches!(
+            guard.press(InterruptSource::Signal, false, true, now),
+            InterruptAction::Send
+        ));
+        assert!(matches!(
+            guard.press(
+                InterruptSource::Keyboard,
+                false,
+                true,
+                now + Duration::from_millis(20)
+            ),
+            InterruptAction::Ignore
+        ));
+        assert!(matches!(
+            guard.press(
+                InterruptSource::Keyboard,
+                false,
+                true,
+                now + Duration::from_millis(300)
+            ),
+            InterruptAction::Send
+        ));
+        assert!(matches!(
+            guard.press(
+                InterruptSource::Keyboard,
+                true,
+                true,
+                now + Duration::from_millis(500)
+            ),
+            InterruptAction::Copy
+        ));
+    }
+
+    #[test]
     fn exit_requires_two_presses_and_duplicate_delivery_counts_once() {
         let now = Instant::now();
         for first in [InterruptSource::Signal, InterruptSource::Keyboard] {
@@ -676,25 +746,26 @@ mod tests {
             };
             let mut guard = InterruptGuard::default();
             assert!(matches!(
-                guard.press(first, false, now),
+                guard.press(first, false, false, now),
                 InterruptAction::Hint
             ));
             assert!(matches!(
-                guard.press(second, false, now + Duration::from_millis(20)),
+                guard.press(second, false, false, now + Duration::from_millis(20)),
                 InterruptAction::Ignore
             ));
             assert!(matches!(
-                guard.press(first, false, now + Duration::from_millis(300)),
+                guard.press(first, false, false, now + Duration::from_millis(300)),
                 InterruptAction::Exit
             ));
         }
         for (delay, exit) in [(999, true), (1000, true), (1001, false)] {
             let mut guard = InterruptGuard::default();
-            guard.press(InterruptSource::Keyboard, false, now);
+            guard.press(InterruptSource::Keyboard, false, false, now);
             assert_eq!(
                 matches!(
                     guard.press(
                         InterruptSource::Keyboard,
+                        false,
                         false,
                         now + Duration::from_millis(delay)
                     ),
@@ -704,11 +775,12 @@ mod tests {
             );
         }
         let mut guard = InterruptGuard::default();
-        guard.press(InterruptSource::Keyboard, false, now);
+        guard.press(InterruptSource::Keyboard, false, false, now);
         assert!(matches!(
             guard.press(
                 InterruptSource::Keyboard,
                 true,
+                false,
                 now + Duration::from_millis(300)
             ),
             InterruptAction::Copy
@@ -717,6 +789,7 @@ mod tests {
             guard.press(
                 InterruptSource::Keyboard,
                 true,
+                false,
                 now + Duration::from_millis(500)
             ),
             InterruptAction::Copy
@@ -724,6 +797,7 @@ mod tests {
         assert!(matches!(
             guard.press(
                 InterruptSource::Keyboard,
+                false,
                 false,
                 now + Duration::from_millis(700)
             ),

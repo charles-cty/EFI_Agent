@@ -1,5 +1,382 @@
 # Verification record
 
+## 2026-11-01: Keep dependency notices outside the workspace
+
+Removed license paths from the runtime installation manifest and command
+discovery. Build drivers now collect the ten guest/dependency notices under
+artifacts/wasm-guests/licenses. Packaging copies them to EFI/AGENT/LICENSES
+in both boot trees and disk images. Install and VM workspace overlay select
+only command modules, libraries and programs.json. UEFI Shell notices remain
+under EFI/TOOLS, outside work.
+
+The checks distinguish distribution notices from runtime files and user-owned
+files with the same names. Installation preserves a user's COPYING with
+different bytes and excludes the prepared notices. Missing distribution
+notices fail packaging selection, while runtime asset selection works without
+them. An actual FAT package round trip verifies a notice outside work. Seven
+native runtime installation cases pass with no license file in their fixture.
+The real prepared-application integration passes Python, ash command aliases,
+QuickJS, curl version and WolfSSH usage through the new manifest. It also
+compares installed application/library bytes and checks that notices are absent.
+
+Both Release programs and the native Release guest runner built successfully.
+Formatting and parsing of the six affected Python files passed. Timezone data
+preparation ran with the new notice directory. The standard Windows VM/native
+boot trees and both 136,314,880-byte images were published. An independent
+dissect.fat reader checked each image after publication: all 1,150 declared
+runtime files match prepared bytes, all ten external notices match their inputs,
+and no notice remains in the logical or physical work root. Agent and boot
+entries match their inputs. Native configuration bytes remain unchanged.
+
+Removed the ten former notices from C:\Temp\work only after comparing each
+file with its distributed original and saving a backup. Updated the unchanged
+old programs.json to the new generated manifest and refreshed host metadata.
+SHA256 comparison preserved all 1,150 other files. No user-modified notice was
+found. The existing VM process was retained during the build. Its launcher had
+exited by the final status check; no notice file reappeared in the host
+workspace. No VM or full application regression was run for this change.
+
+Build, installation and independent image-check logs are in the host temporary
+efi-agent/license-placement directory. Previous packages and the modified host
+manifest/notices are backed up there. No task-specific directory was added to
+artifacts.
+
+Resolved intermediate issues:
+
+- A read-only search named scripts/prepare_cpython.py, which does not exist.
+  CPython preparation is in scripts/build_guests.py.
+- A running launcher held target/release/efi-agent.exe. Moved its executable
+  to temporary license-placement/running-launcher.exe before building; the
+  existing process continued running.
+- The packaging helper initially treated an omitted optional config field as
+  a property on a strict PowerShell object. These original statements failed
+  before packaging started:
+
+  ```powershell
+  $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+  if ($null -ne $config.ipv4) {
+  ```
+
+  Read the config with ConvertFrom-Json -AsHashtable and check ContainsKey for
+  optional fields. Packaging then completed with unchanged configuration bytes.
+
+## 2026-11-01: Use interpreter exits in direct input
+
+Removed /leave and all application-command interception from direct input.
+Every source string, including /enter, /help, /clear, /quit and /exit, goes
+unchanged to ash or QuickJS. /enter is recognized only in conversation input.
+Shell exit and QuickJS quit() end their process and return to conversation.
+The next use starts a new interpreter; files and the other interpreter remain.
+
+Idle Ctrl+D is a typed EOF action. It closes the private source channel, which
+now wakes blocked reads with EOF. It does not synthesize a source command or
+switch input modes directly. The ash adapter calls upstream exitshell(),
+including EXIT traps and the last command status. QuickJS returns normally
+when its session source ends. Ctrl+D during execution retains its stdin role.
+
+Focused checks cover unchanged routing of former application commands,
+empty versus nonempty editor EOF, source EOF versus command stdin EOF, and
+actual ash EXIT trap effects/status. The firmware fixture now exits each
+interpreter before selecting another and checks fresh state after native exit.
+It no longer depends on switching languages inside a REPL or on /leave.
+The updated firmware fixture was parsed but not run. No new VM regression
+was run for this change.
+
+Completed 58 core checks, both session-channel integration checks and 72 native
+session-driver operations. The native run verified normal shell/QuickJS exits,
+source EOF, ash EXIT trap effects and status 7, fresh interpreters after EOF
+and finite command stdin. BusyBox, QuickJS, both Release Rust programs and the
+format check passed. Published both standard boot trees and disk images.
+Independent FAT reads confirmed boot entries, Agent and all five command
+modules match their build inputs in both modes. Native configuration bytes
+match the previous package.
+
+Updated the unchanged installed ash.wasm and quickjs.wasm in C:\Temp\work,
+with their previous bytes saved under the Windows temporary efi-agent directory.
+The existing VM remains on its previous private disk and loaded programs. It
+must be exited and launched again to use the update. Temporary logs, staging
+and recovery packages remain outside artifacts.
+
+The first guest-build command used an unsupported component name and stopped
+before compiling:
+
+```powershell
+uv.exe run scripts/build_guests.py --component busybox --component quickjs --wasi-sdk artifacts/toolchains/wasi-sdk-34.0-x86_64-windows --binaryen artifacts/toolchains/binaryen-version_133 --output artifacts/wasm-guests
+```
+
+Used build_busybox.ps1 and build_quickjs.ps1 with the explicit WASI SDK and
+Binaryen paths. Both built successfully with the existing BusyBox warnings.
+The first native driver run completed the EOF operations, including ash exit
+status 7 and its EXIT trap file, but a new assertion expected an unquoted
+`undefined`. QuickJS correctly prints the result of typeof as a quoted string.
+Changed that assertion to decode the printed JSON string. Its original command
+was:
+
+```powershell
+uv.exe run scripts/test_sessions.py --runner target/debug/examples/run_guest.exe --quickjs artifacts/wasm-guests/quickjs.wasm --ash artifacts/wasm-guests/ash.wasm
+```
+
+The Release launcher build initially failed with Windows access denied because
+the user had that executable running:
+
+```powershell
+cargo.exe build --locked --release -p efi-agent
+```
+
+Moved the in-use executable to temporary efi-agent/running-launcher.exe and
+rebuilt target/release/efi-agent.exe. The existing process continued running.
+During packaging, this optional-variable cleanup left empty environment values:
+
+```powershell
+[Environment]::SetEnvironmentVariable($setting, $null, 'Process')
+& target/release/efi-agent.exe package target/x86_64-unknown-uefi/release/efi-agent-uefi.efi $staged artifacts/wasm-guests
+```
+
+Packaging stopped with Invalid EFI_AGENT_IPV4_ADDRESS before changing standard
+packages. Removed the optional variables through the PowerShell environment
+provider, then packaging succeeded. No network provisioning was required.
+
+The earlier sections record superseded behavior where explicitly described.
+
+## 2026-11-01: Correct the standard package delivery
+
+The user launched target/release/efi-agent.exe with artifacts/esp and received
+`missing field terminal_input`. The launcher was current, but the standard ESP
+still contained the earlier EFI. The new SelectionView requires that field;
+the older producer did not send it. The preceding automated runs used a staged
+package, which had not been delivered to the standard paths. Those runs did
+not establish that the user's launch command could start successfully.
+
+The old standard Agent EFI was 3,804,160 bytes with SHA256
+64ceb24a1c98601b311bd23b75f90c362a1c06ff79a3fb23e68a4587a078b0e3.
+The current EFI is 3,824,128 bytes with SHA256
+f3f6b0d84d07db68b228a736e112a4e88ce1a5af057144960edb457a2a19d5e4.
+Promoted the completed package to artifacts/esp, artifacts/native-esp,
+artifacts/efi-agent-vm.img and artifacts/efi-agent-native.img. Checked that
+the VM boot entry and both Agent copies match the current build. Checked all
+five packaged command modules against artifacts/wasm-guests before promotion.
+Read both standard FAT images independently and confirmed their boot entries,
+Agent executables and all five command modules match the build inputs.
+No protocol fallback or missing-field default was added.
+
+C:\Temp\work contained the unchanged ash.wasm from the old package. Saved its
+previous bytes and copied the current prepared ash.wasm into that installation
+to avoid a subsequent installation conflict. No other user workspace file was
+changed.
+
+Moved artifacts/repl, artifacts/repl-terminal and artifacts/verification,
+including their logs, failed attempts and duplicate packages, to the Windows
+temporary directory under efi-agent/verification. Saved the replaced standard
+packages under efi-agent/previous-package and the old installed ash under
+efi-agent/workspace-backup. These are temporary recovery files. Historical
+paths in this document describe their original locations. The standard build
+products, firmware, toolchains and dependency caches keep their existing paths.
+Windows terminal verification now defaults to OS temporary storage; the README
+example also writes verification output outside artifacts.
+
+This correction checks package identity. No new VM or application regression
+was started. The prior terminal checks did not assess full shell usability;
+the interaction limits in the next section remain.
+
+Intermediate inspection issues: a prior execution session was no longer
+available; its completed logs showed success for both API formats. Two
+read-only probes used absent paths:
+
+```bash
+ls -la .local
+sha256sum target/x86_64-unknown-uefi/release/efi-agent-uefi.efi artifacts/esp/EFI/BOOT/BOOTX64.EFI artifacts/esp/EFI/Agent/efi-agent.efi artifacts/repl-terminal/final-package/esp/EFI/BOOT/BOOTX64.EFI
+```
+
+The actual executable path is artifacts/esp/EFI/AGENT/AGENT.EFI. No files were
+changed by those probes. The final scoped whitespace check passed.
+
+## 2026-10-31: Local terminal input and context isolation
+
+This update replaces the chat-message presentation used by the earlier /enter
+implementation. Each language now has a separate terminal screen, continuous
+scrollback and Up/Down command history. Prompt, command and output are adjacent;
+stdout/stderr use their actual write order. There are no automatic tool-result
+headings or success-status lines. Column wrapping preserves spaces and wide
+graphemes. Split UTF-8 output, carriage returns, erase-to-end-of-line, tabs and
+common color sequences are handled across writes. Scrollback retains 256 KiB;
+history retains at most 256 entries and 128 KiB for each language.
+
+Manual source, stdin and observed output are local UI data. Removed the Agent
+manual-history APIs and result reservations. Actual subsequent model requests
+must contain neither these commands nor their output. The interpreters and
+workspace remain shared; model tools can observe that state through explicit
+operations. A full model history no longer blocks manual execution.
+
+Direct evaluations attach a live bounded stdin queue and an ordered output
+queue. Enter sends a line; Ctrl+D sends pending text or EOF. Completion clears
+unread input and restores finite empty stdin for model tools. File redirects
+and child descriptor inheritance keep their existing behavior. Ctrl+C/Esc
+cancel execution, show a reset notice and keep terminal input mode. The VM
+launcher forwards terminal Ctrl+C and Ctrl+D; selection still uses Ctrl+C to
+copy. Its selection metadata supports input and output on the same row.
+The ash session adapter recovers from direct-input syntax/builtin errors with
+the upstream reset routines. Explicit exit and errexit still end the
+interpreter. Model-tool error behavior remains unchanged.
+
+Multiline code still uses Ctrl+J or multiline paste. There is no automatic
+syntax continuation, PTY, raw input, job control or full-screen terminal
+emulation. Cancellation resets the affected interpreter, including its state.
+The complete application/network regression and bare-metal boot are outside
+this focused input update.
+
+Intermediate corrections:
+
+- The first native check found five constructors that still expected the old
+  finite-input queue type. Added explicit finite-input conversions; all host
+  suites then passed.
+- Two existing UI assertions described the previous deferred-input behavior
+  and shell prompt. Replaced them with live-stdin/EOF checks and the new prompt.
+- A documentation patch used incorrect AGENTS.md context. The patch applied no
+  changes; the corrected patch used the actual paragraph.
+- Read-only searches named nonexistent process.rs, descriptor.rs and esp.rs
+  paths. Subsequent inspection used the actual lib.rs, io.rs, boot.rs and
+  pack.rs paths. A log read also preceded the UEFI check phase; the host-test
+  result was inspected before reading that log again.
+
+The first guest rebuild stopped because the fresh PowerShell process had no
+WASI_SDK_PATH or BINARYEN_PATH. The original command was:
+
+```powershell
+& scripts/build_busybox.ps1 *> artifacts/repl-terminal/build-busybox.log
+```
+
+Used the retained toolchains explicitly:
+
+```powershell
+& scripts/build_busybox.ps1 -WasiSdk artifacts/toolchains/wasi-sdk-34.0-x86_64-windows -Binaryen artifacts/toolchains/binaryen-version_133
+```
+
+The build passed with the existing upstream -Wstring-plus-int warnings.
+
+Native core/WASM/launcher suites, both Clippy targets and formatting passed.
+The native session driver completed 67 operations with 64 interpreter
+evaluations. Release Agent, launcher and BusyBox builds completed. Both staged
+package modes were generated. Final staged-binary WHPX runs passed for Chat
+Completions and Responses at 256 MiB; the final ConPTY run also passed. These
+runs checked local stdin/EOF, output order, history, syntax recovery, context
+exclusion and shared interpreter state. They used a deterministic local API
+provider. They did not validate delivery to the standard package paths or
+normal-shell interaction in all cases. The next day's correction is above.
+
+One WHPX attempt waited for Ready after /leave; the actual status was Returned
+to conversation. Corrected the harness predicate. A direct pack invocation
+also refused an existing image, as designed:
+
+```powershell
+& target/release/efi-agent.exe pack "$package/esp" "$package/efi-agent-vm.img"
+```
+
+Packed to a new temporary image, then replaced the staged image. The original
+logs and packages were moved out of artifacts during the delivery correction.
+
+## 2026-10-31: Shared Shell and QuickJS REPL input
+
+Added /enter (default: shell), /enter shell, /enter js and /leave. Input modes
+use the same retained interpreters as the model tools. The prompt identifies
+the active language; Ctrl+J inserts a newline. Application controls are matched
+explicitly, so shell absolute paths and JavaScript regular expressions reach
+their interpreter unchanged. /leave preserves state. Interpreter exit, fatal
+errors and cancellation return to conversation input. Ctrl+C and Esc cancel
+running code or clear idle REPL input. /clear resets both interpreters and
+returns to conversation input.
+
+Manual execution uses the existing bounded capture and displays live output.
+Full source and observed results are recorded as user execution records for
+the next model request. Each history result is limited to 16 KiB at a UTF-8
+boundary, with an explicit marker. History capacity is reserved before
+execution; insufficient capacity rejects the request before effects. Manual
+evaluation makes no model API request. Command stdin remains finite and empty;
+complete multiline code must be submitted together.
+
+Extended the private session request header with an explicit display flag.
+Runtime, ash and QuickJS were rebuilt together. REPL QuickJS displays the actual
+completion value using upstream JS_PrintValue, including objects, BigInt,
+undefined and awaited results. Model-tool requests retain their existing
+output behavior. Only the maintained guest adapters changed; upstream source
+files were unchanged by this task.
+
+Windows native validation passed:
+
+- All core and WASM host suites, including input routing, prompt selection
+  bounds, cancellation keys, manual history capacity and the session channel.
+  One existing platform-specific filesystem case remains ignored.
+- The native session driver completed 64 operations. It verified 61 real
+  interpreter evaluations, explicit resets, shared PIDs/state between tool and
+  REPL requests, single evaluation of side effects, object/circular-value
+  display, getters remaining unevaluated, await/rejections, shell state,
+  finite stdin, exit/clear/cancellation and independently saved bytes.
+- Host Clippy for core/WASM with all targets, UEFI Clippy and cargo fmt --check.
+- Release Agent EFI, the native launcher, BusyBox and QuickJS builds, catalog
+  refresh and both package modes.
+
+Both actual Windows WHPX runs passed at 256 MiB, one per model API format:
+Chat Completions and Responses. A deterministic local HTTP provider checked
+model-tool results; no external model service was used. The flows verified
+manual execution without API requests, /enter and /leave, multiline Unicode
+here-documents, absolute paths, JavaScript regular expressions, result display,
+ordinary exceptions, idle Ctrl+C, shell exit and JavaScript quit. The model
+received manual records and used the same shell PID/cwd/environment and JS
+bindings; manual input then observed model changes. Ctrl+C and Esc cancelled
+the affected interpreter while preserving the other interpreter and a separate
+background root. /clear reset both sessions and preserved that root. An
+independent FAT reader checked final bytes, including the multiline file and
+the combined manual/model/manual write result.
+
+Both standard disk images are updated. Each remains 136,314,880 bytes (130 MiB).
+An independent audit compared all 1,160 declared files against prepared inputs
+in both the exported workspace and the actual FAT image. All bytes match.
+Boot entries match Agent for VM mode and the official Shell for native mode;
+Agent/Shell copies and mode markers match their inputs. The current Agent EFI
+is 3,804,160 bytes, ash.wasm is 1,959,460 bytes and quickjs.wasm is 1,342,302
+bytes. Native CONFIG.JSON retains build-only API placeholders that must be
+replaced before use. The full network/application combination and bare-metal
+boot were outside this focused REPL verification.
+
+The first packaging command stopped with an old-workspace conflict at ash.wasm:
+
+```powershell
+& target/release/efi-agent.exe package target/x86_64-unknown-uefi/release/efi-agent-uefi.efi artifacts artifacts/wasm-guests
+```
+
+Generated both packages under artifacts/repl/package, checked them, then moved
+them to the standard artifacts paths. Preserved the old exported trees and
+images under artifacts/repl/previous-package. No user workspace was replaced.
+
+Two initial firmware attempts exposed test-wait errors. The first accepted a
+path in earlier source text before the pwd output appeared; its replacement
+requires a complete output line. The second required Ready after idle Ctrl+C,
+while the correct status was Input cleared. Corrected that wait and the
+equivalent Conversation cleared wait. The final complete runs passed. Failed
+attempt evidence is retained as whpx-chat-attempt1 and whpx-chat-attempt2.
+These harness corrections required no production change. Their invocation was:
+
+```powershell
+uv.exe run scripts/smoke_vm.py --qemu 'C:\Program Files\qemu\qemu-system-x86_64.exe' --accel whpx --cpu max --memory 256 --code artifacts/firmware/OVMF_CODE_4M.fd --vars artifacts/firmware/OVMF_VARS_4M.fd --esp artifacts/repl/package/esp --launcher target/release/efi-agent.exe --output artifacts/repl/whpx-chat --code-workspace artifacts/wasm-guests --http --repl --api-format chat_completions --code-timeout 90
+```
+
+A status read ran before the Responses phase created its log:
+
+```bash
+ls -l artifacts/repl/whpx-responses.log
+```
+
+Used the existing Chat Completions log until the second phase started.
+BusyBox emitted the existing upstream -Wstring-plus-int warnings. Expected
+interpreter errors in the negative fixtures were checked by the tests.
+No compiler, linker or network failure occurred.
+
+Evidence is under artifacts/repl: host-tests.log, sessions.log, guest/Release
+build logs, clippy-host.log, clippy-uefi.log, package logs, package-audit.log,
+results.json, package_audit.py and both WHPX directories with serial.bin,
+screen.txt and qemu.log. scripts/test_sessions.py maintains native coverage;
+scripts/smoke_vm.py --repl and scripts/wasm_repl_fixture.py maintain the firmware
+integration checks.
+
 ## 2026-10-31: Windows clean rebuild for VM and native EFI
 
 Removed the main target directory, prepared WASM guests and libraries, exported

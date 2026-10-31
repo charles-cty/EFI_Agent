@@ -25,7 +25,7 @@ def main():
         print(result.stdout.decode('utf-8', 'replace'), end='', flush=True)
         assert result.returncode == 0 and not result.stderr, result.stderr.decode('utf-8', 'replace')
         verify_installation(DirectoryWorkspace(root), args.prepared)
-        print('PASS installed aliases, all prepared applications, libraries, licenses and saved bytes')
+        print('PASS installed aliases, applications, libraries and saved bytes; notices stay outside workspace')
 
 
 if __name__ == '__main__':

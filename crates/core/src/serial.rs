@@ -7,6 +7,7 @@ pub const VIEW_PREFIX: &[u8] = b"\x1b]778;efi-agent;view;";
 /// Guest-owned transcript coordinates, sent after a complete screen frame.
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct SelectionView {
+    pub terminal_input: bool,
     pub dimensions: (u16, u16),
     pub revision: u64,
     pub top: u16,
