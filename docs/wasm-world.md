@@ -559,10 +559,14 @@ dispatcher, allowing command event loops to check exits and drain other tasks.
 
 ## Restricted QuickJS port
 
-QuickJS 2026-06-04 is built from the official source archive
-https://bellard.org/quickjs/quickjs-2026-06-04.tar.xz. The Windows build uses
-WASI SDK 34 with an explicit sysroot. Node.js embeds the vendored zx JavaScript;
-the build does not run npm or download packages. No MSYS2 compiler is invoked.
+QuickJS 2026-06-04 is maintained as complete source under `vendor/quickjs`.
+The baseline is the official source archive
+https://bellard.org/quickjs/quickjs-2026-06-04.tar.xz, imported unchanged in
+commit 83713b0. See `vendor/quickjs/PORT.md` for the maintained port changes.
+The shared native build driver uses WASI SDK 34 with an explicit sysroot.
+Node.js embeds the vendored zx JavaScript; the build does not run npm or
+download JavaScript packages.
+No MSYS2 compiler is invoked.
 
 ```powershell
 ./scripts/build_quickjs.ps1 -WasiSdk artifacts/toolchains/wasi-sdk-34.0-x86_64-windows
@@ -571,10 +575,11 @@ cargo.exe build -p efi-agent-wasm --example run_guest
 uv.exe run scripts/smoke_quickjs.py --runner target/debug/examples/run_guest.exe --quickjs artifacts/wasm-guests/quickjs.wasm --probe artifacts/wasm-fixtures/ash_probe.wasm
 ```
 
-The build copies and patches engine sources under the output directory:
-disable threaded Atomics for WASI, include the allocator declaration, and
-remove dtoa's unused setjmp header. It links quickjs, dtoa, libregexp,
-libunicode and cutils. It does not link quickjs-libc. The output includes
+The maintained engine sources disable threaded Atomics for WASI, include
+malloc.h on WASI, and remove dtoa's unused setjmp header. The build compiles
+these files directly and generates only the zx bootstrap header under the
+output directory. It links quickjs, dtoa, libregexp, libunicode and cutils.
+It does not link quickjs-libc. The output includes
 the upstream license, zx.LICENSE and zx-third-party.LICENSE. The installation
 catalog includes all three. Run `quickjs -e SCRIPT`; top-level await is supported.
 The engine has a 32 MiB allocation limit and a 512 KiB JS stack limit.
@@ -979,12 +984,19 @@ links and timestamps instead of writing a host-export directory. A module
 name alone does not advertise Node.js or Git.
 
 `scripts/build.ps1` uses the guest directory selected by `-Guests` (default
-`artifacts/wasm-guests`). It rebuilds BusyBox from the vendored sources,
-refreshes the catalog and passes these assets to `efi-agent package`.
-`scripts/build.sh` uses the same build driver and accepts `--guests`.
-Prepare the other application ports in that directory before packaging.
+`artifacts/wasm-guests`). It calls `scripts/build_guests.py` to prepare CPython
+and build BusyBox, QuickJS, wolfSSL, curl and WolfSSH, then builds the Rust
+programs, refreshes the catalog and passes the assets to `efi-agent package`.
+`scripts/build.sh` uses the same native driver and accepts `--guests`.
+The driver uses Windows executables on Windows and native Linux tools on Linux.
+The individual PowerShell build scripts select one component in that driver.
 Both entry points accept WASI SDK and Binaryen directories as arguments or
-through WASI_SDK_PATH and BINARYEN_PATH. VM and native packages include each module once,
+through WASI_SDK_PATH and BINARYEN_PATH, and accept a job count (default four).
+Native packaging prepares the official UEFI Shell 26H1 x64 binary in
+`artifacts/uefi-shell-26H1`, or uses `EFI_AGENT_SHELL`. It initializes the outer
+Shell submodule for its license and source notice; EDK II compilation and
+recursive submodule initialization are unnecessary for this prebuilt binary.
+VM-only packaging skips the Shell step. VM and native packages include each module once,
 the Python library, BusyBox/curl/QuickJS/CPython/wolfSSH notices and the linked
 wolfSSL license. Build caches and undeclared files are excluded before size
 accounting. Existing package workspaces are preserved; different same-path
@@ -1237,13 +1249,30 @@ failure with the CPU feature disabled. The host file integration driver accepts
 
 ## Actual curl HTTP port
 
-`scripts/build_curl.ps1` builds upstream curl 8.22.0 with Windows WASI SDK 34.
-MSYS2 provides configure and make only. The client uses the guest POSIX IPv4
+`scripts/build_curl.ps1` selects the curl component in the shared native driver,
+which builds upstream curl 8.22.0 with WASI SDK 34. The source fetch helper reuses
+an existing source directory or fetches
+`https://curl.se/download/curl-8.22.0.tar.xz` when the directory is absent.
+The default cache is `artifacts/guest-sources/curl-8.22.0`; `-Source` selects
+another directory. Download and extraction use a temporary directory that is
+removed on failure. The complete extracted tree is moved to the selected path.
+The fetch step uses Python and native tar. It can run separately:
+
+```powershell
+scripts/fetch_curl.ps1
+```
+
+On Windows, MSYS2 provides configure and make only; Linux uses native Bash and
+make. `scripts/build_curl.sh` contains the shared configure/build commands.
+The client uses the guest POSIX IPv4
 TCP layer and wolfSSL 5.9.4 for TLS. Threaded resolution, socketpair wakeup,
 IPv6, FTP, TFTP and NTLM are disabled. Advertised other protocols are not verified.
-The build guards signal/setjmp headers when the configured functions are absent
-and builds only the library and command targets. Configuration changes clean
-objects because the upstream dependency files do not track the config header.
+The build uses unchanged upstream source. With WASI SDK 34,
+`-D_WASI_EMULATED_SIGNAL` and `-mexception-handling` expose the SDK header
+declarations; configure disables signal, sigaction, sigsetjmp and alarm.
+Only the library and command targets are built. Source/toolchain paths and
+build-script settings are recorded; changes or `-Reconfigure` trigger configure
+and clean objects because upstream dependency files do not track those settings.
 The external POSIX archive always causes a command relink.
 
 `efi_net.tcp_open` accepts WASI NONBLOCK (4) and EFI_NET_CLOEXEC (0x10000).
@@ -1273,8 +1302,15 @@ SHA256 response. The held connection must remain open through peer/application
 progress and close after cancellation. These checks exercise named applications
 through the cooperative process/pipe/network interfaces without fork.
 `scripts/build_wolfssl.ps1` builds the portable static crypto/TLS library with
-Windows CMake/Ninja and WASI SDK. Run it before the curl builder. Client and
-library share `guests/wolfssl/user_settings.h`; the generated options header
+native CMake/Ninja and WASI SDK through the shared driver. The source helper
+reuses existing source or fetches the fixed official tag archive
+`https://github.com/wolfSSL/wolfssl/archive/refs/tags/v5.9.4-stable.tar.gz`.
+The default source cache is `artifacts/guest-sources/wolfssl-5.9.4-stable`;
+`-Source` selects another directory. Fetch can also run separately. Download
+and extraction use a temporary sibling directory, and the complete tree moves
+to the cache only after extraction. The build applies no upstream source
+rewrites. Run it before the curl and WolfSSH builders. Client and library
+share `guests/wolfssl/user_settings.h`; the generated options header
 is disabled so it cannot reset the selected ABI/crypto features. Entropy comes
 from WASI random_get, and failures become RNG_FAILURE_E. Single-thread user
 I/O uses curl's BIO callbacks over guest socket descriptors. TLS 1.0/1.1,
@@ -1283,10 +1319,9 @@ RC4 and 3DES are excluded. The build preserves upstream COPYING.
 Native Release and real firmware tests verify TLS 1.2 and TLS 1.3 negotiated
 versions on an independent OpenSSL server and compare every response byte.
 `--cacert` loads a guest PEM trust file; no default trust bundle is packaged.
-Untrusted signatures, absent CA issuers, wrong IP SAN and expired certificates
-return curl error 60 before HTTP. The staged upstream backend patch classifies
-signature and issuer failures as peer verification errors; it does not bypass
-verification. UEFI tests with RDRAND disabled return TLS error 35 and send no
+The upstream wolfSSL backend returns error 35 for invalid signatures, 77 for
+absent CA issuers and 60 for wrong IP SAN or expired certificates, before HTTP.
+UEFI tests with RDRAND disabled return TLS error 35 and send no
 HTTP request. There is no entropy fallback. Add `--curl-tls` to the firmware
 driver; add `--random --no-rdrand` for that negative path.
 
@@ -1299,7 +1334,13 @@ missing paths, file/directory types, buffer edges and unchanged outputs.
 
 `scripts/build_wolfssh.ps1 -WasiSdk <Windows SDK path>` builds upstream
 WolfSSH 1.6.0 as a static WASI library and the `wolfssh.wasm` exec client.
-Build wolfSSL first. This client uses the existing cooperative POSIX TCP
+The shared native driver reuses existing source or fetches
+`https://github.com/wolfSSL/wolfssh/archive/refs/tags/v1.6.0-stable.tar.gz`.
+The default source cache is `artifacts/guest-sources/wolfssh-1.6.0-stable`;
+`-Source` selects another directory. Fetch can also run separately. It uses
+the same staging procedure as wolfSSL for download and extraction. The build
+applies no upstream source rewrites. Build wolfSSL first. This client uses
+the existing cooperative POSIX TCP
 callbacks, one SSH session/exec channel, and no threads or native socket
 implementation from WolfSSH. `WOLFSSH_SHELL` enables remote exit-status
 handling; it does not add a local shell. The build preserves upstream

@@ -20,7 +20,7 @@ from dissect.util.stream import RangeStream
 from wasm_directory_fixture import expected_glob, stage_directory, verify_directory_artifacts
 from wasm_file_fixture import resize_contents
 from test_curl import BODY as CURL_BODY, UPLOAD as CURL_UPLOAD, create_http_server
-from wasm_tls_fixture import tls_context
+from wasm_tls_fixture import CURL_TLS_EXIT_CODES, tls_context
 from test_wolfssh import SshPeer, STDOUT as SSH_STDOUT, STDERR as SSH_STDERR
 from wasm_heredoc_fixture import heredoc_cases, stage_heredocs
 from wasm_math_fixture import math_cases, stage_math
@@ -175,7 +175,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
         (tree / "work/curl-upload.bin").write_bytes(CURL_UPLOAD)
     tls_cases = []
     if args.curl_tls:
-        for name in ["tls12", "tls13", "untrusted", "no_signer", "hostname", "expired"]:
+        for name in CURL_TLS_EXIT_CODES:
             failure = None if name in ["tls12", "tls13"] else name
             directory = output / "tls" / name
             directory.mkdir(parents=True, exist_ok=True)
@@ -848,7 +848,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                 for name, server, errors, _ in tls_cases:
                     send("/clear", "Conversation cleared")
                     text = send(f"/wasm run curl --silent --show-error --noproxy * --cacert curl-{name}-ca.pem --output curl-{name}.bin https://10.0.2.2:{server.server_port}/binary", "exit code ")
-                    expected = 35 if args.no_rdrand else 0 if name in ["tls12", "tls13"] else 60
+                    expected = 35 if args.no_rdrand else CURL_TLS_EXIT_CODES[name]
                     assert f"exit code {expected})" in text, text
                     root = re.search(rf'PID (\d+): (?:Completed|Failed|Cancelled) \(exit code {expected}\)', text)
                     assert root, text

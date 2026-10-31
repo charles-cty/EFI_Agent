@@ -7,8 +7,9 @@ vm_only=false
 guests=artifacts/wasm-guests
 wasi_sdk=${WASI_SDK_PATH:-}
 binaryen=${BINARYEN_PATH:-}
+jobs=4
 usage() {
-    printf 'Usage: bash scripts/build.sh [--profile release|debug] [--vm-only] [--guests DIR] [--wasi-sdk DIR] [--binaryen DIR]\n'
+    printf 'Usage: bash scripts/build.sh [--profile release|debug] [--vm-only] [--guests DIR] [--wasi-sdk DIR] [--binaryen DIR] [--jobs N]\n'
 }
 while (($#)); do
     case "$1" in
@@ -19,12 +20,13 @@ while (($#)); do
             ;;
         --help) usage; exit 0 ;;
         --vm-only) vm_only=true; shift ;;
-        --guests|--wasi-sdk|--binaryen)
+        --guests|--wasi-sdk|--binaryen|--jobs)
             if (($# < 2)); then usage >&2; exit 2; fi
             case "$1" in
                 --guests) guests=$2 ;;
                 --wasi-sdk) wasi_sdk=$2 ;;
                 --binaryen) binaryen=$2 ;;
+                --jobs) jobs=$2 ;;
             esac
             shift 2
             ;;
@@ -36,31 +38,18 @@ if [[ "$profile" != release && "$profile" != debug ]]; then
     exit 2
 fi
 if [[ "$vm_only" == false ]]; then
-    if [[ -n "${EFI_AGENT_SHELL:-}" ]]; then
-        shell_path=$EFI_AGENT_SHELL
-    else
-        shell_profile=${profile^^}
-        shell_path=$(find vendor/uefi-shell/edk2/Build/Shell -type f -path "*/${shell_profile}_*/X64/Shell_*.efi" -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d ' ' -f 2- || true)
-        if [[ -z "$shell_path" ]]; then
-            printf 'Build the x64 Shell from the vendor/uefi-shell submodule first, or set EFI_AGENT_SHELL to its .efi output.\n' >&2
-            exit 2
-        fi
-    fi
-    if [[ ! -f "$shell_path" ]]; then
-        printf 'UEFI Shell image not found: %s\n' "$shell_path" >&2
-        exit 2
-    fi
+    shell_path=$(uv run scripts/build_guests.py --component shell)
     export EFI_AGENT_SHELL=$shell_path
 fi
-guest_args=(--output "$guests")
+guest_args=(--output "$guests" --jobs "$jobs")
 if [[ -n "$wasi_sdk" ]]; then guest_args+=(--wasi-sdk "$wasi_sdk"); fi
 if [[ -n "$binaryen" ]]; then guest_args+=(--binaryen "$binaryen"); fi
-uv run scripts/build_busybox.py "${guest_args[@]}"
+uv run scripts/build_guests.py "${guest_args[@]}"
 build_args=()
 if [[ "$profile" == release ]]; then build_args+=(--release); fi
 target_dir=${CARGO_TARGET_DIR:-target}
-cargo build -p efi-agent-uefi --target x86_64-unknown-uefi --target-dir "$target_dir" "${build_args[@]}"
-cargo build -p efi-agent --target-dir "$target_dir" "${build_args[@]}"
+cargo build --locked -p efi-agent-uefi --target x86_64-unknown-uefi --target-dir "$target_dir" --jobs "$jobs" "${build_args[@]}"
+cargo build --locked -p efi-agent --target-dir "$target_dir" --jobs "$jobs" "${build_args[@]}"
 launcher="$target_dir/$profile/efi-agent"
 efi="$target_dir/x86_64-unknown-uefi/$profile/efi-agent-uefi.efi"
 "$launcher" catalog "$guests"

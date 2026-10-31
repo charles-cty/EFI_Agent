@@ -9,19 +9,118 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+The main Windows workspace completed a clean Release rebuild on 2026-10-31.
+Removed target, prepared guests, packages, historical task outputs, EDK II build
+outputs and the earlier Linux verification checkout/logs. Retained installed
+tools, firmware, fixed source/archive inputs and the official Shell binary.
+The full scripts/build.ps1 entry point rebuilt all shipped applications and
+both Rust programs, then produced both 130 MiB VM and native EFI images.
+Each exported workspace matches all 1,160 declared files byte for byte; boot
+entries and mode markers match their inputs. All 22 recorded source inputs,
+Cargo.lock and the user workspace are unchanged. The native package contains
+build-only API placeholders that must be replaced before use. This rebuild
+covered compilation and packaging; no VM boot or runtime suite was run.
+Current evidence is under artifacts/verification and docs/verification.md.
+Historical artifact references below can refer to outputs removed by cleanup.
+
 BusyBox 1.37.0 is maintained as complete source under vendor/busybox, with a
 separate pristine upstream import commit. The former build-time source
 rewrites are applied directly to the maintained source. The fixed feature
 header and 140-source compilation list are under guests/busybox. The musl
 dependency consists of its timezone rules file and license under
-vendor/musl-timezone. The native Python build driver serves both Windows and
-Linux entry points; packaging rebuilds BusyBox and refreshes its catalog.
+vendor/musl-timezone. The native Python build drivers serve both Windows and
+Linux entry points; packaging prepares every shipped application and refreshes
+its catalog.
 Set WASI_SDK_PATH and BINARYEN_PATH or pass the toolchain directories.
-Other application ports still require their prepared assets before packaging.
 The Windows direct build and a Git-only clean source build under a path with
 spaces produce byte-identical ash.wasm and timezone assets. Eight native
 BusyBox/ash/session suites, parsing checks and VM-only packaging pass.
-Evidence is under artifacts/busybox-vendor and docs/verification.md.
+The earlier artifacts/busybox-vendor evidence was removed during cleanup;
+docs/verification.md retains the results.
+
+Both root build entry points now use scripts/build_guests.py. It prepares the
+fixed CPython binary and builds BusyBox, QuickJS, wolfSSL, curl and WolfSSH,
+with wolfSSL built before its consumers. It uses native Windows or Linux tools,
+and the individual PowerShell entry points select components in the same driver.
+The selected guest output directory also supplies the wolfSSL installation.
+Rust builds use Cargo.lock with --locked. Windows discovers and initializes the
+MSVC toolchain with vswhere and Launch-VsDevShell. WASI SDK, Binaryen and other
+host tools remain installation prerequisites. The earlier dependency audit is
+recorded in docs/verification.md; artifacts/dependency-audit was removed.
+
+A prior complete native Windows Release build passed in an isolated Git checkout
+under artifacts/full-clean-build/source. It started without artifacts, target,
+guest source caches or prepared application assets. The root entry point fetched
+all missing inputs, built all applications and both Rust programs, validated the
+catalog, and generated both VM and native boot trees and 130 MiB disk images.
+The 18 relevant changed source files match the working tree; Cargo.lock is
+unchanged. Installed host tools and user-level Cargo/uv caches were reused.
+The native package uses clearly labeled build-only API placeholders. This run
+covered Windows compilation and packaging without VM or runtime tests.
+The isolated checkout and artifacts/full-clean-build evidence were removed
+during cleanup. The result remains recorded in docs/verification.md.
+
+A prior complete native Linux Release build also passed under WSL2 in the local
+checkout /home/ubuntu/projects/efi-agent-linux-build-20261031/source. It used
+Linux WASI SDK 34 and Binaryen 133 without Windows executables. The first online
+attempt stopped at a GitHub connection timeout; the recommended host proxy also
+timed out. The successful retry reused the fixed source/archive inputs from the
+Windows verification and the pinned Shell Git checkout. No prepared WASM module,
+compiled library or Rust output was copied. The root command exited 0, built
+both Rust programs, validated the catalog and produced both 130 MiB images.
+Both exported workspaces match all 1,160 declared files byte for byte.
+Cargo.lock is unchanged. A make clock-skew warning was checked by relinking
+curl: the bytes stayed identical and both make up-to-date queries then passed.
+No build source change was required. Online provisioning, VM execution and a
+fresh-machine installation remain outside this successful Linux result.
+The Linux checkout/logs and artifacts/linux-clean-build were removed during
+cleanup. Its external toolchains remain; docs/verification.md records the run.
+
+The standard curl 8.22.0 build now leaves all 4,406 upstream archive files
+unchanged. With WASI SDK 34, _WASI_EMULATED_SIGNAL and -mexception-handling
+replace the header edits while configure leaves signal/sigaction/sigsetjmp/alarm
+disabled. The existing external POSIX/cwd adapters and wolfSSL library remain.
+Build-setting changes trigger configure and clean objects automatically.
+Upstream TLS error codes are preserved: invalid signatures return 35, missing
+issuers return 77, and wrong-IP or expired certificates return 60. Six native
+integration tests and the actual 256 MiB Windows WHPX combination pass HTTP,
+TLS, DNS, held connections, cancellation and QuickJS/Python-to-ash-to-curl
+chains. The rebuilt standard VM package matches all 1,160 declared files and
+both EFI entries in an independent FAT check. The previous workspace and
+artifacts/curl-no-patches evidence were removed during cleanup.
+docs/verification.md retains the results.
+
+scripts/fetch_curl.ps1 fetches curl 8.22.0 from the official release URL into
+artifacts/guest-sources/curl-8.22.0. The build and fetch entry points use the
+same native Python fetch helper, scripts/fetch_guest_source.py.
+Existing source directories are reused without a network request. Download
+and extraction use a temporary sibling directory; only a complete source tree
+is moved into place. The source remains an ignored build cache.
+
+QuickJS 2026-06-04 includes all 63 upstream distribution files under
+vendor/quickjs, with pristine import commit 83713b0. The three former build-time
+changes are maintained directly: disable threaded Atomics under WASI, include
+malloc.h on WASI and remove dtoa's unused setjmp.h include. The build compiles
+these sources directly. scripts/fetch_wolfssl.ps1 and scripts/fetch_wolfssh.ps1
+fetch official stable-tag archives for wolfSSL 5.9.4 and WolfSSH 1.6.0 into
+ignored artifacts/guest-sources caches. Their build scripts call fetch
+automatically, reuse existing sources and apply no upstream source rewrites.
+Download and extraction use temporary sibling directories. Build wolfSSL before
+curl or WolfSSH. Curl's shared configure/make commands are maintained in
+scripts/build_curl.sh; Windows uses MSYS2 and Linux uses native Bash/make.
+
+UEFI Shell has no local source patches. The outer submodule matches
+ae263171ee125bd8d0be5aff3882649cd920a7f8 (26H1); its EDK II checkout matches
+b7a715f7c03c45c6b4575bf88596bfd79658b8ce. Tracked files match those revisions,
+and recursive submodule revisions match their recorded commits. Windows Git
+reports the original EmulatorPkg/Unix/Host/X11IncludeHack WSL symbolic link as
+dirty because it cannot read that link; its target still matches upstream.
+The upstream workflow uses PCD build settings, and Agent packaging supplies
+startup.nsh outside the Shell source. Standard native packaging now fetches the
+official 26H1 shellx64.efi into artifacts/uefi-shell-26H1. EFI_AGENT_SHELL selects
+a custom binary. Only the outer submodule is needed for its license and source
+notice; standard packaging does not compile EDK II. VM-only builds skip Shell
+preparation. See docs/verification.md.
 
 The shared persistent namespace now supports mutations, permissions, hard and
 symbolic links, anchored cwd, actual capacity and allocation, and recoverable
@@ -100,16 +199,12 @@ cancel/reap partial child trees. Subtree cancellation stops parents first so
 suspended waits cannot reap children mid-cleanup. See docs/memory-analysis.md
 and artifacts/memory-resource-lifecycle for allocation evidence.
 
-Prepared default guests were rebuilt from a clean Windows build directory.
 The VM-only build is `scripts/build.ps1 -VmOnly`; its outputs are artifacts/esp
 and artifacts/efi-agent-vm.img. It requires API settings only when launching.
-Old task-specific packages and verification outputs were removed; historical
-artifact references below describe previous runs. Current hashes and evidence
-are under artifacts/verification. User workspace changes and vendor/uefi-shell
-contents remain untouched.
-The clean standard package passes actual Windows WHPX at 256 MiB through the
+The earlier standard package passed actual Windows WHPX at 256 MiB through the
 native console launcher and the Responses shell/JavaScript session flow,
 including reset/cancel isolation and independently checked saved FAT bytes.
+Those runtime results predate the current Windows rebuild.
 The VM launcher currently stages a private FAT disk and exports workspace
 changes on exit. Live host-directory sharing remains an outstanding requirement.
 Detailed scope, acceptance evidence and remaining port limits are in
@@ -189,7 +284,7 @@ cancellation and saved-byte checks in artifacts/wasm-python-monkey-applications.
 -I retains the adapter; -S disables it. Ordinary file opens have an
 inheritable default under WASI libc, recorded in the transparency audit.
 The firmware module limit is now 48 MiB for the unchanged 30,522,756-byte binary.
-Current Windows WHPX verification is recorded in the Current state section.
+Earlier Windows WHPX verification is recorded in the Current state section.
 Normal return, proc_exit, traps and cancellation now drop execution Stores,
 linear memory, continuations and pending I/O immediately. Only parent PID,
 status and shared output remain until wait/reap. Live children are adopted by
@@ -288,8 +383,10 @@ with server-observed TCP closure. QuickJS zx-like commands and restricted
 CPython both call real ash-to-curl uploads while that curl remains waiting;
 independent server bytes and returned SHA256 match. Actual native Release and
 QEMU/OVMF verify TLS 1.2/1.3 bytes, trusted CA loading, invalid signatures,
-missing issuers, wrong-IP and expired certificates. Certificate failures are
-curl error 60; unavailable firmware entropy rejects TLS before HTTP with 35.
+missing issuers, wrong-IP and expired certificates. The upstream curl wolfSSL
+backend reports signature failures as 35, missing issuers as 77, and wrong-IP
+or expired certificates as 60. Unavailable firmware entropy rejects TLS before
+HTTP with 35.
 CA trust is explicit through --cacert; no system/default CA bundle is packaged.
 WASI path_readlink checks rights/ranges, retains missing/provider errors and
 returns EINVAL for existing non-links without output changes. Symlink access

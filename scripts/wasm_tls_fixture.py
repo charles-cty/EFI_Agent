@@ -9,6 +9,17 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
 
+# curl 8.22.0 with wolfSSL keeps handshake, CA and peer errors distinct.
+CURL_TLS_EXIT_CODES = {
+    "tls12": 0,
+    "tls13": 0,
+    "untrusted": 35,
+    "no_signer": 77,
+    "hostname": 60,
+    "expired": 60,
+}
+
+
 def tls_context(directory, failure=None):
     now = datetime.now(timezone.utc)
     key = ec.generate_private_key(ec.SECP256R1())

@@ -190,8 +190,19 @@ Copy-Item -LiteralPath (Join-Path $source 'OVMF_VARS_4M.fd') -Destination .\arti
 
 ## Release packages for VM and bare metal
 
-The scripts default to Release for both programs. Set the API environment
-variables described above, then run:
+Install Rust with the UEFI target, uv, Node.js, CMake, Ninja, Bash, make and tar.
+Set `WASI_SDK_PATH` to WASI SDK 34 and `BINARYEN_PATH` to Binaryen 133.
+Windows also needs the Visual Studio C++ tools and MSYS2; the script initializes
+Visual Studio automatically. Use `-MsysBash` to select another MSYS2 Bash path.
+
+The scripts prepare CPython, build BusyBox, QuickJS, wolfSSL, curl and WolfSSH,
+then build both Rust programs and package the assets. Missing upstream sources
+and the fixed CPython prebuilt package are downloaded automatically. Native
+packaging also downloads the official UEFI Shell 26H1 x64 binary; set
+`EFI_AGENT_SHELL` to use your own EFI image. Downloads stay under `artifacts`.
+
+The scripts default to Release. Set the API environment variables described
+above, then run:
 
 ```bash
 bash scripts/build.sh

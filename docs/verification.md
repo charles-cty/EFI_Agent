@@ -1,5 +1,569 @@
 # Verification record
 
+## 2026-10-31: Windows clean rebuild for VM and native EFI
+
+Removed the main target directory, prepared WASM guests and libraries, exported
+boot trees, disk images, extracted CPython distribution and historical task
+outputs. Removed ignored EDK II Build, generated BaseTools outputs and selected
+caches after checking a scoped Git clean preview. Preserved tracked vendor
+files and EDK II user configuration. Removed obsolete BusyBox, full musl and
+QuickJS source caches now replaced by maintained vendor inputs.
+
+Also removed the earlier Linux verification checkout and logs under
+/home/ubuntu/projects/efi-agent-linux-build-20261031. Its external toolchains
+remain. The old artifacts/full-clean-build, artifacts/linux-clean-build,
+artifacts/dependency-audit, artifacts/busybox-vendor and curl audit directories
+were deleted. Earlier sections retain their historical results; their artifact
+paths can refer to files removed by this cleanup.
+
+Retained installed tools, firmware, user Cargo/uv caches, fixed
+curl/wolfSSL/WolfSSH source caches, the original CPython ZIP and the official
+26H1 Shell binary. Before removing the old VM workspace, compared all 1,160
+declared files with their prepared inputs; no extra, missing or changed files
+were found. The root user work directory was preserved.
+
+Ran the full scripts/build.ps1 entry point in C:\My\Projects\EFI_Agent with
+Profile release, Jobs 4, Windows WASI SDK 34 and Binaryen 133. Native Windows
+tools included PowerShell 7.6.4, Rust 1.93.1, MSVC 14.44.35207, CMake, Ninja,
+Node.js and uv; curl used native MSYS2 Bash/make. Visual Studio was discovered
+with vswhere and initialized with Launch-VsDevShell before the build.
+The build started at 21:06:05 +08:00 and finished at 21:14:26 +08:00 with
+exit status 0. It prepared unchanged prebuilt CPython, compiled BusyBox/ash,
+QuickJS, wolfSSL, curl and WolfSSH, built both Rust programs and packaged both
+boot modes. All compiled project outputs started absent. Retained source
+inputs were reused; this run did not check first-time downloads or host-tool
+installation.
+
+| Product | Bytes |
+| --- | ---: |
+| ash.wasm | 1,959,734 |
+| python.wasm | 30,522,756 |
+| curl.wasm | 1,784,307 |
+| quickjs.wasm | 1,332,012 |
+| wolfssh.wasm | 641,279 |
+| target/release/efi-agent.exe | 1,068,544 |
+| target/x86_64-unknown-uefi/release/efi-agent-uefi.efi | 3,773,952 |
+| artifacts/efi-agent-vm.img | 136,314,880 |
+| artifacts/efi-agent-native.img | 136,314,880 |
+
+An independent native Windows Python audit compared every declared file in
+artifacts/esp/work and artifacts/native-esp/work against its prepared input.
+All 1,160 declared files match byte for byte in each package. Each workspace
+contains 1,163 physical files including private filesystem storage. VM boot
+uses the compiled Agent and includes VM.TXT without CONFIG.JSON. Native boot
+uses the official Shell and includes startup.nsh and CONFIG.JSON without
+VM.TXT. Agent and Shell copies match their inputs. WASM, PE and GPT signatures
+pass. All 22 recorded source inputs, Cargo.lock and the root user workspace
+are unchanged. No VM boot or guest runtime suite was run.
+
+API settings were absent. Native packaging used these process-local build-only
+values: API base https://build.invalid/v1, key and model build-only-placeholder,
+and format chat_completions. Replace the native CONFIG.JSON settings before
+actual use. No model request was sent. The VM package has no embedded API
+configuration; the launcher supplies it when used.
+
+The build emitted existing BusyBox -Wstring-plus-int warnings, wolfSSL's unused
+WOLFSSL_CRYPT_BENCHMARKS CMake option warning, and curl configuration advisories
+about linker flags, disabled features and cross-compilation. Compilation and
+linking passed without a network or PowerShell failure. This Windows run had
+no clock-skew warning.
+
+Automatic command review rejected this initial Linux cleanup command before
+execution because rm-f style commands were disallowed:
+
+```bash
+rm -rf -- /home/ubuntu/projects/efi-agent-linux-build-20261031/source /home/ubuntu/projects/efi-agent-linux-build-20261031/evidence
+```
+
+The following scoped command completed the cleanup:
+
+```bash
+rm -r --one-file-system -- /home/ubuntu/projects/efi-agent-linux-build-20261031/source /home/ubuntu/projects/efi-agent-linux-build-20261031/evidence
+```
+
+Current evidence is under artifacts/verification: inputs.json, results.json,
+build-status.json, build.log, cleanup.log, removed-paths.txt,
+retained-inputs.txt, edk2-clean-preview.txt, verification.log, audit.py,
+run.ps1.txt and curl configuration/build logs. run.ps1.txt records the temporary
+orchestration script. Temporary control files were removed after copying this
+evidence. Production build scripts were unchanged by this task.
+
+## 2026-10-31: Native Linux Release build under WSL2
+
+The complete Release scripts/build.sh entry point passes with native Linux
+tools. The checkout is /home/ubuntu/projects/efi-agent-linux-build-20261031/source,
+on the WSL Linux filesystem. Exported Git commit 83713b0, applied the current
+tracked patch and copied the seven untracked source files. Initially the
+checkout contained neither artifacts nor target. The build process used a PATH
+with Linux tools only. No Windows executable was invoked.
+
+Downloaded the official Linux x86-64 WASI SDK 34 and Binaryen 133 releases into
+the task's external toolchains directory. Existing native tools include Rust
+1.97.1, CMake 3.28.3, Ninja 1.11.1, Make, Node.js and uv. Both required Rust
+targets were already installed. Host tools and user Cargo/uv caches were reused.
+
+The first online root build stopped during the Shell submodule clone. Git
+reported a GitHub TCP connection timeout after 134 seconds. A direct curl check,
+the recommended Windows-host proxy and a DNS-service diagnostic also timed out.
+Stopped Git's pending retry; this attempt exited 143 before guest compilation.
+The toolchain downloads had completed before this network failure.
+
+For the successful retry, copied only fixed build inputs from the earlier
+Windows verification: the original CPython ZIP, official Shell release binary,
+and curl/wolfSSL/WolfSSH source directories. Native Git initialized the outer
+Shell submodule from the existing local Git checkout at
+ae263171ee125bd8d0be5aff3882649cd920a7f8. EDK II was not initialized.
+No prepared WASM module, compiled library, Rust target directory or package
+was copied. Both target and artifacts/wasm-guests were absent before the retry.
+This verifies a Linux build with cached source inputs. First-time online
+provisioning remains unverified with the current network connection.
+
+Ran the default full Release entry point with the Linux SDK and Binaryen paths
+and --jobs 4. It prepared unchanged prebuilt CPython, compiled BusyBox/ash,
+QuickJS, wolfSSL, curl and WolfSSH, built both Rust programs with --locked,
+generated the catalog and packaged both boot modes. The root command exited 0.
+Native packaging used build-only API placeholders and sent no model request.
+
+| Product | Bytes |
+| --- | ---: |
+| ash.wasm | 1,963,883 |
+| python.wasm | 30,522,756 |
+| curl.wasm | 1,788,090 |
+| quickjs.wasm | 1,334,359 |
+| wolfssh.wasm | 643,920 |
+| Linux Release efi-agent | 2,237,776 |
+| Release efi-agent-uefi.efi | 3,763,712 |
+| efi-agent-vm.img | 136,314,880 |
+| efi-agent-native.img | 136,314,880 |
+
+An independent file check expanded programs.json and compared every declared
+file in both exported workspaces with its prepared input. All 1,160 declared
+files match byte for byte in each package; each workspace has 1,163 physical
+files including private filesystem storage. Both Agent EFI copies match the
+compiled image. VM boot uses Agent; native boot uses the official Shell.
+Checked WASM, ELF, PE and GPT signatures. All 19 exported build, test and vendor
+files match the working tree. Cargo.lock is unchanged.
+No VM, guest runtime suite or fresh-machine installation was run.
+
+The build emitted upstream BusyBox string-pointer warnings, the unused wolfSSL
+CMake WOLFSSL_CRYPT_BENCHMARKS option warning, curl's linker-flags advisory,
+and an unnecessary unsafe warning for __cpuid in crates/core/src/random.rs:72
+with Rust 1.97.1. They did not fail compilation or linking. Local Shell cloning
+also warned that shallow depth is ignored for local clones; its revision matches.
+Cargo performed its automatic user-cache cleanup during the build.
+
+Make reported future timestamps and clock skew for curl's newly generated
+Makefiles and dependency files. After the successful root build, a dry run
+required only relinking, with no C compilation pending. Relinked libcurl and the
+client. The resulting curl bytes remained identical to the packaged guest;
+make -q then returned 0 for both libcurl.la and curl, without clock warnings.
+This check refreshed build dependency timestamps without changing source or
+package bytes. It does not establish a system-clock root cause.
+
+A read-only inspection initially named two absent launcher files:
+
+```bash
+rg -n 'catalog|manifest|WorkspaceExport|efi-agent-fs' crates/launcher/src/package.rs crates/launcher/src/catalog.rs crates/launcher/src/main.rs
+sed -n '1,160p' crates/launcher/src/catalog.rs
+```
+
+Used rg --files to locate installation.rs and boot.rs, then continued the
+inspection. No production source fix was needed for this task.
+
+The whole-repository whitespace scan was slow while checking the existing
+submodule trees, so it was stopped:
+
+```bash
+git -c core.filemode=false diff --check
+```
+
+The check restricted to AGENTS.md and docs/verification.md with
+--ignore-submodules=all passed.
+
+Evidence copied to artifacts/linux-clean-build includes inputs.json,
+attempt1-download.log, build.log, exit-status.txt, results.json,
+run-build.sh, verify_build.py and the curl configuration/build/relink records.
+The source, logs and built products were later removed by the Windows rebuild
+cleanup above. Native toolchains remain under
+/home/ubuntu/projects/efi-agent-linux-build-20261031. Main-workspace packages
+and user files were preserved during this earlier Linux task.
+
+## 2026-10-31: Complete build integration and clean Windows Release package
+
+Both root entry points now call scripts/build_guests.py. The shared native
+driver prepares the fixed CPython distribution, then builds BusyBox, QuickJS,
+wolfSSL, curl and WolfSSH. The selected guest output directory supplies the
+wolfSSL installation to both consumers. Individual PowerShell entry points
+select one component in that driver. scripts/fetch_guest_source.py contains
+the fixed source versions and shared download/extraction logic; the standalone
+PowerShell fetch scripts use it too. Curl's configure/make commands are in
+scripts/build_curl.sh. Windows uses native WASI SDK tools and MSYS2 Bash/make;
+Linux selects native executables without adding a PowerShell prerequisite.
+
+Native packaging prepares the official UEFI Shell 26H1 x64 release from
+https://github.com/pbatard/UEFI-Shell/releases/download/26H1/shellx64.efi.
+It initializes only the outer pinned Shell submodule for License.txt and
+README.md. EDK II and its recursive submodules are unnecessary for this
+prebuilt binary. EFI_AGENT_SHELL still selects an explicit custom image.
+VM-only mode skips Shell preparation. Windows discovers and initializes MSVC
+with vswhere and Launch-VsDevShell, then restores the project directory.
+Both root scripts use --locked for Cargo and accept a job count.
+
+Created an isolated Windows-local Git checkout under
+artifacts/full-clean-build/source from commit 83713b0, applied the tracked
+working-tree changes and copied the new source files. The checkout initially
+contained neither artifacts nor target. No existing guest source cache,
+prebuilt Python archive, prepared WASM binary, Shell EFI or Rust output was
+copied into it. Installed Windows host tools, external WASI SDK 34 and
+Binaryen 133 directories, and user-level Cargo/uv package caches remained
+available. This checks a clean project build on this machine, rather than a
+fresh-machine tool installation.
+
+Ran the default Release scripts/build.ps1 entry point with explicit SDK and
+Binaryen directories and Jobs 4. All missing inputs downloaded successfully, including
+the Shell release, CPython archive, and wolfSSL/curl/WolfSSH source archives.
+The root command completed with exit status 0. It produced:
+
+| Product | Bytes |
+| --- | ---: |
+| ash.wasm | 1,959,734 |
+| python.wasm | 30,522,756 |
+| curl.wasm | 1,784,499 |
+| quickjs.wasm | 1,332,156 |
+| wolfssh.wasm | 641,279 |
+| Release efi-agent.exe | 1,068,544 |
+| Release efi-agent-uefi.efi | 3,774,464 |
+| efi-agent-vm.img | 136,314,880 |
+| efi-agent-native.img | 136,314,880 |
+
+Catalog validation and both package operations completed. Each exported
+workspace contains 1,163 physical files, including filesystem storage files;
+its path set matches the existing standard workspace. The native boot EFI is
+the 1,137,728-byte official Shell. The outer Shell checkout matches
+ae263171ee125bd8d0be5aff3882649cd920a7f8, without an initialized EDK II tree.
+Compared the 18 relevant changed code files in the build checkout with the
+working tree; all match. Cargo.lock is unchanged. Native packaging used explicit
+build-only API placeholders; no model request was sent. No VM, runtime test,
+Linux build or fresh-machine installation was run.
+
+Evidence is under artifacts/full-clean-build: inputs.json records the empty
+initial project caches and external tools; results.json records products,
+source consistency and scope; run-build.ps1 reproduces the native invocation.
+build.log records the PowerShell invocation and completion. PowerShell's
+transcript did not capture all native child output, so detailed native logs
+remain under source/artifacts/wasm-guests, including curl-build/configure.log,
+curl-build/build.log and the wolfSSL CMake/Ninja logs. Existing main-workspace
+packages and user files were preserved.
+
+The successful build emitted existing upstream BusyBox string-pointer
+warnings, a wolfSSL CMake warning for the unused WOLFSSL_CRYPT_BENCHMARKS
+option, and curl's advisory about required linker-wrapper flags in LIBS.
+These did not fail compilation or linking. No network, download, compiler or
+linker failure occurred. A documentation patch first had a context mismatch
+and was reapplied with the actual lines. This early log read also ran before
+make had created the file:
+
+```bash
+tail -n 12 artifacts/full-clean-build/source/artifacts/wasm-guests/curl-build/build.log
+```
+
+Used configure.log until build.log existed. Neither issue changed build inputs.
+
+## 2026-10-31: Vendored QuickJS and fixed-version wolfSSL/WolfSSH fetch
+
+Imported all 63 QuickJS 2026-06-04 distribution files under vendor/quickjs.
+The files matched the existing official archive bytes before pristine import
+commit 83713b0. The import preserves the executable modes of release.sh and
+unicode_download.sh. LICENSE and the upstream docs, examples and tests are
+included. vendor/quickjs/PORT.md records the source and port changes.
+
+Moved the three source changes out of scripts/build_quickjs.ps1 and into the
+maintained source: disable threaded Atomics under WASI, include malloc.h on
+WASI, and remove dtoa's unused setjmp.h include. The builder now defaults to
+vendor/quickjs and compiles its engine files directly. The separate guest
+adapters and generated zx bootstrap header remain in use.
+
+Added scripts/fetch_wolfssl.ps1 and scripts/fetch_wolfssh.ps1, and called each
+from its corresponding builder. Their fixed official source URLs are:
+
+- https://github.com/wolfSSL/wolfssl/archive/refs/tags/v5.9.4-stable.tar.gz
+- https://github.com/wolfSSL/wolfssh/archive/refs/tags/v1.6.0-stable.tar.gz
+
+The default caches remain artifacts/guest-sources/wolfssl-5.9.4-stable and
+artifacts/guest-sources/wolfssh-1.6.0-stable. Existing source directories are
+reused without a network request. A missing directory is populated through
+download and tar.exe extraction in a temporary sibling directory; the complete
+tree is moved into place and staging is removed on success or failure.
+Both fetch scripts accept -Source and can run separately. Neither library is
+vendored or added as a submodule. Their builders apply no source rewrites;
+wolfSSL settings/platform code and the WolfSSH client remain separate adapters.
+
+Reviewed the code and diffs. No builds, tests or network downloads were run
+for this change. Existing local archives were inspected for the source import
+and archive layouts. Earlier runtime evidence applies to previously built
+assets. Root-build integration and other dependency provisioning were outside
+this change; build wolfSSL before curl or WolfSSH.
+
+## 2026-10-31: UEFI Shell source patch inspection
+
+The UEFI Shell checkout has no local source patches. The parent repository
+records ae263171ee125bd8d0be5aff3882649cd920a7f8 for vendor/uefi-shell; the
+checkout HEAD matches that commit (26H1). Its EDK II gitlink and checkout HEAD
+both match b7a715f7c03c45c6b4575bf88596bfd79658b8ce. The outer tracked tree is
+unchanged. EDK II's tracked files also match HEAD after accounting for the
+original Unix symbolic link described below. Neither checkout has unignored
+untracked files. Recursive EDK II submodule status shows each checkout at its
+recorded revision.
+
+The upstream workflow builds ShellPkg/ShellPkg.dsc with PCD overrides for the
+screen log count and supplier string. It applies no Shell source patch. The
+project's build entry points locate an existing Shell EFI binary, and
+crates/launcher/src/boot.rs supplies startup.nsh outside the Shell source.
+That script connects drivers, selects 80x25 mode and launches Agent.
+No build, runtime test, network fetch or submodule source change was performed.
+
+Windows Git reported one modified entry, then failed to read it:
+
+```powershell
+git.exe -C vendor/uefi-shell/edk2 diff HEAD --stat --ignore-submodules
+```
+
+The error was `Function not implemented` followed by `cannot hash` for
+EmulatorPkg/Unix/Host/X11IncludeHack. Its recorded mode is 120000 and its
+recorded target is /opt/X11/include. WSL stat/readlink and a diff restricted to
+that path confirm the original symbolic link and the same target. Native Git
+diffs of all remaining paths are empty. The earlier dirty indication therefore
+comes from Windows Git reading a WSL link, rather than a source edit.
+
+The full WSL status scan was slow and was stopped:
+
+```bash
+git -C vendor/uefi-shell/edk2 -c core.filemode=false status --short --untracked-files=normal --ignore-submodules
+```
+
+Used native Git for the remaining tree and WSL only for the link:
+
+```powershell
+git.exe -C vendor/uefi-shell/edk2 diff HEAD --stat --ignore-submodules -- . ':(exclude)EmulatorPkg/Unix/Host/X11IncludeHack'
+```
+
+```bash
+git -C vendor/uefi-shell/edk2 -c core.filemode=false diff HEAD -- EmulatorPkg/Unix/Host/X11IncludeHack
+```
+
+An initial search named the absent crates/launcher/build.rs; the actual Shell
+packaging code is in crates/launcher/src/boot.rs. The search was narrowed to
+the existing launcher source directory.
+
+## 2026-10-31: Fixed-version curl source fetch
+
+Added scripts/fetch_curl.ps1 and called it from scripts/build_curl.ps1.
+The fetch step reuses the selected source directory when it contains configure.
+Otherwise, it downloads https://curl.se/download/curl-8.22.0.tar.xz and extracts
+it with Windows tar.exe. Download and extraction use a temporary sibling
+directory. The complete tree moves to the selected source path after extraction;
+the temporary directory is removed on success or failure. The default source
+path remains artifacts/guest-sources/curl-8.22.0, under the ignored artifacts
+directory. No vendor directory or submodule was added.
+
+PowerShell parsing, existing-source reuse and intentional failure cleanup checks
+completed before additional verification was stopped. The isolated normal
+download/build run was cancelled before completion. Removed its entire
+artifacts/curl-fetch directory, including temporary source and check files.
+Normal download and build from an empty cache were not verified in this task.
+The earlier runtime evidence below applies to the unchanged curl build inputs.
+
+## 2026-10-31: Adopted the curl build with unchanged upstream source
+
+Removed every source rewrite from scripts/build_curl.ps1. Restored the four
+previously patched cache files from curl-8.22.0.tar.xz after confirming that
+their differences were limited to those generated patches. All 4,406 upstream
+regular files match the archive bytes after the production build. The external
+POSIX-network/cwd adapters and wolfSSL library remain separate from curl.
+
+The build uses -D_WASI_EMULATED_SIGNAL and -mexception-handling for SDK headers.
+Explicit configure disallow settings keep signal, sigaction, sigsetjmp and
+alarm disabled. No signal-emulation library is linked. The script now records
+source/toolchain paths and build settings. Changed settings or -Reconfigure
+remove the old Makefile, rerun configure and clean the library/client objects.
+An unchanged default invocation reuses its configuration and produces identical
+bytes. The prepared curl.wasm is 1,784,307 bytes, with SHA256
+700fdc4eb495393e6dba57c51556bb19e2eb3444d68b556a9cca6485be9f34d3.
+
+The standard build keeps upstream wolfSSL-backend error classification. Shared
+test expectations now require 35 for an invalid signature, 77 for a missing
+issuer, and 60 for a wrong IP SAN or an expired certificate. Rejection checks
+also require an empty response body and no HTTP request at the independent
+server. Trusted TLS 1.2 and TLS 1.3 must still negotiate the requested version
+and return the exact expected response bytes.
+
+All six native integration tests pass HTTP redirect/download/upload, chunked
+output, saved bytes, timeout closure, DNS success/rejection and the complete
+TLS success/rejection matrix. Actual Windows WHPX at 256 MiB passes the selected
+firmware combination: HTTP/TLS/DNS, held curl responses with concurrent guest
+progress, cancellation with observed peer closure, QuickJS-to-ash-to-curl and
+CPython-to-ash-to-curl uploads, concurrent Python, process/pipe/environment
+checks and independently read saved FAT bytes.
+
+The commands used for runtime verification were:
+
+```powershell
+uv.exe run --no-project scripts/test_curl.py `
+  --runner target/release/examples/run_guest.exe `
+  --guest artifacts/wasm-guests/curl.wasm
+
+uv.exe run --no-project scripts/smoke_wasm.py `
+  --launcher target/release/efi-agent.exe `
+  --efi target/x86_64-unknown-uefi/release/efi-agent-uefi.efi `
+  --code artifacts/firmware/OVMF_CODE_4M.fd `
+  --vars artifacts/firmware/OVMF_VARS_4M.fd `
+  --fixtures artifacts/curl-no-patches/fixtures `
+  --output artifacts/curl-no-patches/whpx `
+  --memory 256 --command-timeout 90 --network --dns `
+  --curl artifacts/wasm-guests/curl.wasm --curl-tls `
+  --quickjs artifacts/wasm-guests/quickjs.wasm `
+  --ash artifacts/wasm-guests/ash.wasm `
+  --python artifacts/wasm-guests/python.wasm
+```
+
+Rebuilt the standard package with scripts/build.ps1 -VmOnly and explicit WASI
+SDK/Binaryen directories. An independent FAT reader compared all 1,160 declared
+program, library, license and manifest files with the prepared assets, plus
+both EFI application entries with the Release binary. Every byte matches.
+The final default curl build detected the configure-option change and rebuilt
+its objects; its output matches the runtime-tested hash above. No further
+runtime test was needed for that identical output. Script parsing and
+git diff --check pass.
+
+Evidence is under artifacts/curl-no-patches: source-audit.json,
+source-before.diff, final-configure.log, final-config.log, final-build.log,
+final-configuration.json, final-curl_config.h, build-final.log,
+native-tests.log, firmware.log, whpx, package-build.log and package-check.json.
+Removed the temporary package probe and fixture directory after verification.
+Kept the logs, firmware outputs, prepared assets and previous-package backup.
+This change adopts the curl build only; the source-provisioning and root-build
+integration gaps in the dependency audit remain open.
+
+Resolved verification issues: the default fixture directory was absent, so the
+existing fixture builders generated 25 WASM fixtures in the task directory.
+The first standard VM package rebuild refused to replace the older installed
+curl.wasm in its retained workspace. Preserved the entire previous ESP tree,
+workspace and VM image under artifacts/curl-no-patches/previous-package, then
+rebuilt the standard VM package successfully. Removed the obsolete
+--without-librtmp option reported by curl 8.22.0 configure.
+Existing configure warnings about cross-tool names, disabled zlib and linker
+flags in LIBS remain. QEMU also logged interrupt-vector and host application
+manifest warnings; the firmware verification completed successfully.
+
+## 2026-10-31: curl builds and transfers data without upstream source patches
+
+Extracted curl-8.22.0.tar.xz into an isolated Windows-local directory. Built the
+library and CLI with WASI SDK 34, the existing wolfSSL 5.9.4 installation and
+freshly compiled external POSIX-network/cwd adapters. The curl source received
+no edits. An independent comparison of all 4,406 regular files in the archive
+against the extracted tree confirms that every upstream file is unchanged.
+
+Added -D_WASI_EMULATED_SIGNAL to CPPFLAGS and -mexception-handling to CFLAGS,
+with the other configure/link settings retained from the standard build. The
+first option exposes SDK signal declarations. The second lets the SDK setjmp
+header compile. Configure still leaves HAVE_SIGNAL, HAVE_SIGACTION,
+HAVE_SIGSETJMP and HAVE_ALARM undefined; the build links no signal-emulation
+library and uses no signal-based resolver timeout. The native wasmi runner
+loads and executes the resulting 1,784,307-byte curl.wasm successfully.
+
+Five native integration tests pass: redirect/download with independent saved
+bytes, chunked stdout, binary upload with an independent server digest,
+timeout with observed connection closure, and valid TLS 1.2/1.3 with explicit
+CA loading, negotiated-version checks and byte-exact responses. The final
+test contains both TLS versions. This establishes ordinary HTTP/TLS behavior
+for the unmodified-source candidate with the current platform adapters.
+
+The current source edits were therefore not all required for normal transfers.
+The two TLS-backend changes classify issuer/signature failures as exit 60.
+Leaving that code unchanged retains upstream error classification; adopting
+this build would require adjusting the current exact error-code expectations.
+The candidate's certificate-failure cases and firmware execution were not run.
+The standard build script and the prepared default curl remain unchanged;
+this task records an isolated alternative rather than integrating it.
+
+Evidence is under artifacts/curl-unpatched: curl.wasm, source-audit.json,
+result.json, configure.log, config.log, build.log, curl_config.h,
+native-tests.log and native-tests-initial.log. Retained the candidate and logs;
+removed the extracted source, build directory and temporary probe scripts.
+
+Resolved verification issues: broad SDK/header reads exceeded the output budget
+and one guessed internal header path was absent; narrowed the reads to the
+actual Preview 1 headers. An early progress check ran before configure created
+its outputs; the completed configuration was checked afterward. The initial
+TLS probe created its second CA file after the first guest run had saved the
+workspace namespace. That later host file was absent from the saved namespace.
+Generated both TLS fixtures before the first guest run; all five tests then
+pass. This was a probe setup error and required no production change.
+
+## 2026-10-31: Full-package dependency audit from an isolated source export
+
+The current root build does not produce a complete package from Git files
+alone. Exported commit fa2b260 with git archive into a Windows-local path with
+spaces. The export contained no artifacts or target directory. Used existing
+Windows tools and user-level Cargo/uv caches, with external WASI SDK 34 and
+Binaryen 133. Initialized the installed MSVC toolchain through vswhere and
+Launch-VsDevShell.ps1. This checks project input completeness on the current
+machine; it does not establish installation on another machine or Linux.
+
+The actual scripts/build.ps1 -VmOnly run rebuilt BusyBox, the Release EFI
+application and the Release launcher. It then exited with status 1 at catalog
+generation: "Find installation asset python.wasm". Only ash.wasm existed among
+the five application modules. No VM image was generated. An independent catalog
+call with an absolute asset path returned the same failure. The rebuilt BusyBox
+bytes match the standard asset, and Cargo.lock was unchanged. No firmware boot
+was possible from this incomplete output.
+
+The dependency audit found these remaining inputs and integration gaps:
+
+| Input | Current state | Work required for a complete root build |
+| --- | --- | --- |
+| QuickJS 2026-06-04 | Its source is an untracked artifacts/guest-sources cache. The script generates patched copies. | Supply versioned source or an automatic fixed-version download; invoke its build. |
+| wolfSSL 5.9.4 | Its source is an untracked cache. Its build installs a static library. | Supply the source and build it before curl and WolfSSH. |
+| curl 8.22.0 | Its source is an untracked cache. The script edits that cache and uses MSYS configure/make. | Supply the source, retain explicit port patches and invoke its build. |
+| WolfSSH 1.6.0 | Its source is an untracked cache; its build requires the wolfSSL installation. | Supply the source and invoke its build after wolfSSL. |
+| CPython 3.14.7 | prepare_cpython.ps1 downloads a fixed prebuilt release and stages its library and startup adapters. | Invoke preparation from the root build. |
+| UEFI Shell | A submodule supplies source; native packaging expects a separately built EFI image. | Initialize the required submodules and build or supply the Shell image for native packages. |
+| Rust crates and local ports | Cargo.lock, vendor/fatfs, vendor/wasmi_core and vendor/zx are present in the Git export. | Install Rust with the UEFI target and the native linker. No extra source-cache gap was found here. |
+| Timezone data | uv fetches tzdata==2026.5 for the BusyBox build. | Keep this declared package download available. |
+
+Independent QuickJS and wolfSSL script calls from the export fail on missing
+upstream source. Curl and WolfSSH calls fail on the missing wolfSSL installation;
+their own upstream source directories are also absent. All four calls return
+status 1. The root Windows and Linux scripts invoke only the BusyBox build
+before Cargo and catalog generation. They invoke neither these application
+builds nor CPython preparation. The other guest build scripts are Windows-only.
+
+Build prerequisites still need a complete installation procedure: Rust 1.93 or
+later with x86_64-unknown-uefi and a native linker, PowerShell 7.4 or later on
+Windows, uv/Python, WASI SDK, Binaryen, Node.js, CMake, Ninja and MSYS make/tools
+for the current curl build. QEMU and OVMF are separate runtime-test inputs.
+VM-only packaging requires no model API credentials; native packaging currently
+requires its configuration. This audit changed documentation only and leaves
+the source provisioning and build integration gaps open.
+
+Evidence is under artifacts/dependency-audit: source-commit.txt, tools.txt,
+source-inputs.json, source-probes.json, native-entry.log, vm-entry.log,
+missing-*.log, catalog-absolute.log, modules.json, results.txt and
+final-checks.json. Removed the temporary Git export, compilation outputs and
+probe output after recording the results.
+
+Resolved inspection issues: an initial WSL Git status scan stalled in the dirty
+Shell submodule; stopped it and used native Git with submodule scanning disabled.
+Narrowed an overlarge text search and corrected absent optional paths. PowerShell
+-WorkingDirectory sets its provider location but left the .NET process directory
+at the original repository. The first QuickJS probe therefore read some original
+cached files before its compiler rejected missing sources. Repeated all four
+independent probes with Environment.CurrentDirectory set to the export; QuickJS
+then fails at its first source read. The main build uses the exported Python
+driver and native Cargo/launcher processes; its absolute-path catalog check
+confirms the missing-asset result independently. Existing BusyBox upstream
+pointer-offset warnings remain in the successful compilation log.
+
 ## 2026-10-31: Vendored BusyBox source and native build entry points
 
 Imported all 2,880 BusyBox 1.37.0 distribution files in a separate pristine

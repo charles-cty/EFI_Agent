@@ -17,7 +17,7 @@ import tempfile
 import threading
 import unittest
 from test_dns import read_exact, response
-from wasm_tls_fixture import tls_context
+from wasm_tls_fixture import CURL_TLS_EXIT_CODES, tls_context
 from wasm_namespace_fixture import DirectoryWorkspace
 
 BODY = bytes((index * 53 + index // 239 + 7) % 256 for index in range(131089))
@@ -196,7 +196,7 @@ class CurlIntegration(unittest.TestCase):
 
     def test_actual_curl_tls_and_certificate_rejection(self):
         contexts = {}
-        for case in ["tls12", "tls13", "untrusted", "no_signer", "hostname", "expired"]:
+        for case in CURL_TLS_EXIT_CODES:
             directory = self.tree / case
             directory.mkdir()
             failure = None if case in ["tls12", "tls13"] else case
@@ -217,7 +217,7 @@ class CurlIntegration(unittest.TestCase):
                 try:
                     data = self.execute("--cacert", f"{directory.name}/curl-ca.pem", "--output", "-",
                                         f"https://127.0.0.1:{server.server_port}/binary",
-                                        expected_exit=60 if failure else 0)
+                                        expected_exit=CURL_TLS_EXIT_CODES[case])
                     self.assertEqual(data, b"" if failure else BODY)
                     self.assertEqual(server.requests, [] if failure else ["/binary"])
                     if not failure:
