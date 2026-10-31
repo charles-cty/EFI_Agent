@@ -191,6 +191,7 @@ static void print_direc(char *format, unsigned fmt_length,
 	double dv;
 	char saved;
 	char *have_prec, *have_width;
+	int conversion_error = 0;
 
 	saved = format[fmt_length];
 	format[fmt_length] = '\0';
@@ -210,6 +211,7 @@ static void print_direc(char *format, unsigned fmt_length,
 	case 'd':
 	case 'i':
 		llv = my_xstrtoll(skip_whitespace(argument));
+		conversion_error = errno;
  print_long:
 		if (!have_width) {
 			if (!have_prec)
@@ -228,6 +230,7 @@ static void print_direc(char *format, unsigned fmt_length,
 	case 'x':
 	case 'X':
 		llv = my_xstrtoull(skip_whitespace(argument));
+		conversion_error = errno;
 		/* cheat: unsigned long and long have same width, so... */
 		goto print_long;
 	case 's':
@@ -257,6 +260,7 @@ static void print_direc(char *format, unsigned fmt_length,
 	case 'g':
 	case 'G':
 		dv = my_xstrtod(argument);
+		conversion_error = errno;
 		if (!have_width) {
 			if (!have_prec)
 				printf(format, dv);
@@ -272,6 +276,7 @@ static void print_direc(char *format, unsigned fmt_length,
 	} /* switch */
 
 	format[fmt_length] = saved;
+	errno = conversion_error;
 }
 
 /* Handle params for "%*.*f". Negative numbers are ok (compat). */

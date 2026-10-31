@@ -189,12 +189,22 @@ int FAST_FUNC copy_file(const char *source, const char *dest, int flags)
 
 		/* Recursively copy files in SOURCE */
 		dp = opendir(source);
-		if (dp == NULL) {
-			retval = -1;
+        if (dp == NULL) {
+            bb_perror_msg("can't open '%s'", source);
+            retval = -1;
 			goto preserve_mode_ugid_time;
 		}
 
-		while ((d = readdir(dp)) != NULL) {
+        for (;;) {
+            errno = 0;
+            d = readdir(dp);
+            if (d == NULL) {
+                if (errno) {
+                    bb_perror_msg("can't read '%s'", source);
+                    retval = -1;
+                }
+                break;
+            }
 			char *new_source, *new_dest;
 
 			new_source = concat_subpath_file(source, d->d_name);
@@ -206,13 +216,16 @@ int FAST_FUNC copy_file(const char *source, const char *dest, int flags)
 			free(new_source);
 			free(new_dest);
 		}
-		closedir(dp);
+        if (closedir(dp) < 0) {
+            bb_perror_msg("can't close '%s'", source);
+            retval = -1;
+        }
 
 		if (!dest_exists
 		 && chmod(dest, source_stat.st_mode & ~saved_umask) < 0
 		) {
-			bb_perror_msg("can't preserve %s of '%s'", "permissions", dest);
-			/* retval = -1; - WRONG! copy *WAS* made */
+			{ bb_perror_msg("can't preserve %s of '%s'", "permissions", dest); retval = -1; }
+			retval = -1;
 		}
 		goto preserve_mode_ugid_time;
 	}
@@ -289,6 +302,15 @@ int FAST_FUNC copy_file(const char *source, const char *dest, int flags)
 			add_to_ino_dev_hashtable(&source_stat, dest);
 		}
 
+        /* POSIX truncation follows an existing destination symlink. Compare
+         * its target before opening it, so an alias cannot erase the source. */
+        if (!ENABLE_FEATURE_NON_POSIX_CP && !(flags & FILEUTILS_INTERACTIVE)
+            && stat(dest, &dest_stat) == 0
+            && source_stat.st_dev == dest_stat.st_dev
+            && source_stat.st_ino == dest_stat.st_ino) {
+            bb_error_msg("'%s' and '%s' are the same file", source, dest);
+            return -1;
+        }
 		src_fd = open_or_warn(source, O_RDONLY);
 		if (src_fd < 0)
 			return -1;
@@ -388,8 +410,10 @@ int FAST_FUNC copy_file(const char *source, const char *dest, int flags)
 	}
 	if (S_ISLNK(source_stat.st_mode)) {
 		char *lpath = xmalloc_readlink_or_warn(source);
-		if (lpath) {
-			int r = symlink(lpath, dest);
+        if (!lpath)
+            return -1;
+        if (lpath) {
+            int r = symlink(lpath, dest);
 			if (r < 0) {
 				/* shared message */
 				bb_perror_msg("can't create %slink '%s' to '%s'",
@@ -401,7 +425,7 @@ int FAST_FUNC copy_file(const char *source, const char *dest, int flags)
 			free(lpath);
 			if (flags & FILEUTILS_PRESERVE_STATUS)
 				if (lchown(dest, source_stat.st_uid, source_stat.st_gid) < 0)
-					bb_perror_msg("can't preserve %s of '%s'", "ownership", dest);
+					{ bb_perror_msg("can't preserve %s of '%s'", "ownership", dest); retval = -1; }
 		}
 		/* _Not_ jumping to preserve_mode_ugid_time:
 		 * symlinks don't have those */
@@ -431,17 +455,17 @@ int FAST_FUNC copy_file(const char *source, const char *dest, int flags)
 		times[1].tv_usec = times[0].tv_usec = 0;
 		/* BTW, utimes sets usec-precision time - just FYI */
 		if (utimes(dest, times) < 0)
-			bb_perror_msg("can't preserve %s of '%s'", "times", dest);
+			{ bb_perror_msg("can't preserve %s of '%s'", "times", dest); retval = -1; }
 		if (chown(dest, source_stat.st_uid, source_stat.st_gid) < 0) {
 			source_stat.st_mode &= ~(S_ISUID | S_ISGID);
-			bb_perror_msg("can't preserve %s of '%s'", "ownership", dest);
+			{ bb_perror_msg("can't preserve %s of '%s'", "ownership", dest); retval = -1; }
 		}
 		if (chmod(dest, source_stat.st_mode) < 0)
-			bb_perror_msg("can't preserve %s of '%s'", "permissions", dest);
+			{ bb_perror_msg("can't preserve %s of '%s'", "permissions", dest); retval = -1; }
 	}
 
  verb_and_exit:
-	if (flags & FILEUTILS_VERBOSE) {
+	if (retval == 0 && (flags & FILEUTILS_VERBOSE)) {
 		printf("'%s' -> '%s'\n", source, dest);
 	}
 

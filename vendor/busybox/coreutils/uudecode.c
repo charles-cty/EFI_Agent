@@ -320,6 +320,7 @@ int baseNUM_main(int argc UNUSED_PARAM, char **argv)
 				break;
 			}
 
+            die_if_ferror_stdout();
 			/* Encode the buffer we just read in */
 			if (ENABLE_BASE32 && (!ENABLE_BASE64 || applet_name[4] == '3')) {
 				bb_b32encode(dst_buf, src_buf, size);
@@ -352,7 +353,10 @@ int baseNUM_main(int argc UNUSED_PARAM, char **argv)
 #undef src_buf
 	}
 
-	fflush_stdout_and_exit_SUCCESS();
+    die_if_ferror(src_stream, bb_msg_read_error);
+    if (fclose_if_not_stdin(src_stream) != 0)
+        bb_simple_perror_msg_and_die(bb_msg_read_error);
+    fflush_stdout_and_exit_SUCCESS();
 }
 #endif
 

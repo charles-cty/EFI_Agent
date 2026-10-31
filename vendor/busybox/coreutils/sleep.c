@@ -86,7 +86,8 @@ int sleep_main(int argc UNUSED_PARAM, char **argv)
 	/* GNU sleep accepts "inf", "INF", "infinity" and "INFINITY" */
 	if (strncasecmp(argv[0], "inf", 3) == 0)
 		for (;;)
-			sleep(INT_MAX);
+            if (sleep(INT_MAX) != 0)
+                bb_simple_perror_msg_and_die("sleep");
 
 //FIXME: in ash, "sleep 123qwerty" as a builtin aborts the shell
 #if ENABLE_FEATURE_FANCY_SLEEP

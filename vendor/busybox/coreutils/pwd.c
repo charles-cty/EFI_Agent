@@ -71,7 +71,7 @@ int pwd_main(int argc UNUSED_PARAM, char **argv UNUSED_PARAM)
 {
 	char *buf;
 
-	if (ENABLE_DESKTOP) {
+	{
 		/* TODO: assume -L if $POSIXLY_CORRECT? (coreutils does that)
 		 * Rationale:
 		 * POSIX requires a default of -L, but most scripts expect -P

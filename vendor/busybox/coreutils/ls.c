@@ -165,6 +165,7 @@
 
 #include "libbb.h"
 #include "common_bufsiz.h"
+#define HAVE_STRVERSCMP 1
 #include "unicode.h"
 
 

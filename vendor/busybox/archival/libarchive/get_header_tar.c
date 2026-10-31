@@ -13,6 +13,7 @@
  */
 #include "libbb.h"
 #include "bb_archive.h"
+#include "tar_support.h"
 
 typedef uint32_t aliased_uint32_t FIX_ALIASING;
 typedef off_t    aliased_off_t    FIX_ALIASING;
@@ -91,24 +92,13 @@ static void process_pax_hdr(archive_handle_t *archive_handle, unsigned sz, int g
 		/* expect errno to be EINVAL, because the character
 		 * following the digits should be a space
 		 */
-		p += len;
-		sz -= len;
-		if (
-		/** (int)sz < 0 - not good enough for huge malicious VALUE of 2^32-1 */
-		    (int)(sz|len) < 0 /* this works */
-		 || len == 0
-		 || errno != EINVAL
-		 || *end != ' '
-		) {
-			bb_simple_error_msg("malformed extended header, skipped");
-			// More verbose version:
-			//bb_error_msg("malformed extended header at %"OFF_FMT"d, skipped",
-			//		archive_handle->offset - (sz + len));
-			break;
-		}
-		/* overwrite the terminating newline with NUL
-		 * (we do not bother to check that it *was* a newline)
-		 */
+        if (len < 2 || len > sz || errno != EINVAL || *end != ' '
+            || end >= p + len - 1 || p[len - 1] != '\n'
+            || memchr(p, '\0', len))
+            bb_simple_error_msg_and_die("malformed extended header");
+        p += len;
+        sz -= len;
+
 		p[-1] = '\0';
 		value = end + 1;
 
@@ -227,8 +217,10 @@ char FAST_FUNC get_header_tar(archive_handle_t *archive_handle)
 			/* Second consecutive empty header - end of archive.
 			 * Read until the end to empty the pipe from gz or bz2
 			 */
-			while (full_read(archive_handle->src_fd, &tar, 512) == 512)
-				continue;
+            while ((i = full_read(archive_handle->src_fd, &tar, 512)) == 512)
+                continue;
+            if (i < 0)
+                bb_simple_perror_msg_and_die(bb_msg_read_error);
 			return EXIT_FAILURE; /* "end of archive" */
 		}
 		archive_handle->tar__end = 1;
@@ -320,6 +312,8 @@ char FAST_FUNC get_header_tar(archive_handle_t *archive_handle)
 #endif
 	file_header->mtime = GET_OCTAL(tar.mtime);
 	file_header->size = GET_OCTAL(tar.size);
+    if (file_header->size < 0 || file_header->size > INT64_MAX - 511)
+        bb_simple_error_msg_and_die("invalid tar member size");
 	file_header->gid = GET_OCTAL(tar.gid);
 	file_header->uid = GET_OCTAL(tar.uid);
 	/* Set bits 0-11 of the files mode */

@@ -4,8 +4,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 profile=release
 vm_only=false
+guests=artifacts/wasm-guests
+wasi_sdk=${WASI_SDK_PATH:-}
+binaryen=${BINARYEN_PATH:-}
 usage() {
-    printf 'Usage: bash scripts/build.sh [--profile release|debug] [--vm-only]\n'
+    printf 'Usage: bash scripts/build.sh [--profile release|debug] [--vm-only] [--guests DIR] [--wasi-sdk DIR] [--binaryen DIR]\n'
 }
 while (($#)); do
     case "$1" in
@@ -16,6 +19,15 @@ while (($#)); do
             ;;
         --help) usage; exit 0 ;;
         --vm-only) vm_only=true; shift ;;
+        --guests|--wasi-sdk|--binaryen)
+            if (($# < 2)); then usage >&2; exit 2; fi
+            case "$1" in
+                --guests) guests=$2 ;;
+                --wasi-sdk) wasi_sdk=$2 ;;
+                --binaryen) binaryen=$2 ;;
+            esac
+            shift 2
+            ;;
         *) usage >&2; exit 2 ;;
     esac
 done
@@ -40,6 +52,10 @@ if [[ "$vm_only" == false ]]; then
     fi
     export EFI_AGENT_SHELL=$shell_path
 fi
+guest_args=(--output "$guests")
+if [[ -n "$wasi_sdk" ]]; then guest_args+=(--wasi-sdk "$wasi_sdk"); fi
+if [[ -n "$binaryen" ]]; then guest_args+=(--binaryen "$binaryen"); fi
+uv run scripts/build_busybox.py "${guest_args[@]}"
 build_args=()
 if [[ "$profile" == release ]]; then build_args+=(--release); fi
 target_dir=${CARGO_TARGET_DIR:-target}
@@ -47,7 +63,8 @@ cargo build -p efi-agent-uefi --target x86_64-unknown-uefi --target-dir "$target
 cargo build -p efi-agent --target-dir "$target_dir" "${build_args[@]}"
 launcher="$target_dir/$profile/efi-agent"
 efi="$target_dir/x86_64-unknown-uefi/$profile/efi-agent-uefi.efi"
-package_args=("$efi" artifacts)
+"$launcher" catalog "$guests"
+package_args=("$efi" artifacts "$guests")
 if [[ "$vm_only" == true ]]; then package_args+=(--vm-only); fi
 "$launcher" package "${package_args[@]}"
 printf 'Profile: %s\nLauncher: %s\nVM tree: artifacts/esp\nVM image: artifacts/efi-agent-vm.img\n' "$profile" "$launcher"

@@ -89,6 +89,7 @@ static void cut_file(FILE *file, const char *delim, const char *odelim,
 		const struct cut_list *cut_lists, unsigned nlists)
 {
 	char *line;
+    size_t length;
 	unsigned linenum = 0;	/* keep these zero-based to be consistent */
 	regex_t reg;
 	int spos, shoe = option_mask32 & CUT_OPT_REGEX_FLGS;
@@ -96,13 +97,29 @@ static void cut_file(FILE *file, const char *delim, const char *odelim,
 	if (shoe) xregcomp(&reg, delim, REG_EXTENDED);
 
 	/* go through every line in the file */
-	while ((line = xmalloc_fgetline(file)) != NULL) {
+	while ((line = bb_read_record(file, '\n', &length)) != NULL) {
 
 		/* set up a list so we can keep track of what's been printed */
-		int linelen = strlen(line);
+		int linelen = length;
+        if (shoe && memchr(line, 0, length))
+            bb_simple_error_msg_and_die("regex fields cannot contain NUL");
 		char *printed = xzalloc(linelen + 1);
 		char *orig_line = line;
-		unsigned cl_pos = 0;
+        unsigned cl_pos = 0;
+        if ((option_mask32 & (CUT_OPT_FIELDS_FLGS | CUT_OPT_REGEX_FLGS))
+            && (option_mask32 & (CUT_OPT_SUPPRESS_FLGS | CUT_OPT_NOSORT_FLGS))
+            && *delim != '\n') {
+            if (!shoe) {
+                if (!memchr(line, (unsigned char)*delim, length))
+                    goto next_line;
+            } else {
+                int match = regexec(&reg, line, 0, NULL, REG_NOTBOL | REG_NOTEOL);
+                if (match == REG_NOMATCH)
+                    goto next_line;
+                if (match)
+                    bb_simple_error_msg_and_die("regex match failed");
+            }
+        }
 
 		/* cut based on chars/bytes XXX: only works when sizeof(char) == byte */
 		if (option_mask32 & (CUT_OPT_CHAR_FLGS | CUT_OPT_BYTE_FLGS)) {
@@ -146,7 +163,8 @@ static void cut_file(FILE *file, const char *delim, const char *odelim,
 
 			/* If we made it here, it means we've found the line we're
 			 * looking for, so print it */
-			puts(line);
+			fwrite(line, 1, length, stdout);
+            putchar('\n');
 			goto next_line;
 		} else {		/* cut by fields */
 			unsigned uu = 0, start = 0, end = 0, out = 0;
@@ -175,7 +193,12 @@ static void cut_file(FILE *file, const char *delim, const char *odelim,
 					if (shoe) {
 						regmatch_t rr = {-1, -1};
 
-						if (!regexec(&reg, line+uu, 1, &rr, REG_NOTBOL|REG_NOTEOL)) {
+                        int match = regexec(&reg, line+uu, 1, &rr, REG_NOTBOL|REG_NOTEOL);
+                        if (match && match != REG_NOMATCH)
+                            bb_simple_error_msg_and_die("regex match failed");
+                        if (!match) {
+                            if (rr.rm_eo == 0)
+                                bb_simple_error_msg_and_die("regex delimiter matched empty string");
 							end = uu + rr.rm_so;
 							uu += rr.rm_eo;
 						} else {
@@ -191,8 +214,10 @@ static void cut_file(FILE *file, const char *delim, const char *odelim,
 						continue;
 					}
 				}
-				if (end != start || !shoe)
-					printf("%s%.*s", out++ ? odelim : "", end-start, line + start);
+                if (end != start || !shoe) {
+                    if (out++) fputs(odelim, stdout);
+                    fwrite(line + start, 1, end - start, stdout);
+                }
 				start = uu;
 				if (!dcount)
 					break;
@@ -205,6 +230,7 @@ static void cut_file(FILE *file, const char *delim, const char *odelim,
 		free(printed);
 		free(orig_line);
 	}
+    if (shoe) regfree(&reg);
 }
 
 int cut_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
@@ -226,7 +252,9 @@ int cut_main(int argc UNUSED_PARAM, char **argv)
 	);
 	if (!delim || !*delim)
 		delim = (opt & CUT_OPT_REGEX_FLGS) ? "[[:space:]]+" : "\t";
-	if (!odelim) odelim = (opt & CUT_OPT_REGEX_FLGS) ? " " : delim;
+    if (!odelim) odelim = (opt & CUT_OPT_REGEX_FLGS) ? " " : delim;
+    if ((opt & CUT_OPT_FIELDS_FLGS) && strlen(delim) != 1)
+        bb_simple_error_msg_and_die("field delimiter must be one byte");
 
 //	argc -= optind;
 	argv += optind;
@@ -268,7 +296,9 @@ int cut_main(int argc UNUSED_PARAM, char **argv)
 			if (!ntok[0]) {
 				s = 0;
 			} else {
-				s = xatoi_positive(ntok);
+	            s = xatoi_positive(ntok);
+            if (s == 0)
+                bb_simple_error_msg_and_die("positions start at 1");
 				/* account for the fact that arrays are zero based, while
 				 * the user expects the first char on the line to be char #1 */
 				if (s != 0)
@@ -281,12 +311,14 @@ int cut_main(int argc UNUSED_PARAM, char **argv)
 			} else if (!ltok[0]) {
 				e = INT_MAX;
 			} else {
-				e = xatoi_positive(ltok);
+	            e = xatoi_positive(ltok);
+            if (e == 0)
+                bb_simple_error_msg_and_die("positions start at 1");
 				/* if the user specified and end position of 0,
 				 * that means "til the end of the line" */
 				if (!*ltok)
 					e = INT_MAX;
-				else if (e < s)
+				else if (e <= s)
 					bb_error_msg_and_die("%d<%d", e, s);
 				e--;	/* again, arrays are zero based, lines are 1 based */
 			}
@@ -323,7 +355,14 @@ int cut_main(int argc UNUSED_PARAM, char **argv)
 				continue;
 			}
 			cut_file(file, delim, odelim, cut_lists, nlists);
-			fclose_if_not_stdin(file);
+            if (ferror(file)) {
+                bb_simple_perror_msg(*argv);
+                retval = EXIT_FAILURE;
+            }
+            if (fclose_if_not_stdin(file)) {
+                bb_simple_perror_msg(*argv);
+                retval = EXIT_FAILURE;
+            }
 		} while (*++argv);
 
 		if (ENABLE_FEATURE_CLEAN_UP)

@@ -241,9 +241,11 @@ static uint8_t *hash_file(unsigned char *in_buf, const char *filename, unsigned 
 		}
 	}
 
-	if (src_fd != STDIN_FILENO) {
-		close(src_fd);
-	}
+    if (src_fd != STDIN_FILENO && close(src_fd) < 0) {
+        bb_perror_msg("can't close '%s'", filename);
+        free(hash_value);
+        hash_value = NULL;
+    }
 
 	return hash_value;
 }
@@ -357,5 +359,9 @@ int md5_sha1_sum_main(int argc UNUSED_PARAM, char **argv)
 		}
 	} while (*++argv);
 
-	return return_value;
+    if (fflush(stdout) != 0 || ferror(stdout)) {
+        bb_simple_perror_msg("standard output");
+        return_value = EXIT_FAILURE;
+    }
+    return return_value;
 }

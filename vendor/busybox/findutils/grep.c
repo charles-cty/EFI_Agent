@@ -587,6 +587,11 @@ static int grep_file(FILE *file)
 			break;
 		}
 	} /* while (read line) */
+    if (ferror(file)) {
+        if (!SUPPRESS_ERR_MSGS)
+            bb_simple_perror_msg(cur_file);
+        open_errors = 1;
+    }
 
 	/* special-case file post-processing for options where we don't print line
 	 * matches, just filenames and possibly match counts */
@@ -830,6 +835,8 @@ int grep_main(int argc UNUSED_PARAM, char **argv)
 	/* If no files were specified, or '-' was specified, take input from
 	 * stdin. Otherwise, we grep through all the files specified. */
 	matched = 0;
+	if ((option_mask32 & OPT_m) && max_matches == 0)
+		return 1;
 	do {
 		cur_file = *argv;
 		file = stdin;
@@ -875,6 +882,10 @@ int grep_main(int argc UNUSED_PARAM, char **argv)
 		}
 	}
 	/* 0 = success, 1 = failed, 2 = error */
+    if (fflush(stdout) != 0 || ferror(stdout)) {
+        bb_simple_perror_msg("standard output");
+        return 2;
+    }
 	if (open_errors)
 		return 2;
 	return !matched; /* invert return value: 0 = success, 1 = failed */

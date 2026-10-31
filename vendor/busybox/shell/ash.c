@@ -637,7 +637,7 @@ static char *commandname;              /* currently executing command */
 
 /* ============ Interrupts / exceptions */
 
-static void exitshell(void) NORETURN;
+static void exitshell(void) NOINLINE;
 
 /*
  * These macros allow the user to suspend the handling of interrupt signals
@@ -663,7 +663,7 @@ static void exitshell(void) NORETURN;
  * just do a longjmp to the exception handler.  The type of exception is
  * stored in the global variable "exception_type".
  */
-static void raise_exception(int) NORETURN;
+static void raise_exception(int) NOINLINE;
 static void
 raise_exception(int e)
 {
@@ -689,25 +689,13 @@ raise_exception(int e)
  * are held using the INT_OFF macro.  (The test for iflag is just
  * defensive programming.)
  */
-static void raise_interrupt(void) NORETURN;
+static void raise_interrupt(void) NOINLINE;
 static void
 raise_interrupt(void)
 {
-	pending_int = 0;
-	/* Signal is not automatically unmasked after it is raised,
-	 * do it ourself - unmask all signals */
-	sigprocmask_allsigs(SIG_UNBLOCK);
-	/* pending_sig = 0; - now done in signal_handler() */
-
-	if (!(rootshell && iflag)) {
-		/* Kill ourself with SIGINT */
-		signal(SIGINT, SIG_DFL);
-		raise(SIGINT);
-	}
-	/* bash: ^C even on empty command line sets $? */
-	exitstatus = SIGINT + 128;
-	raise_exception(EXINT);
-	/* NOTREACHED */
+    pending_int = 0;
+    exitstatus = 130;
+    raise_exception(EXINT);
 }
 #if DEBUG
 #define raise_interrupt() do { \
@@ -1432,7 +1420,7 @@ ash_vmsg(const char *msg, va_list ap)
  * is not NULL then error prints an error message using printf style
  * formatting.  It then raises the error exception.
  */
-static void ash_vmsg_and_raise(int, const char *, va_list) NORETURN;
+static void ash_vmsg_and_raise(int, const char *, va_list) NOINLINE;
 static void
 ash_vmsg_and_raise(int cond, const char *msg, va_list ap)
 {
@@ -1451,7 +1439,7 @@ ash_vmsg_and_raise(int cond, const char *msg, va_list ap)
 	/* NOTREACHED */
 }
 
-static void ash_msg_and_raise_error(const char *, ...) NORETURN;
+static void ash_msg_and_raise_error(const char *, ...) NOINLINE;
 static void
 ash_msg_and_raise_error(const char *msg, ...)
 {
@@ -1470,7 +1458,7 @@ ash_msg_and_raise_error(const char *msg, ...)
  */
 #define ash_msg_and_raise_perror(fmt, ...) ash_msg_and_raise_error(fmt ": "STRERROR_FMT, ##__VA_ARGS__ STRERROR_ERRNO)
 
-static void raise_error_syntax(const char *) NORETURN;
+static void raise_error_syntax(const char *) NOINLINE;
 static void
 raise_error_syntax(const char *msg)
 {
@@ -1479,7 +1467,7 @@ raise_error_syntax(const char *msg)
 	/* NOTREACHED */
 }
 
-static void ash_msg_and_raise(int, const char *, ...) NORETURN;
+static void ash_msg_and_raise(int, const char *, ...) NOINLINE;
 static void
 ash_msg_and_raise(int cond, const char *msg, ...)
 {
@@ -2555,7 +2543,7 @@ listvars(int on, int off, struct strlist *lp, char ***end)
 				 */
 				struct strlist *lp1 = lp;
 				while (lp1) {
-					if (strcmp(lp1->text, vp->var_text) == 0)
+					if (varcmp(lp1->text, vp->var_text) == 0)
 						goto skip;
 					lp1 = lp1->next;
 				}
@@ -2572,6 +2560,13 @@ listvars(int on, int off, struct strlist *lp, char ***end)
 
 #if ENABLE_FEATURE_SH_NOFORK
 	while (lp) {
+        struct strlist *later = lp->next;
+        while (later && varcmp(lp->text, later->text) != 0)
+            later = later->next;
+        if (later) {
+            lp = lp->next;
+            continue;
+        }
 		if (ep == stackstrend())
 			ep = growstackstr();
 		*ep++ = lp->text;
@@ -3701,106 +3696,8 @@ signal_handler(int signo)
 static void
 setsignal(int signo)
 {
-	char *t;
-	char cur_act, new_act;
-	struct sigaction act;
-
-	t = trap[signo];
-	new_act = S_DFL;
-	if (t != NULL) { /* trap for this sig is set */
-		new_act = S_CATCH;
-		if (t[0] == '\0') /* trap is "": ignore this sig */
-			new_act = S_IGN;
-	}
-
-	if (rootshell && new_act == S_DFL) {
-		switch (signo) {
-		case SIGINT:
-			if (iflag || minusc || sflag == 0)
-				new_act = S_CATCH;
-			break;
-		case SIGQUIT:
-#if DEBUG
-			if (debug)
-				break;
-#endif
-			/* man bash:
-			 * "In all cases, bash ignores SIGQUIT. Non-builtin
-			 * commands run by bash have signal handlers
-			 * set to the values inherited by the shell
-			 * from its parent". */
-			new_act = S_IGN;
-			break;
-		case SIGTERM:
-			if (iflag)
-				new_act = S_IGN;
-			break;
-#if JOBS
-		case SIGTSTP:
-		case SIGTTOU:
-			if (mflag)
-				new_act = S_IGN;
-			break;
-#endif
-		}
-	}
-	/* if !rootshell, we reset SIGQUIT to DFL,
-	 * whereas we have to restore it to what shell got on entry.
-	 * This is handled by the fact that if signal was IGNored on entry,
-	 * then cur_act is S_HARD_IGN and we never change its sigaction
-	 * (see code below).
-	 */
-
-	if (signo == SIGCHLD)
-		new_act = S_CATCH;
-
-	t = &sigmode[signo - 1];
-	cur_act = *t;
-	if (cur_act == 0) {
-		/* current setting is not yet known */
-		if (sigaction(signo, NULL, &act)) {
-			/* pretend it worked; maybe we should give a warning,
-			 * but other shells don't. We don't alter sigmode,
-			 * so we retry every time.
-			 * btw, in Linux it never fails. --vda */
-			return;
-		}
-		if (act.sa_handler == SIG_IGN) {
-			cur_act = S_HARD_IGN;
-			if (mflag
-			 && (signo == SIGTSTP || signo == SIGTTIN || signo == SIGTTOU)
-			) {
-				cur_act = S_IGN;   /* don't hard ignore these */
-			}
-		}
-		if (act.sa_handler == SIG_DFL && new_act == S_DFL) {
-			/* installing SIG_DFL over SIG_DFL is a no-op */
-			/* saves one sigaction call in each "sh -c SCRIPT" invocation */
-			*t = S_DFL;
-			return;
-		}
-	}
-	if (cur_act == S_HARD_IGN || cur_act == new_act)
-		return;
-
-	*t = new_act;
-
-	act.sa_handler = SIG_DFL;
-	switch (new_act) {
-	case S_CATCH:
-		act.sa_handler = signal_handler;
-		break;
-	case S_IGN:
-		act.sa_handler = SIG_IGN;
-		break;
-	}
-	/* flags and mask matter only if !DFL and !IGN, but we do it
-	 * for all cases for more deterministic behavior:
-	 */
-	act.sa_flags = 0; //TODO: why not SA_RESTART?
-	sigfillset(&act.sa_mask);
-
-	sigaction_set(signo, &act);
+    if (trap[signo] != NULL)
+        ash_msg_and_raise_error("asynchronous signals are unavailable");
 }
 
 /* mode flags for set_curjob */
@@ -4024,6 +3921,7 @@ getjob(const char *name, int getctl)
 	return jp;
  err:
 	ash_msg_and_raise_error(err_msg, name);
+	return NULL;
 }
 
 /*
@@ -4086,7 +3984,7 @@ setjobctl(int on)
 					goto out;
 		}
 		/* fd is a tty at this point */
-		fd = fcntl(fd, F_DUPFD_CLOEXEC, 10);
+		fd = efi_ash_dupfd_cloexec(fd, 10);
 		if (ofd >= 0) /* if it is "/dev/tty", close. If 0/1/2, don't */
 			close(ofd);
 		if (fd < 0)
@@ -4301,36 +4199,34 @@ sprint_status48(char *os, int status, int sigonly)
 static int
 waitproc(int block, int *status)
 {
-	sigset_t oldmask;
-	int flags = block == DOWAIT_BLOCK ? 0 : WNOHANG;
-	int err;
-
-#if JOBS
-	if (doing_jobctl)
-		flags |= WUNTRACED;
-#endif
-
-	do {
-		got_sigchld = 0;
-		do
-			err = waitpid(-1, status, flags);
-		while (err < 0 && errno == EINTR);
-
-		if (err || (err = -!block))
-			break;
-
-		sigfillset(&oldmask);
-		sigprocmask2(SIG_SETMASK, &oldmask); /* mask is updated */
-		while (!got_sigchld && !pending_sig)
-			sigsuspend(&oldmask);
-		sigprocmask(SIG_SETMASK, &oldmask, NULL);
-		//simpler, but unsafe: a signal can set pending_sig after check, but before pause():
-		//while (!got_sigchld && !pending_sig)
-		//	pause();
-
-	} while (got_sigchld);
-
-	return err;
+    for (;;) {
+        int active = 0;
+        for (unsigned index = 0; index < njobs; ++index) {
+            struct job *job = &jobtab[index];
+            if (!job->used)
+                continue;
+            for (unsigned process = 0; process < job->nprocs; ++process) {
+                struct procstat *entry = &job->ps[process];
+                if (entry->ps_status != -1)
+                    continue;
+                active = 1;
+                int32_t code;
+                int32_t result = efi_process_waitpid_nohang(entry->ps_pid, &code);
+                if (result < 0)
+                    __builtin_trap();
+                if (result > 0) {
+                    *status = ((uint32_t)code & 255) << 8;
+                    return result;
+                }
+            }
+        }
+        if (!active) {
+            errno = ECHILD;
+            return -1;
+        }
+        if (!block)
+            return 0;
+    }
 }
 
 static int
@@ -5330,23 +5226,14 @@ forkparent(struct job *jp, union node *n, int mode, pid_t pid)
 static int
 forkshell(struct job *jp, union node *n, int mode)
 {
-	int pid;
-
-	TRACE(("forkshell(%%%d, %p, %d) called\n", jobno(jp), n, mode));
-	pid = fork();
-	if (pid < 0) {
-		TRACE(("Fork failed, errno=%d", errno));
-		if (jp)
-			freejob(jp);
-		ash_msg_and_raise_perror("can't fork");
-	}
-	if (pid == 0) {
-		CLEAR_RANDOM_T(&random_gen); /* or else $RANDOM repeats in child */
-		forkchild(jp, n, mode);
-	} else {
-		forkparent(jp, n, mode, pid);
-	}
-	return pid;
+    int pid = efi_ash_spawn_node(n, mode);
+    if (pid < 0) {
+        if (jp)
+            freejob(jp);
+        ash_msg_and_raise_error("cannot start shell task: %d", pid);
+    }
+    forkparent(jp, n, mode, pid);
+    return pid;
 }
 
 /*
@@ -5475,39 +5362,15 @@ static void expandhere(union node *arg);
 static int
 openhere(union node *redir)
 {
-	char *p;
-	int pip[2];
-	size_t len = 0;
-
-	if (pipe(pip) < 0)
-		ash_msg_and_raise_perror("can't create pipe");
-
-	p = redir->nhere.doc->narg.text;
-	if (redir->type == NXHERE) {
-		expandhere(redir->nhere.doc);
-		p = stackblock();
-	}
-
-	len = strlen(p);
-	if (len <= PIPE_BUF) {
-		xwrite(pip[1], p, len);
-		goto out;
-	}
-
-	if (forkshell((struct job *)NULL, (union node *)NULL, FORK_NOJOB) == 0) {
-		/* child */
-		close(pip[0]);
-		ignoresig(SIGINT);  //signal(SIGINT, SIG_IGN);
-		ignoresig(SIGQUIT); //signal(SIGQUIT, SIG_IGN);
-		ignoresig(SIGHUP);  //signal(SIGHUP, SIG_IGN);
-		ignoresig(SIGTSTP); //signal(SIGTSTP, SIG_IGN);
-		signal(SIGPIPE, SIG_DFL);
-		xwrite(pip[1], p, len);
-		_exit_SUCCESS();
-	}
- out:
-	close(pip[1]);
-	return pip[0];
+    char *text = redir->nhere.doc->narg.text;
+    if (redir->type == NXHERE) {
+        expandhere(redir->nhere.doc);
+        text = stackblock();
+    }
+    int descriptor = efi_ash_input_snapshot(text, strlen(text));
+    if (descriptor < 0)
+        ash_msg_and_raise_perror("cannot create here-document input");
+    return descriptor;
 }
 
 static int
@@ -5590,6 +5453,7 @@ openredirect(union node *redir)
 	ash_msg_and_raise_error("can't create %s: %s", fname, errmsg(errno, "nonexistent directory"));
  eopen:
 	ash_msg_and_raise_error("can't open %s: %s", fname, errmsg(errno, "no such file"));
+	return -1;
 }
 
 /*
@@ -5601,7 +5465,7 @@ savefd(int from)
 	int newfd;
 	int err;
 
-	newfd = fcntl(from, F_DUPFD_CLOEXEC, 10);
+	newfd = efi_ash_dupfd_cloexec(from, 10);
 	err = newfd < 0 ? errno : 0;
 	if (err != EBADF) {
 		if (err)
@@ -5633,7 +5497,7 @@ dup_CLOEXEC(int fd, int avoid_fd)
 {
 	int newfd;
  repeat:
-	newfd = fcntl(fd, F_DUPFD_CLOEXEC, avoid_fd + 1);
+	newfd = efi_ash_dupfd_cloexec(fd, avoid_fd + 1);
 	if (newfd >= 0) {
 		if (F_DUPFD_CLOEXEC == F_DUPFD) /* if old libc (w/o F_DUPFD_CLOEXEC) */
 			close_on_exec_on(newfd);
@@ -5660,7 +5524,7 @@ xdup_CLOEXEC_and_close(int fd, int avoid_fd)
 {
 	int newfd;
  repeat:
-	newfd = fcntl(fd, F_DUPFD_CLOEXEC, avoid_fd + 1);
+	newfd = efi_ash_dupfd_cloexec(fd, avoid_fd + 1);
 	if (newfd < 0) {
 		if (errno == EBUSY)
 			goto repeat;
@@ -6577,7 +6441,7 @@ static int evaltree(union node *, int);
  * static int evaltreenr(union node *, int) __attribute__((alias("evaltree"),__noreturn__));
  * but clang was reported to "transfer" noreturn-ness to evaltree() as well.
  */
-static ALWAYS_INLINE NORETURN void
+static ALWAYS_INLINE NOINLINE void
 evaltreenr(union node *n, int flags)
 {
 	evaltree(n, flags);
@@ -6586,74 +6450,28 @@ evaltreenr(union node *n, int flags)
 }
 
 static void FAST_FUNC
-evalbackcmd(union node *n, struct backcmd *result
-				IF_BASH_PROCESS_SUBST(, int ctl))
+evalbackcmd(union node *node, struct backcmd *result)
 {
-	int pip[2];
-	struct job *jp;
-#if BASH_PROCESS_SUBST
-	/* determine end of pipe used by parent (ip) and child (ic) */
-	const int ip = (ctl == CTLTOPROC);
-	const int ic = !(ctl == CTLTOPROC);
-#else
-	const int ctl = CTLBACKQ;
-	const int ip = 0;
-	const int ic = 1;
-#endif
-
-	result->fd = -1;
-	result->buf = NULL;
-	result->nleft = 0;
-	result->jp = NULL;
-	if (n == NULL) {
-		goto out;
-	}
-
-	if (pipe(pip) < 0)
-		ash_msg_and_raise_perror("can't create pipe");
-	/* process substitution uses NULL job, like openhere() */
-	jp = (ctl == CTLBACKQ) ? makejob(/*n,*/ 1) : NULL;
-	if (forkshell(jp, n, FORK_NOJOB) == 0) {
-		/* child */
-		FORCE_INT_ON;
-		close(pip[ip]);
-		/* ic is index of child end of pipe *and* fd to connect it to */
-		if (pip[ic] != ic) {
-			/*close(ic);*/
-			dup2_or_raise(pip[ic], ic);
-			close(pip[ic]);
-		}
-/* TODO: eflag clearing makes the following not abort:
- *  ash -c 'set -e; z=$(false;echo foo); echo $z'
- * which is what bash does (unless it is in POSIX mode).
- * dash deleted "eflag = 0" line in the commit
- *  Date: Mon, 28 Jun 2010 17:11:58 +1000
- *  [EVAL] Don't clear eflag in evalbackcmd
- * For now, preserve bash-like behavior, it seems to be somewhat more useful:
- */
-		eflag = 0;
-		ifsfree();
-		evaltreenr(n, EV_EXIT);
-		/* NOTREACHED */
-	}
-	/* parent */
-#if BASH_PROCESS_SUBST
-	if (ctl != CTLBACKQ) {
-		int fd = fcntl(pip[ip], F_DUPFD, 64);
-		if (fd > 0) {
-			close(pip[ip]);
-			pip[ip] = fd;
-		}
-		pushfd(pip[ip]);
-	}
-#endif
-	close(pip[ic]);
-	result->fd = pip[ip];
-	result->jp = jp;
-
- out:
-	TRACE(("evalbackcmd done: fd=%d buf=0x%x nleft=%d jp=0x%x\n",
-		result->fd, result->buf, result->nleft, result->jp));
+    result->fd = -1;
+    result->buf = NULL;
+    result->nleft = 0;
+    result->jp = NULL;
+    if (!node)
+        return;
+    int descriptors[2];
+    if (pipe(descriptors) < 0)
+        ash_msg_and_raise_perror("cannot create command substitution pipe");
+    struct job *job = makejob(1);
+    int pid = efi_ash_spawn_task(node, 0, descriptors[1], EFI_TASK_CLEAR_ERREXIT);
+    close(descriptors[1]);
+    if (pid < 0) {
+        close(descriptors[0]);
+        freejob(job);
+        ash_msg_and_raise_error("cannot start command substitution: %d", pid);
+    }
+    forkparent(job, node, FORK_NOJOB, pid);
+    result->fd = descriptors[0];
+    result->jp = job;
 }
 
 /*
@@ -7020,7 +6838,7 @@ scanright(char *startp, char *rmesc, char *rmescend,
 	return NULL;
 }
 
-static void varunset(const char *, const char *, const char *, int) NORETURN;
+static void varunset(const char *, const char *, const char *, int) NOINLINE;
 static void
 varunset(const char *end, const char *var, const char *umsg, int varflags)
 {
@@ -8285,10 +8103,10 @@ tryexec(IF_FEATURE_SH_STANDALONE(int applet_no,) const char *cmd, char **argv, c
  repeat:
 #ifdef SYSV
 	do {
-		execve(cmd, argv, envp);
+		efi_ash_exec(cmd, argv, envp);
 	} while (errno == EINTR);
 #else
-	execve(cmd, argv, envp);
+	efi_ash_exec(cmd, argv, envp);
 #endif
 
 	if (cmd != bb_busybox_exec_path && errno == ENOEXEC) {
@@ -8324,7 +8142,7 @@ tryexec(IF_FEATURE_SH_STANDALONE(int applet_no,) const char *cmd, char **argv, c
  * have to change the find_command routine as well.
  * argv[-1] must exist and be writable! See tryexec() for why.
  */
-static void shellexec(char *prog, char **argv, const char *path, int idx) NORETURN;
+static void shellexec(char *prog, char **argv, const char *path, int idx) NOINLINE;
 static void shellexec(char *prog, char **argv, const char *path, int idx)
 {
 	char *cmdname;
@@ -9579,38 +9397,29 @@ evalcase(union node *n, int flags)
  * Kick off a subshell to evaluate a tree.
  */
 static int
-evalsubshell(union node *n, int flags)
+evalsubshell(union node *node, int flags)
 {
-	struct job *jp;
-	int backgnd = (n->type == NBACKGND); /* FORK_BG(1) if yes, else FORK_FG(0) */
-	int status;
-
-	errlinno = lineno = n->nredir.linno;
-
-	expredir(n->nredir.redirect);
-	if (!backgnd && (flags & EV_EXIT) && !may_have_traps)
-		goto nofork;
-	INT_OFF;
-	if (backgnd == FORK_FG)
-		get_tty_state();
-	jp = makejob(/*n,*/ 1);
-	if (forkshell(jp, n, backgnd) == 0) {
-		/* child */
-		INT_ON;
-		flags |= EV_EXIT;
-		if (backgnd)
-			flags &= ~EV_TESTED;
- nofork:
-		redirect(n->nredir.redirect, 0);
-		evaltreenr(n->nredir.n, flags);
-		/* never returns */
-	}
-	/* parent */
-	status = 0;
-	if (backgnd == FORK_FG)
-		status = waitforjob(jp);
-	INT_ON;
-	return status;
+    int background = node->type == NBACKGND;
+    errlinno = lineno = node->nredir.linno;
+    expredir(node->nredir.redirect);
+    if (!background && (flags & EV_EXIT) && !may_have_traps) {
+        redirect(node->nredir.redirect, 0);
+        evaltreenr(node->nredir.n, flags);
+    }
+    INT_OFF;
+    struct job *job = makejob(1);
+    unsigned task_flags = EFI_TASK_REDIR_EXPANDED;
+    if (!background && (flags & EV_TESTED))
+        task_flags |= EFI_TASK_TESTED;
+    int pid = efi_ash_spawn_task(node, 0, 1, task_flags);
+    if (pid < 0) {
+        freejob(job);
+        ash_msg_and_raise_error("cannot start subshell task: %d", pid);
+    }
+    forkparent(job, node, background, pid);
+    int status = background ? 0 : waitforjob(job);
+    INT_ON;
+    return status;
 }
 
 /*
@@ -9685,64 +9494,61 @@ expredir(union node *n)
 static int
 evalpipe(union node *n, int flags)
 {
-	struct job *jp;
-	struct nodelist *lp;
-	int pipelen;
-	int prevfd;
-	int pip[2];
-	int status = 0;
-
-	TRACE(("evalpipe(0x%lx) called\n", (long)n));
-	pipelen = 0;
-	for (lp = n->npipe.cmdlist; lp; lp = lp->next)
-		pipelen++;
-	flags |= EV_EXIT;
-	INT_OFF;
-	if (n->npipe.pipe_backgnd == 0)
-		get_tty_state();
-	jp = makejob(/*n,*/ pipelen);
-	prevfd = -1;
-	for (lp = n->npipe.cmdlist; lp; lp = lp->next) {
-		prehash(lp->n);
-		pip[1] = -1;
-		if (lp->next) {
-			if (pipe(pip) < 0) {
-				close(prevfd);
-				ash_msg_and_raise_perror("can't create pipe");
-			}
-		}
-		if (forkshell(jp, lp->n, n->npipe.pipe_backgnd) == 0) {
-			/* child */
-			INT_ON;
-			if (pip[1] >= 0) {
-				close(pip[0]);
-			}
-			if (prevfd > 0) {
-				dup2(prevfd, 0);
-				close(prevfd);
-			}
-			if (pip[1] > 1) {
-				dup2(pip[1], 1);
-				close(pip[1]);
-			}
-			evaltreenr(lp->n, flags);
-			/* never returns */
-		}
-		/* parent */
-		if (prevfd >= 0)
-			close(prevfd);
-		prevfd = pip[0];
-		/* Don't want to trigger debugging */
-		if (pip[1] != -1)
-			close(pip[1]);
-	}
-	if (n->npipe.pipe_backgnd == 0) {
-		status = waitforjob(jp);
-		TRACE(("evalpipe:  job done exit status %d\n", status));
-	}
-	INT_ON;
-
-	return status;
+    int count = 0;
+    for (struct nodelist *entry = n->npipe.cmdlist; entry; entry = entry->next)
+        ++count;
+    INT_OFF;
+    struct job *job = makejob(count);
+    volatile int input = 0;
+    volatile int output = -1;
+    volatile int next_input = -1;
+    struct jmploc *volatile saved_handler = exception_handler;
+    struct jmploc cleanup;
+    if (setjmp(cleanup.loc)) {
+        exception_handler = saved_handler;
+        if (input != 0)
+            close(input);
+        if (output >= 0)
+            close(output);
+        if (next_input >= 0)
+            close(next_input);
+        for (unsigned index = 0; index < job->nprocs; ++index) {
+            struct procstat *entry = &job->ps[index];
+            if (entry->ps_status == -1
+                && efi_process_cancel_child(entry->ps_pid) != 0)
+                __builtin_trap();
+        }
+        if (job->nprocs)
+            waitforjob(job);
+        else
+            freejob(job);
+        longjmp(exception_handler->loc, 1);
+    }
+    exception_handler = &cleanup;
+    for (struct nodelist *entry = n->npipe.cmdlist; entry; entry = entry->next) {
+        int descriptors[2] = {-1, -1};
+        if (entry->next && pipe(descriptors) < 0)
+            ash_msg_and_raise_perror("cannot create shell pipe");
+        next_input = descriptors[0];
+        output = descriptors[1];
+        int pid = efi_ash_spawn_task(entry->n, input, entry->next ? output : 1,
+            (flags & EV_TESTED) ? EFI_TASK_TESTED : 0);
+        if (input != 0)
+            close(input);
+        input = 0;
+        if (output >= 0)
+            close(output);
+        output = -1;
+        if (pid < 0)
+            ash_msg_and_raise_error("cannot start pipeline task: %d", pid);
+        forkparent(job, entry->n, n->npipe.pipe_backgnd, pid);
+        input = next_input;
+        next_input = -1;
+    }
+    exception_handler = saved_handler;
+    int status = n->npipe.pipe_backgnd ? 0 : waitforjob(job);
+    INT_ON;
+    return status;
 }
 
 /* setinteractive needs this forward reference */
@@ -10555,66 +10361,31 @@ evalcommand(union node *cmd, int flags)
 		goto bail;
 
 	default: {
-
-#if ENABLE_FEATURE_SH_STANDALONE \
- && ENABLE_FEATURE_SH_NOFORK \
- && NUM_APPLETS > 1
-/* (1) BUG: if variables are set, we need to fork, or save/restore them
- *     around run_nofork_applet() call.
- * (2) Should this check also be done in forkshell()?
- *     (perhaps it should, so that "VAR=VAL nofork" at least avoids exec...)
- */
-		/* find_command() encodes applet_no as (-2 - applet_no) */
-		int applet_no = (- cmdentry.u.index - 2);
-		if (applet_no >= 0 && APPLET_IS_NOFORK(applet_no)) {
-			char **sv_environ;
-
-			INT_OFF;
-			sv_environ = environ;
-			environ = listvars(VEXPORT, VUNSET, varlist.list, /*end:*/ NULL);
-			/*
-			 * Run <applet>_main().
-			 * Signals (^C) can't interrupt here.
-			 * Otherwise we can mangle stdio or malloc internal state.
-			 * This makes applets which can run for a long time
-			 * and/or wait for user input ineligible for NOFORK:
-			 * for example, "yes" or "rm" (rm -i waits for input).
-			 */
-			exitstatus = run_nofork_applet(applet_no, argv);
-			environ = sv_environ;
-			/*
-			 * Try enabling NOFORK for "yes" applet.
-			 * ^C _will_ stop it (write returns EINTR),
-			 * but this causes stdout FILE to be stuck
-			 * and needing clearerr(). What if other applets
-			 * also can get EINTRs? Do we need to switch
-			 * our signals to SA_RESTART?
-			 */
-			/*clearerr(stdout);*/
-			INT_ON;
-			break;
-		}
-#endif
-		/* Can we avoid forking? For example, very last command
-		 * in a script or a subshell does not need forking,
-		 * we can just exec it.
-		 */
-		if (!(flags & EV_EXIT) || may_have_traps) {
-			/* No, forking off a child is necessary */
-			INT_OFF;
-			get_tty_state();
-			jp = makejob(/*cmd,*/ 1);
-			if (forkshell(jp, cmd, FORK_FG) != 0) {
-				/* parent */
-				break;
-			}
-			/* child */
-			FORCE_INT_ON;
-			/* fall through to exec'ing external program */
-		}
-		shellexec(argv[0], argv, path, cmdentry.u.index);
-		/* NOTREACHED */
-	} /* default */
+        char **environment = listvars(VEXPORT, VUNSET, varlist.list, NULL);
+        char *original_name = argv[0];
+        char *resolved_name = NULL;
+        if (!strchr(original_name, '/')) {
+            const char *search_path = path;
+            int index = cmdentry.u.index;
+            while (padvance(&search_path, original_name) >= 0) {
+                if (index-- == 0 && pathopt == NULL) {
+                    resolved_name = strchr(stackblock(), '/')
+                        ? xstrdup(stackblock()) : xasprintf("./%s", (char *)stackblock());
+                    argv[0] = resolved_name;
+                    break;
+                }
+            }
+        }
+        int command_status = efi_ash_run(argv, environment);
+        argv[0] = original_name;
+        free(resolved_name);
+        if (command_status < 0) {
+            command_status = errno == ENOENT ? 127 : 126;
+            ash_msg("%s: %s", argv[0], strerror(errno));
+        }
+        exitstatus = command_status;
+        break;
+    }
 	case CMDBUILTIN:
 		if (evalbltin(cmdentry.u.cmd, argc, argv, flags)
 		 && !(exception_type == EXERROR && spclbltin <= 0)
@@ -11823,7 +11594,7 @@ tokname(char *buf, int tok)
  * is the token that is expected, or -1 if more than one type of token can
  * occur at this point.
  */
-static void raise_error_unexpected_syntax(int) NORETURN;
+static void raise_error_unexpected_syntax(int) NOINLINE;
 static void
 raise_error_unexpected_syntax(int token)
 {
@@ -13688,6 +13459,7 @@ find_dot_file(char *basename)
 	return basename;
 #else
 	ash_msg_and_raise_error("%s: not found", basename);
+	return NULL;
 	/* NOTREACHED */
 #endif
 }
@@ -13764,6 +13536,7 @@ exitcmd(int argc UNUSED_PARAM, char **argv)
 //prints "trap:f" in bash. We can call exitshell() here to achieve this.
 //For now, keeping dash code:
 	raise_exception(EXEXIT);
+	return 0;
 	/* NOTREACHED */
 }
 
@@ -13923,7 +13696,7 @@ find_command(char *name, struct cmdentry *entry, int act, const char *path)
 			goto loop;
 		}
 		e = EACCES;     /* if we fail, this will be the error */
-		if (!S_ISREG(statb.st_mode))
+		if (!S_ISREG(statb.st_mode) || !(statb.st_mode & S_IXUSR))
 			continue;
 		if (lpathopt) {          /* this is a %func directory */
 			stalloc(len);
@@ -14224,28 +13997,8 @@ static const unsigned char timescmd_str[] ALIGN1 = {
 static int FAST_FUNC
 timescmd(int argc UNUSED_PARAM, char **argv UNUSED_PARAM)
 {
-	unsigned clk_tck;
-	const unsigned char *p;
-	struct tms buf;
-
-	clk_tck = bb_clk_tck();
-
-	times(&buf);
-	p = timescmd_str;
-	do {
-		unsigned sec, frac;
-		unsigned long t;
-		t = *(clock_t *)(((char *) &buf) + p[1]);
-		sec = t / clk_tck;
-		frac = t % clk_tck;
-		out1fmt("%um%u.%03us%c",
-			sec / 60, sec % 60,
-			(frac * 1000) / clk_tck,
-			p[0]);
-		p += 2;
-	} while (*p);
-
-	return 0;
+    ash_msg_and_raise_error("process CPU clocks are unavailable");
+    return 2;
 }
 
 #if ENABLE_FEATURE_SH_MATH
@@ -14314,11 +14067,9 @@ readcmd(int argc UNUSED_PARAM, char **argv UNUSED_PARAM)
 		case 'u':
 			params.opt_u = optionarg;
 			break;
-#if BASH_READ_D
 		case 'd':
 			params.opt_d = optionarg;
 			break;
-#endif
 		default:
 			break;
 		}
@@ -14648,8 +14399,7 @@ procargs(char **argv)
 	 * NB: must do it before setting up signals (in optschanged())
 	 * and reading .profile etc (after we return from here):
 	 */
-	if (iflag)
-		signal(SIGHUP, SIG_DFL);
+	/* No asynchronous signal state exists in the guest. */
 
 	optschanged();
 
@@ -14673,6 +14423,9 @@ read_profile(const char *name)
 static short profile_buf[16384];
 extern int etext();
 #endif
+
+#include "tasks.inc"
+#include "session.inc"
 
 /*
  * Main routine.  We initialize things, parse the arguments, execute
@@ -14747,6 +14500,18 @@ int ash_main(int argc UNUSED_PARAM, char **argv)
 		/* Non-NULL minusc tells procargs that an embedded script is being run */
 		minusc = get_script_content(-argc - 1);
 #endif
+    efi_session = argv[1] && strcmp(argv[1], "--efi-session") == 0;
+    if (efi_session) {
+        if (argv[2])
+            ash_msg_and_raise_error("code session does not accept arguments");
+        argv[1] = NULL;
+    }
+    if (argv[1] && strcmp(argv[1], "--efi-task") == 0) {
+        arg0 = argv[0];
+        if (!argv[2] || !argv[3] || argv[4])
+            ash_msg_and_raise_error("shell task requires size and descriptor arguments");
+        efi_ash_task_entry(argv[2], argv[3]);
+    }
 	login_sh = procargs(argv);
 #if DEBUG
 	TRACE(("Shell args: "));
@@ -14778,6 +14543,7 @@ int ash_main(int argc UNUSED_PARAM, char **argv)
 	popstackmark(&smark);
  state3:
 	state = 4;
+	if (efi_session) efi_ash_session_loop();
 	if (minusc) {
 		/* evalstring pushes parsefile stack.
 		 * Ensure we don't falsely claim that 0 (stdin)
@@ -14834,6 +14600,7 @@ int ash_main(int argc UNUSED_PARAM, char **argv)
 #endif
 	TRACE(("End of main reached\n"));
 	exitshell();
+	return 0;
 	/* NOTREACHED */
 }
 

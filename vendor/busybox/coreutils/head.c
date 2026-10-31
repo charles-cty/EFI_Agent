@@ -100,16 +100,32 @@ print_except_N_last_bytes(FILE *fp, unsigned count)
 	free(circle);
 }
 
+static char *head_line(FILE *fp, size_t *length)
+{
+    char *line = NULL;
+    size_t capacity = 0;
+    ssize_t size = getline(&line, &capacity, fp);
+    if (size < 0) {
+        free(line);
+        return NULL;
+    }
+    *length = size;
+    return line;
+}
+
 static void
 print_except_N_last_lines(FILE *fp, unsigned count)
 {
 	char **circle = xzalloc((++count) * sizeof(circle[0]));
-	unsigned head = 0;
+    size_t *lengths = xzalloc(count * sizeof(*lengths));
+    size_t length;
+    unsigned head = 0;
 	for (;;) {
 		char *c;
-		c = xmalloc_fgets(fp);
+		c = head_line(fp, &length);
 		if (!c)
 			goto ret;
+		lengths[head] = length;
 		circle[head++] = c;
 		if (head == count)
 			break;
@@ -118,10 +134,11 @@ print_except_N_last_lines(FILE *fp, unsigned count)
 		char *c;
 		if (head == count)
 			head = 0;
-		fputs_stdout(circle[head]);
-		c = xmalloc_fgets(fp);
+		fwrite(circle[head], 1, lengths[head], stdout);
+		c = head_line(fp, &length);
 		if (!c)
 			goto ret;
+		lengths[head] = length;
 		free(circle[head]);
 		circle[head++] = c;
 	}
@@ -133,6 +150,7 @@ print_except_N_last_lines(FILE *fp, unsigned count)
 			break;
 	}
 	free(circle);
+	free(lengths);
 }
 #else
 /* Must never be called */
@@ -236,7 +254,7 @@ int head_main(int argc, char **argv)
 	}
 	if (negative_N) {
 		if (count >= INT_MAX / sizeof(char*))
-			bb_error_msg("count is too big: %lu", count);
+			bb_error_msg_and_die("count is too big: %lu", count);
 	}
 
 	do {
@@ -257,7 +275,11 @@ int head_main(int argc, char **argv)
 			} else {
 				print_first_N(fp, count, count_bytes);
 			}
-			die_if_ferror_stdout();
+            die_if_ferror_stdout();
+            if (ferror(fp)) {
+                bb_simple_perror_msg(*argv);
+                retval = EXIT_FAILURE;
+            }
 			if (fclose_if_not_stdin(fp)) {
 				bb_simple_perror_msg(*argv);
 				retval = EXIT_FAILURE;

@@ -49,6 +49,7 @@ int mv_main(int argc, char **argv)
 	int dest_exists;
 	int status = 0;
 	int copy_flag = 0;
+	int moved = 0;
 
 #define OPT_FORCE       (1 << 0)
 #define OPT_INTERACTIVE (1 << 1)
@@ -111,6 +112,7 @@ int mv_main(int argc, char **argv)
 	/* else: last is DIR from "-t DIR" */
 
 	do {
+		moved = 0;
 		dest = concat_path_file(last, bb_get_last_path_component_strip(*argv));
 		dest_exists = cp_mv_stat(dest, &statbuf);
 		if (dest_exists < 0) {
@@ -172,14 +174,17 @@ int mv_main(int argc, char **argv)
 				if ((copy_file(*argv, dest, copy_flag) >= 0)
 				 && (remove_file(*argv, FILEUTILS_RECUR | FILEUTILS_FORCE) >= 0)
 				) {
+					moved = 1;
 					goto RET_0;
 				}
 			}
  RET_1:
 			status = 1;
+		} else {
+			moved = 1;
 		}
  RET_0:
-		if (flags & OPT_VERBOSE) {
+		if (moved && (flags & OPT_VERBOSE)) {
 			printf("'%s' -> '%s'\n", *argv, dest);
 		}
 		if (dest != last) {
@@ -187,5 +192,5 @@ int mv_main(int argc, char **argv)
 		}
 	} while (*++argv && *argv != last);
 
-	return status;
+	fflush_stdout_and_exit(status);
 }

@@ -49,6 +49,7 @@ int uniq_main(int argc UNUSED_PARAM, char **argv)
 	char eol;
 	char *cur_line;
 	const char *cur_compare;
+    size_t cur_length = 0, compare_length = 0;
 
 	enum {
 		OPT_c = 1 << 0,
@@ -96,28 +97,32 @@ int uniq_main(int argc UNUSED_PARAM, char **argv)
 		unsigned long dups;
 		char *old_line;
 		const char *old_compare;
+        size_t old_length = cur_length, old_compare_length = compare_length;
 
 		old_line = cur_line;
 		old_compare = cur_compare;
 		dups = 0;
 
 		/* gnu uniq ignores newlines */
-		while ((cur_line = xmalloc_fgetline(stdin)) != NULL) {
+		while ((cur_line = bb_read_record(stdin, eol, &cur_length)) != NULL) {
 			cur_compare = cur_line;
-			for (i = skip_fields; i; i--) {
-				cur_compare = skip_whitespace(cur_compare);
-				cur_compare = skip_non_whitespace(cur_compare);
+			for (i = skip_fields; i && cur_compare < cur_line + cur_length; i--) {
+                while (cur_compare < cur_line + cur_length && isspace((unsigned char)*cur_compare))
+                    ++cur_compare;
+                while (cur_compare < cur_line + cur_length && !isspace((unsigned char)*cur_compare))
+                    ++cur_compare;
 			}
-			for (i = skip_chars; *cur_compare && i; i--) {
+			for (i = skip_chars; cur_compare < cur_line + cur_length && i; i--) {
 				++cur_compare;
 			}
 
+            compare_length = cur_length - (cur_compare - cur_line);
+            if (compare_length > max_chars)
+                compare_length = max_chars;
 			if (!old_line)
 				break;
-			if ((opt & OPT_i)
-				? strncasecmp(old_compare, cur_compare, max_chars)
-				: strncmp(old_compare, cur_compare, max_chars)
-			) {
+            if (old_compare_length != compare_length
+                || bb_compare_record(old_compare, cur_compare, compare_length, opt & OPT_i)) {
 				break;
 			}
 
@@ -131,7 +136,8 @@ int uniq_main(int argc UNUSED_PARAM, char **argv)
 					/* %7lu matches GNU coreutils 6.9 */
 					printf("%7lu ", dups + 1);
 				}
-				printf("%s%c", old_line, eol);
+				fwrite(old_line, 1, old_length, stdout);
+                putchar(eol);
 			}
 			free(old_line);
 		}

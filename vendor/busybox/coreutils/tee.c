@@ -79,7 +79,8 @@ int tee_main(int argc, char **argv)
 	mode += (retval & 2);	/* Since 'a' is the 2nd option... */
 
 	if (retval & 1) {
-		signal(SIGINT, SIG_IGN);
+        if (signal(SIGINT, SIG_IGN) == SIG_ERR)
+            bb_simple_perror_msg_and_die("SIGINT");
 	}
 	retval = EXIT_SUCCESS;
 	/* if (opt_p || opt_output_error)
@@ -142,6 +143,7 @@ int tee_main(int argc, char **argv)
 	np = names;
 	fp = files;
 	names[0] = (char *) bb_msg_standard_input;
+	die_if_ferror_stdout();
 	files[0] = stdin;
 	do {	/* Now check for input and output errors. */
 		/* Checking ferror should be sufficient, but we may want to fclose.

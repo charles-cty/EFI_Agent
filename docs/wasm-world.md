@@ -267,11 +267,12 @@ and closed stdout fail explicitly. Setting the system clock fails with ENOTSUP.
 This C timezone support is linked into BusyBox; the unchanged CPython binary
 retains its distribution's time-module behavior.
 
-BusyBox builds require the musl 1.2.5 source tree through -MuslSource
-(default artifacts/guest-sources/musl-1.2.5), in addition to BusyBox 1.37.0,
-WASI SDK and Binaryen. scripts/prepare_timezone.py uses uv to stage IANA 2026e
-from tzdata 2026.5. The installation catalog includes the timezone data and
-both musl and tzdata licenses as shared ash assets.
+BusyBox 1.37.0 sources are checked into vendor/busybox. The single musl 1.2.5
+timezone rules file and its license are checked into vendor/musl-timezone.
+The build compiles both sources directly. scripts/prepare_timezone.py uses
+uv to stage IANA 2026e data from tzdata 2026.5. The installation catalog
+includes the timezone data and both musl and tzdata licenses as shared ash
+assets. WASI SDK 34 and Binaryen 133 are external toolchain dependencies.
 
 Sort, uniq, cut and tr use upstream BusyBox parsers and algorithms. Sort and
 uniq retain record lengths across embedded NUL bytes; -z reads and writes NUL
@@ -679,7 +680,7 @@ output remain until reap.
 
 ## Nonlocal jumps for the BusyBox port
 
-BusyBox 1.37.0 source is staged from
+BusyBox 1.37.0 source is maintained under vendor/busybox, imported from
 https://busybox.net/downloads/busybox-1.37.0.tar.bz2. Its ash implementation
 uses setjmp/longjmp for nested error recovery, even with NOFORK enabled.
 WASI SDK's native implementation needs Wasm exception handling, which the
@@ -720,8 +721,12 @@ uv.exe run scripts/smoke_ash.py --runner target/debug/examples/run_guest.exe --d
 uv.exe run scripts/smoke_ash_exec.py --runner target/debug/examples/run_guest.exe --directory artifacts/wasm-fixtures
 ```
 
-`prepare_busybox.py` generates the shared applet/ash feature configuration and
-stages upstream translation units. The build includes all 48 required applets,
+`guests/busybox/include/ash_config.h` contains the fixed applet/ash feature
+configuration. `guests/busybox/sources.txt` lists the directly compiled sources.
+`scripts/build_busybox.py` is the shared native build driver for Windows and
+Linux; `build_busybox.ps1` is its Windows entry point. Set WASI_SDK_PATH and
+BINARYEN_PATH, or pass the toolchain directories explicitly. The build
+includes all 48 required applets,
 aliases, getopts, command, internal glob, echo, 64-bit arithmetic and NOFORK.
 The port header declares the WASI and BusyBox utility boundaries. Real ash
 echo, quoted expansion,
@@ -973,9 +978,13 @@ other supported WASI command modules and aliases through the same path. The
 links and timestamps instead of writing a host-export directory. A module
 name alone does not advertise Node.js or Git.
 
-`scripts/build.ps1` uses the prepared directory selected by `-Guests` (default
-`artifacts/wasm-guests`). It creates a catalog when absent and passes these
-assets to `efi-agent package`. VM and native packages include each module once,
+`scripts/build.ps1` uses the guest directory selected by `-Guests` (default
+`artifacts/wasm-guests`). It rebuilds BusyBox from the vendored sources,
+refreshes the catalog and passes these assets to `efi-agent package`.
+`scripts/build.sh` uses the same build driver and accepts `--guests`.
+Prepare the other application ports in that directory before packaging.
+Both entry points accept WASI SDK and Binaryen directories as arguments or
+through WASI_SDK_PATH and BINARYEN_PATH. VM and native packages include each module once,
 the Python library, BusyBox/curl/QuickJS/CPython/wolfSSH notices and the linked
 wolfSSL license. Build caches and undeclared files are excluded before size
 accounting. Existing package workspaces are preserved; different same-path

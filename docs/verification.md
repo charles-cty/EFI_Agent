@@ -1,5 +1,54 @@
 # Verification record
 
+## 2026-10-31: Vendored BusyBox source and native build entry points
+
+Imported all 2,880 BusyBox 1.37.0 distribution files in a separate pristine
+commit. An independent comparison against the distribution archive verifies
+every file byte and all 937 executable modes. Imported only musl 1.2.5's
+timezone rules source and COPYRIGHT. The WASI SDK supplies the other C library
+functions. BusyBox needs this rules engine for named zones and daylight-saving
+transitions beyond the SDK's UTC implementation.
+
+Moved the 54 formerly generated C files into the maintained source tree and
+checked in the fixed feature headers and 140-source build list. Source
+comparison verifies the former generated contents after line-ending and
+trailing-whitespace normalization. Removed all six BusyBox source-rewrite
+scripts. The timezone preparation script now stages data and licenses only.
+The Windows and Linux packaging entry points use one native Python build
+driver, rebuild BusyBox and refresh the installation catalog before packaging.
+WASI SDK and Binaryen directories come from arguments or WASI_SDK_PATH and
+BINARYEN_PATH. Other application ports still need their prepared assets.
+
+The old build, direct vendored build and clean-source build produce identical
+ash.wasm bytes. BusyBox, musl and tzdata notices and all 604 zoneinfo resource
+files also match. The clean-source test extracts only the proposed Git tree
+into a Windows-local directory with a space in its name. It starts with no
+artifacts directory and builds with external Windows WASI SDK 34 and Binaryen
+133. No upstream source cache is present in that tree. The standard
+scripts/build.ps1 -VmOnly entry point rebuilds BusyBox and the Release VM
+package with API and Shell settings absent.
+
+Eight native integration suites pass with the rebuilt module: BusyBox basic
+commands, date, text and xargs; ash arithmetic/test, descriptors and
+here-documents; and retained shell/JavaScript sessions. These suites check
+independent saved bytes, state inheritance, cancellation, resets and clock
+boundaries. The ash translation-unit check, PowerShell parsing, Python AST
+parsing, native Git Bash syntax/help and git diff --check pass. Linux toolchain
+execution and another firmware boot were not run for this source migration.
+Evidence is under artifacts/busybox-vendor: source-audit.txt,
+asset-comparison.txt, clean-build-final.log, package-build.log and test-*.log.
+
+Resolved verification issues: Windows rejected one long Git argument list;
+batched index updates preserve the upstream executable modes. The migration
+needed explicit paths for the two pairs of same-named time.c and uuencode.c
+files. Corrected a PowerShell wildcard passed literally to ripgrep and an edit
+tool request that targeted one file twice. Removed whitespace inherited from
+the former generated feature header and source suffix. Large command output
+was reduced to summaries. The old ash compile-check comment said basic port
+features were unfinished; it now describes the current compile-only check.
+Existing upstream Clang warnings about string-literal pointer offsets remain;
+both the baseline and migrated builds complete with the same warnings.
+
 ## 2026-10-25: Clean Windows VM-only rebuild
 
 The build scripts accept `-VmOnly` on Windows and `--vm-only` on Linux.

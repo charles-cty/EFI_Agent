@@ -70,5 +70,5 @@ int which_main(int argc UNUSED_PARAM, char **argv)
 		status |= missing;
 	} while (*++argv);
 
-	return status;
+	fflush_stdout_and_exit(status);
 }

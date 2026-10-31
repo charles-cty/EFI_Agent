@@ -127,7 +127,7 @@
 #include "libbb.h"
 #include "common_bufsiz.h"
 #if ENABLE_FEATURE_DATE_NANO
-# include <sys/syscall.h>
+# include <locale.h>
 #endif
 
 enum {
@@ -254,7 +254,8 @@ int date_main(int argc UNUSED_PARAM, char **argv)
 #endif
 	} else {
 #if ENABLE_FEATURE_DATE_NANO
-		clock_gettime(CLOCK_REALTIME, &ts);
+        if (clock_gettime(CLOCK_REALTIME, &ts) < 0)
+            bb_simple_perror_msg_and_die("clock_gettime");
 #else
 		time(&ts.tv_sec);
 #endif
@@ -262,7 +263,8 @@ int date_main(int argc UNUSED_PARAM, char **argv)
 #if !ENABLE_FEATURE_DATE_NANO
 	ts.tv_nsec = 0;
 #endif
-	localtime_r(&ts.tv_sec, &tm_time);
+    if (!localtime_r(&ts.tv_sec, &tm_time))
+        bb_simple_perror_msg_and_die("localtime");
 
 	/* If date string is given, update tm_time, and maybe set date */
 	if (date_str != NULL) {
@@ -274,7 +276,8 @@ int date_main(int argc UNUSED_PARAM, char **argv)
 
 		/* Process any date input to UNIX time since 1 Jan 1970 */
 		if (ENABLE_FEATURE_DATE_ISOFMT && (opt & OPT_STR2DT)) {
-			if (strptime(date_str, fmt_str2dt, &tm_time) == NULL)
+            char *end = strptime(date_str, fmt_str2dt, &tm_time);
+            if (end == NULL || *end != '\0')
 				bb_error_msg_and_die(bb_msg_invalid_date, date_str);
 		} else {
 			check_dst = parse_datestr(date_str, &tm_time);
@@ -288,9 +291,10 @@ int date_main(int argc UNUSED_PARAM, char **argv)
 		ts.tv_nsec = 0;
 
 		/* if setting time, set it */
-		if ((opt & OPT_SET) && clock_settime(CLOCK_REALTIME, &ts) < 0) {
-			bb_simple_perror_msg("can't set date");
-		}
+        if (opt & OPT_SET) {
+            errno = ENOTSUP;
+            bb_simple_perror_msg_and_die("can't set date");
+        }
 	}
 
 	/* Display output */
@@ -379,9 +383,10 @@ int date_main(int argc UNUSED_PARAM, char **argv)
 		date_buf[0] = '\0';
 	} else {
 		/* Generate output string */
-		strftime(date_buf, COMMON_BUFSIZE, fmt_dt2str, &tm_time);
+        if (!strftime(date_buf, COMMON_BUFSIZE, fmt_dt2str, &tm_time))
+            bb_simple_error_msg_and_die("formatted date exceeds output buffer");
 	}
 	puts(date_buf);
 
-	return EXIT_SUCCESS;
+	fflush_stdout_and_exit_SUCCESS();
 }

@@ -199,6 +199,7 @@ int cat_main(int argc UNUSED_PARAM, char **argv)
 
 		ns.width = 6;
 		ns.start = 1;
+        ns.continued = 0;
 		ns.inc = 1;
 		ns.sep = "\t";
 		ns.empty_str = NULL;

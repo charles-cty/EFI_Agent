@@ -4,6 +4,7 @@
  */
 #include "libbb.h"
 #include "bb_archive.h"
+void efi_tar_attributes(const char *, const file_header_t *, unsigned);
 
 void FAST_FUNC data_extract_all(archive_handle_t *archive_handle)
 {
@@ -70,7 +71,8 @@ void FAST_FUNC data_extract_all(archive_handle_t *archive_handle)
 		char *slash = strrchr(dst_name, '/');
 		if (slash) {
 			*slash = '\0';
-			bb_make_directory(dst_name, -1, FILEUTILS_RECUR);
+            if (bb_make_directory(dst_name, -1, FILEUTILS_RECUR) != 0)
+                bb_simple_error_msg_and_die("archive parent directory");
 			*slash = '/';
 		}
 	}
@@ -149,7 +151,7 @@ void FAST_FUNC data_extract_all(archive_handle_t *archive_handle)
 			file_header->mode
 			);
 		bb_copyfd_exact_size(archive_handle->src_fd, dst_fd, file_header->size);
-		close(dst_fd);
+		xclose(dst_fd);
 #ifdef ARCHIVE_REPLACE_VIA_RENAME
 		if (archive_handle->ah_flags & ARCHIVE_REPLACE_VIA_RENAME) {
 			xrename(dst_nameN, dst_name);
@@ -163,12 +165,12 @@ void FAST_FUNC data_extract_all(archive_handle_t *archive_handle)
 // we create this directory, and then fail to create files inside it
 // (if tar xf isn't run as root).
 // GNU tar works around this by chmod-ing directories *after* all files are extracted.
-		res = mkdir(dst_name, file_header->mode);
+		res = mkdir(dst_name, file_header->mode | 0700);
 		if ((res != 0)
 		 && (errno != EISDIR) /* btw, Linux doesn't return this */
 		 && (errno != EEXIST)
 		) {
-			bb_perror_msg("can't make dir %s", dst_name);
+			bb_perror_msg_and_die("can't make dir %s", dst_name);
 		}
 		break;
 	case S_IFLNK:
@@ -207,47 +209,14 @@ void FAST_FUNC data_extract_all(archive_handle_t *archive_handle)
 	case S_IFIFO:
 		res = mknod(dst_name, file_header->mode, file_header->device);
 		if (res != 0) {
-			bb_perror_msg("can't create node %s", dst_name);
+			bb_perror_msg_and_die("can't create node %s", dst_name);
 		}
 		break;
 	default:
 		bb_simple_error_msg_and_die("unrecognized file type");
 	}
 
-	if (!S_ISLNK(file_header->mode)) {
-		if (!(archive_handle->ah_flags & ARCHIVE_DONT_RESTORE_OWNER)) {
-			uid_t uid = file_header->uid;
-			gid_t gid = file_header->gid;
-#if ENABLE_FEATURE_TAR_UNAME_GNAME
-			if (!(archive_handle->ah_flags & ARCHIVE_NUMERIC_OWNER)) {
-				if (file_header->tar__uname) {
-//TODO: cache last name/id pair?
-					struct passwd *pwd = getpwnam(file_header->tar__uname);
-					if (pwd) uid = pwd->pw_uid;
-				}
-				if (file_header->tar__gname) {
-					struct group *grp = getgrnam(file_header->tar__gname);
-					if (grp) gid = grp->gr_gid;
-				}
-			}
-#endif
-			/* GNU tar 1.15.1 uses chown, not lchown */
-			chown(dst_name, uid, gid);
-		}
-		/* uclibc has no lchmod, glibc is even stranger -
-		 * it has lchmod which seems to do nothing!
-		 * so we use chmod... */
-		if (!(archive_handle->ah_flags & ARCHIVE_DONT_RESTORE_PERM)) {
-			chmod(dst_name, file_header->mode);
-		}
-		if (archive_handle->ah_flags & ARCHIVE_RESTORE_DATE) {
-			struct timeval t[2];
-
-			t[1].tv_sec = t[0].tv_sec = file_header->mtime;
-			t[1].tv_usec = t[0].tv_usec = 0;
-			utimes(dst_name, t);
-		}
-	}
+    efi_tar_attributes(dst_name, file_header, archive_handle->ah_flags);
 
  ret: ;
 #if ENABLE_FEATURE_TAR_SELINUX

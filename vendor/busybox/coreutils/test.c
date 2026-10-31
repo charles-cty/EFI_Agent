@@ -455,13 +455,13 @@ extern struct test_statics *BB_GLOBAL_CONST test_ptr_to_statics;
 
 static number_t primary(enum token n);
 
-static void syntax(const char *op, const char *msg) NORETURN;
+static void syntax(const char *op, const char *msg) NOINLINE;
 static void syntax(const char *op, const char *msg)
 {
 	if (op && *op) {
 		bb_error_msg("%s: %s", op, msg);
 	} else {
-		bb_error_msg("%s: %s"+4, msg);
+		bb_error_msg("%s", msg);
 	}
 	longjmp(leaving, 2);
 }

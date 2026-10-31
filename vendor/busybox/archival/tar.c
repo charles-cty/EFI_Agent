@@ -119,6 +119,9 @@
 #include "libbb.h"
 #include "common_bufsiz.h"
 #include "bb_archive.h"
+#include "tar_support.h"
+#undef SEAMLESS_COMPRESSION
+#define SEAMLESS_COMPRESSION 1
 /* FIXME: Stop using this non-standard feature */
 #ifndef FNM_LEADING_DIR
 # define FNM_LEADING_DIR 0
@@ -556,7 +559,7 @@ static int FAST_FUNC writeFileToTarball(struct recursive_state *state,
 		/* Check that file did not grow in between? */
 		/* if (safe_read(inputFileFd, 1) == 1) warn but continue? */
 
-		close(inputFileFd);
+		xclose(inputFileFd);
 
 		/* Pad the file up to the tar block size */
 		/* (a few tricks here in the name of code size) */
@@ -570,79 +573,13 @@ static int FAST_FUNC writeFileToTarball(struct recursive_state *state,
 
 # if SEAMLESS_COMPRESSION
 /* Don't inline: vfork scares gcc and pessimizes code */
-static void NOINLINE vfork_compressor(int tar_fd, const char *gzip)
+static void NOINLINE vfork_compressor(int fd, const char *program)
 {
-	// On Linux, vfork never unpauses parent early, although standard
-	// allows for that. Do we want to waste bytes checking for it?
-#  define WAIT_FOR_CHILD 0
-	volatile int vfork_exec_errno = 0;
-	struct fd_pair data;
-#  if WAIT_FOR_CHILD
-	struct fd_pair status;
-	xpiped_pair(status);
-#  endif
-	xpiped_pair(data);
-
-	signal(SIGPIPE, SIG_IGN); /* we only want EPIPE on errors */
-
-	if (xvfork() == 0) {
-		/* child */
-		int tfd;
-		/* NB: close _first_, then move fds! */
-		close(data.wr);
-#  if WAIT_FOR_CHILD
-		close(status.rd);
-		/* status.wr will close only on exec -
-		 * parent waits for this close to happen */
-		fcntl(status.wr, F_SETFD, FD_CLOEXEC);
-#  endif
-		/* copy it: parent's tar_fd variable must not change */
-		tfd = tar_fd;
-		if (tfd == 0) {
-			/* Output tar fd may be zero.
-			 * xmove_fd(data.rd, 0) would destroy it.
-			 * Reproducer:
-			 *  exec 0>&-
-			 *  exec 1>&-
-			 *  tar czf Z.tar.gz FILE
-			 * Swapping move_fd's order wouldn't work:
-			 * data.rd is 1 and _it_ would be destroyed.
-			 */
-			tfd = dup(tfd);
-		}
-		xmove_fd(data.rd, 0);
-		xmove_fd(tfd, 1);
-
-		/* exec gzip/bzip2/... program */
-		//BB_EXECLP(gzip, gzip, "-f", (char *)0); - WRONG for "xz",
-		// if xz is an enabled applet, it'll be a version which
-		// can only decompress. We do need to execute external
-		// program, not applet.
-		execlp(gzip, gzip, "-f", (char *)0);
-
-		vfork_exec_errno = errno;
-		_exit_FAILURE();
-	}
-
-	/* parent */
-	xmove_fd(data.wr, tar_fd);
-	close(data.rd);
-#  if WAIT_FOR_CHILD
-	close(status.wr);
-	while (1) {
-		/* Wait until child execs (or fails to) */
-		char buf;
-		int n = full_read(status.rd, &buf, 1);
-		if (n < 0 /* && errno == EAGAIN */)
-			continue;	/* try it again */
-	}
-	close(status.rd);
-#  endif
-	if (vfork_exec_errno) {
-		errno = vfork_exec_errno;
-		bb_perror_msg_and_die("can't execute '%s'", gzip);
-	}
+    if (strcmp(program, "gzip") != 0)
+        bb_simple_error_msg_and_die("unsupported tar compression");
+    efi_tar_transform(fd, true);
 }
+
 # endif /* SEAMLESS_COMPRESSION */
 
 
@@ -690,7 +627,7 @@ static NOINLINE int writeTarFile(
 	 * so is considered a waste of space */
 
 	/* Close so the child process (if any) will exit */
-	close(tbInfo->tarFd);
+	xclose(tbInfo->tarFd);
 
 	/* Hang up the tools, close up shop, head home */
 	if (ENABLE_FEATURE_CLEAN_UP)
@@ -702,7 +639,7 @@ static NOINLINE int writeTarFile(
 # if SEAMLESS_COMPRESSION
 	if (gzip) {
 		int status;
-		if (safe_waitpid(-1, &status, 0) == -1)
+		if (efi_tar_wait(&status) == -1)
 			bb_simple_perror_msg("waitpid");
 		else if (!WIFEXITED(status) || WEXITSTATUS(status))
 			/* gzip was killed or has exited with nonzero! */
@@ -731,7 +668,10 @@ static llist_t *append_file_list_to_list(llist_t *list)
 				*cp = '\0';
 			llist_add_to_end(&newlist, line);
 		}
-		fclose(src_stream);
+        if (ferror(src_stream))
+            bb_simple_perror_msg_and_die("file list");
+        if (fclose(src_stream) != 0)
+            bb_simple_perror_msg_and_die("file list");
 	}
 	return newlist;
 }
@@ -945,7 +885,7 @@ int tar_main(int argc UNUSED_PARAM, char **argv)
 	tar_handle = init_handle();
 	tar_handle->ah_flags = ARCHIVE_CREATE_LEADING_DIRS
 	                     | ARCHIVE_RESTORE_DATE
-	                     | ARCHIVE_UNLINK_OLD;
+	                     | ARCHIVE_UNLINK_OLD | ARCHIVE_DONT_RESTORE_OWNER;
 
 	/* Apparently only root's tar preserves perms (see bug 3844) */
 	if (getuid() != 0)
@@ -1214,11 +1154,12 @@ int tar_main(int argc UNUSED_PARAM, char **argv)
 		tbInfo->excludeList = tar_handle->reject;
 # endif
 		/* NB: writeTarFile() closes tar_handle->src_fd */
-		return writeTarFile(tbInfo,
+		int result = writeTarFile(tbInfo,
 				(opt & OPT_DEREFERENCE ? ACTION_FOLLOWLINKS : 0)
 				| (opt & OPT_NORECURSION ? 0 : ACTION_RECURSE),
 				tar_handle->accept,
 				zipMode);
+        fflush_stdout_and_exit(result);
 	}
 #endif
 
@@ -1253,6 +1194,10 @@ int tar_main(int argc UNUSED_PARAM, char **argv)
 		/*tar_handle->offset = 0; - already is */
 	}
 
+    tar_handle->seek = seek_by_read;
+    if ((opt & OPT_EXTRACT) && !(opt & OPT_2STDOUT))
+        efi_archive_begin();
+
 	/* Zero processed headers (== empty file) is not a valid tarball.
 	 * We (ab)use bb_got_signal as exitcode here,
 	 * because check_errors_in_children() uses _it_ as error indicator.
@@ -1282,5 +1227,7 @@ int tar_main(int argc UNUSED_PARAM, char **argv)
 		check_errors_in_children(0);
 	}
 
-	return bb_got_signal;
+    xclose(tar_handle->src_fd);
+    efi_archive_end();
+    fflush_stdout_and_exit(bb_got_signal);
 }

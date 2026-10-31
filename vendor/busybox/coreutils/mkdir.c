@@ -94,10 +94,15 @@ int mkdir_main(int argc UNUSED_PARAM, char **argv)
 		bb_show_usage();
 
 	do {
-		if (bb_make_directory(*argv, mode, flags)) {
+        if (!(flags & FILEUTILS_RECUR)
+            && (LONE_CHAR(*argv, '/') || LONE_CHAR(*argv, '.'))) {
+            errno = EEXIST;
+            bb_simple_perror_msg(*argv);
+            status = EXIT_FAILURE;
+        } else if (bb_make_directory(*argv, mode, flags)) {
 			status = EXIT_FAILURE;
 		}
 	} while (*++argv);
 
-	return status;
+	fflush_stdout_and_exit(status);
 }

@@ -191,11 +191,7 @@ int tail_main(int argc, char **argv)
 
 	/* prepare the buffer */
 	tailbufsize = BUFSIZ;
-	if (!G.from_top && COUNT_BYTES) {
-		if (tailbufsize < count + BUFSIZ) {
-			tailbufsize = count + BUFSIZ;
-		}
-	}
+
 	/* tail -c1024m REGULAR_FILE doesn't really need 1G mem block.
 	 * (In fact, it doesn't need ANY memory). So delay allocation.
 	 */
@@ -224,7 +220,6 @@ int tail_main(int argc, char **argv)
 		if (!G.from_top) {
 			off_t current = lseek(fd, 0, SEEK_END);
 			if (current > 0) {
-				unsigned off;
 				if (COUNT_BYTES) {
 				/* Optimizing count-bytes case if the file is seekable.
 				 * Beware of backing up too far.
@@ -235,22 +230,11 @@ int tail_main(int argc, char **argv)
 					if (current < 0)
 						current = 0;
 					xlseek(fd, current, SEEK_SET);
-					bb_copyfd_size(fd, STDOUT_FILENO, count);
+                    if (bb_copyfd_size(fd, STDOUT_FILENO, count) < 0)
+                        G.exitcode = EXIT_FAILURE;
 					continue;
 				}
-#if 1 /* This is technically incorrect for *LONG* strings, but very useful */
-				/* Optimizing count-lines case if the file is seekable.
-				 * We assume the lines are <64k.
-				 * (Users complain that tail takes too long
-				 * on multi-gigabyte files) */
-				off = (count | 0xf); /* for small counts, be more paranoid */
-				if (off > (INT_MAX / (64*1024)))
-					off = (INT_MAX / (64*1024));
-				current -= off * (64*1024);
-				if (current < 0)
-					current = 0;
-				xlseek(fd, current, SEEK_SET);
-#endif
+                xlseek(fd, 0, SEEK_SET);
 			}
 		}
 
@@ -269,8 +253,11 @@ int tail_main(int argc, char **argv)
 				if (seen < count) {
 					/* We need to skip a few more bytes/lines */
 					if (COUNT_BYTES) {
-						nwrite -= (count - seen);
-						seen += nread;
+                        unsigned skip = count - seen;
+                        if (skip > (unsigned)nread)
+                            skip = nread;
+                        nwrite -= skip;
+                        seen += skip;
 					} else {
 						char *s = buf;
 						do {
@@ -286,7 +273,7 @@ int tail_main(int argc, char **argv)
 			} else if (count) {
 				if (COUNT_BYTES) {
 					taillen += nread;
-					if (taillen > (int)count) {
+					if ((unsigned)taillen > count) {
 						memmove(tailbuf, tailbuf + taillen - count, count);
 						taillen = count;
 					}
@@ -301,7 +288,7 @@ int tail_main(int argc, char **argv)
 						}
 					} while (k);
 
-					if (newlines_seen + newlines_in_buf < (int)count) {
+					if ((unsigned)(newlines_seen + newlines_in_buf) < count) {
 						newlines_seen += newlines_in_buf;
 						taillen += nread;
 					} else {
@@ -320,11 +307,12 @@ int tail_main(int argc, char **argv)
 						memmove(tailbuf, s, taillen);
 						newlines_seen = count - extra;
 					}
+
+				}
 					if (tailbufsize < (size_t)taillen + BUFSIZ) {
 						tailbufsize = taillen + BUFSIZ;
 						tailbuf = xrealloc(tailbuf, tailbufsize);
 					}
-				}
 				buf = tailbuf + taillen;
 			}
 		} /* while (tail_read() > 0) */
@@ -339,7 +327,8 @@ int tail_main(int argc, char **argv)
 	fmt = NULL;
 
 	if (FOLLOW) while (1) {
-		sleep(sleep_period);
+        if (sleep(sleep_period) != 0)
+            bb_simple_perror_msg_and_die("sleep");
 
 		i = 0;
 		do {

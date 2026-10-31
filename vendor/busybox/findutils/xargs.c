@@ -75,6 +75,7 @@
 //kbuild:lib-$(CONFIG_XARGS) += xargs.o
 
 #include "libbb.h"
+#include "xargs_support.h"
 #include "common_bufsiz.h"
 
 /* This is a NOEXEC applet. Be very careful! */
@@ -124,6 +125,7 @@ struct globals {
 #define BACKSLASH 2
 #define SPACE     4
 	smalluint process_stdin__state;
+	smalluint process_stdin__word;
 	char process_stdin__q;
 #endif
 } FIX_ALIASING;
@@ -217,7 +219,7 @@ static int xargs_exec(void)
 				: WEXITSTATUS(wstat);
 			if (status > 0 && status < 255) {
 				/* See below why 123 does not abort */
-				G.xargs_exitcode = 123;
+				if (G.xargs_exitcode < 123) G.xargs_exitcode = 123;
 				status = 0;
 			}
 			if (status == 0)
@@ -254,8 +256,9 @@ static int xargs_exec(void)
 	 * 1 if some other error occurred."""
 	 */
 	if (status < 0) {
+		int error = errno;
 		bb_simple_perror_msg(G.args[0]);
-		status = (errno == ENOENT) ? 127 : 126;
+		status = (error == ENOENT) ? 127 : 126;
 	}
 	else if (status >= 0x180) {
 		bb_error_msg("'%s' terminated by signal %u",
@@ -272,7 +275,7 @@ static int xargs_exec(void)
 		 * This implies that nonzero exit code is remembered,
 		 * but does not cause xargs to stop: we return 0.
 		 */
-		G.xargs_exitcode = 123;
+		if (G.xargs_exitcode < 123) G.xargs_exitcode = 123;
 		status = 0;
 	}
  ret:
@@ -325,9 +328,13 @@ static char* FAST_FUNC process_stdin(int n_max_chars, int n_max_arg, char *buf)
 
 	while (1) {
 		int c = getchar();
-		if (c == EOF) {
-			if (p != s)
-				goto close_word;
+        if (c == EOF) {
+            if (state == QUOTE)
+                bb_simple_error_msg_and_die("unmatched quote");
+            if (state == BACKSLASH)
+                bb_simple_error_msg_and_die("unfinished escape");
+            if (p != s || G.process_stdin__word)
+                goto close_word;
 			goto ret;
 		}
 		if (state == BACKSLASH) {
@@ -341,7 +348,7 @@ static char* FAST_FUNC process_stdin(int n_max_chars, int n_max_arg, char *buf)
 			state = NORM;
 		} else { /* if (state == NORM) */
 			if (ISSPACE(c)) {
-				if (p != s) {
+				if (p != s || G.process_stdin__word) {
  close_word:
 					state = SPACE;
 					c = '\0';
@@ -350,8 +357,10 @@ static char* FAST_FUNC process_stdin(int n_max_chars, int n_max_arg, char *buf)
 			} else {
 				if (c == '\\') {
 					state = BACKSLASH;
+					G.process_stdin__word = 1;
 				} else if (c == '\'' || c == '"') {
 					q = c;
+					G.process_stdin__word = 1;
 					state = QUOTE;
 				} else {
  set:
@@ -361,6 +370,7 @@ static char* FAST_FUNC process_stdin(int n_max_chars, int n_max_arg, char *buf)
 		}
 		if (state == SPACE) {   /* word's delimiter or EOF detected */
 			state = NORM;
+			G.process_stdin__word = 0;
 			if (q) {
 				bb_error_msg_and_die("unmatched %s quote",
 					q == '\'' ? "single" : "double");
@@ -715,6 +725,8 @@ int xargs_main(int argc UNUSED_PARAM, char **argv)
 		 * G.args[i] receives malloced G.argv[i] with <str> replaced
 		 * with input line. Setting this up:
 		 */
+        if (!G.repl_str[0])
+            bb_simple_error_msg_and_die("empty replacement string");
 		G.args = NULL;
 		G.argv = argv;
 		read_args = process_stdin_with_replace;
@@ -748,7 +760,27 @@ int xargs_main(int argc UNUSED_PARAM, char **argv)
 		char *rem;
 
 		G.idx = initial_idx;
-		rem = read_args(n_max_chars, n_max_arg, buf);
+        rem = read_args(n_max_chars, n_max_arg, buf);
+        die_if_ferror(stdin, bb_msg_read_error);
+        if (opt & OPT_TERMINATE) {
+            if (*rem)
+                bb_simple_error_msg_and_die("argument line too long");
+            if (!(opt & (OPT_REPLSTR | OPT_REPLSTR1))
+                && G.idx - initial_idx < n_max_arg) {
+                size_t used = 0;
+                for (int index = initial_idx; index < G.idx; ++index)
+                    used += strlen(G.args[index]) + 1;
+                if (used == (size_t)n_max_chars) {
+                    int next;
+                    do {
+                        next = getchar();
+                    } while (!(opt & OPT_ZEROTERM) && next != EOF && ISSPACE(next));
+                    die_if_ferror(stdin, bb_msg_read_error);
+                    if (next != EOF)
+                        bb_simple_error_msg_and_die("argument line too long");
+                }
+            }
+        }
 		store_param(NULL);
 
 		if (!G.args[initial_idx]) { /* not even one ARG was added? */
@@ -766,8 +798,9 @@ int xargs_main(int argc UNUSED_PARAM, char **argv)
 				fprintf(stderr, fmt, args[i]);
 				fmt = " %s";
 			}
-			if (!(opt & OPT_INTERACTIVE))
-				bb_putchar_stderr('\n');
+            if (!(opt & OPT_INTERACTIVE))
+                bb_putchar_stderr('\n');
+            die_if_ferror(stderr, "standard error");
 		}
 
 		if (!(opt & OPT_INTERACTIVE) || xargs_ask_confirmation()) {
@@ -785,10 +818,10 @@ int xargs_main(int argc UNUSED_PARAM, char **argv)
 
 #if ENABLE_FEATURE_XARGS_SUPPORT_PARALLEL
 	G.max_procs = 0;
-	xargs_exec(); /* final waitpid() loop */
+	do { xargs_exec(); } while (G.running_procs != 0);
 #endif
 
-	return G.xargs_exitcode;
+	fflush_stdout_and_exit(G.xargs_exitcode);
 }
 
 

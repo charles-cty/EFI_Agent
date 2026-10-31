@@ -94,6 +94,8 @@ aa:      85.1% -- replaced with aa.gz
 
 #include "libbb.h"
 #include "bb_archive.h"
+struct globals;
+static struct globals *ptr_to_globals;
 
 /* ===========================================================================
  */
@@ -526,8 +528,10 @@ static unsigned file_read(void *buf, unsigned size)
 	Assert(G1.insize == 0, "l_buf not empty");
 
 	len = safe_read(ifd, buf, size);
-	if (len == (unsigned)(-1) || len == 0)
-		return len;
+    if (len == (unsigned)-1)
+        bb_simple_perror_msg_and_die(bb_msg_read_error);
+    if (len == 0)
+        return 0;
 
 	updcrc(buf, len);
 	G1.isize += len;

@@ -83,7 +83,8 @@ void FAST_FUNC sleep_for_duration(duration_t duration)
 	//	errno = 0;
 	//	nanosleep(&ts, &ts);
 	//} while (errno == EINTR);
-	nanosleep(&ts, &ts);
+    if (nanosleep(&ts, &ts) < 0)
+        bb_simple_perror_msg_and_die("nanosleep");
 }
 #else
 duration_t FAST_FUNC parse_duration_str(char *str)

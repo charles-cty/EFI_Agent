@@ -46,11 +46,21 @@ int FAST_FUNC remove_file(const char *path, int flags)
 		}
 
 		dp = opendir(path);
-		if (dp == NULL) {
-			return -1;
+        if (dp == NULL) {
+            bb_perror_msg("can't open '%s'", path);
+            return -1;
 		}
 
-		while ((d = readdir(dp)) != NULL) {
+        for (;;) {
+            errno = 0;
+            d = readdir(dp);
+            if (d == NULL) {
+                if (errno) {
+                    bb_perror_msg("can't read '%s'", path);
+                    status = -1;
+                }
+                break;
+            }
 			char *new_path;
 
 			new_path = concat_subpath_file(path, d->d_name);
@@ -60,7 +70,10 @@ int FAST_FUNC remove_file(const char *path, int flags)
 				status = -1;
 			free(new_path);
 		}
-		closedir(dp);
+        if (closedir(dp) < 0) {
+            bb_perror_msg("can't close '%s'", path);
+            status = -1;
+        }
 
 		if (flags & FILEUTILS_INTERACTIVE) {
 			fprintf(stderr, "%s: remove directory '%s'? ",
@@ -74,7 +87,7 @@ int FAST_FUNC remove_file(const char *path, int flags)
 			return -1;
 		}
 
-		if (flags & FILEUTILS_VERBOSE) {
+		if (status == 0 && (flags & FILEUTILS_VERBOSE)) {
 			printf("removed directory: '%s'\n", path);
 		}
 

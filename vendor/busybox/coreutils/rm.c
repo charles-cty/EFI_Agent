@@ -72,5 +72,5 @@ int rm_main(int argc UNUSED_PARAM, char **argv)
 		bb_show_usage();
 	}
 
-	return status;
+	fflush_stdout_and_exit(status);
 }

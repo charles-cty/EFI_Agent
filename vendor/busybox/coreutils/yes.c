@@ -48,7 +48,7 @@ int yes_main(int argc UNUSED_PARAM, char **argv)
 				break;
 			putchar(' ');
 		}
-	} while (putchar('\n') != EOF);
+	} while (putchar('\n') != EOF && !ferror(stdout));
 
 	bb_perror_nomsg_and_die();
 }

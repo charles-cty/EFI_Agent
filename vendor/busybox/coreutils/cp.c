@@ -281,5 +281,5 @@ int cp_main(int argc, char **argv)
 	}
 
 	/* Exit. We are NOEXEC, not NOFORK. We do exit at the end of main() */
-	return status;
+	fflush_stdout_and_exit(status);
 }

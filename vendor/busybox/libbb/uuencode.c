@@ -226,7 +226,9 @@ void FAST_FUNC read_base64(FILE *src_stream, FILE *dst_stream, int flags)
 		const char *in_tail;
 
 		while (in_count < BUFFER_SIZE) {
-			int ch = fgetc(src_stream);
+            int ch = fgetc(src_stream);
+            if (ch == EOF)
+                die_if_ferror(src_stream, bb_msg_read_error);
 			if (ch == exit_char) {
 				if (in_count == 0)
 					return;
@@ -259,7 +261,9 @@ void FAST_FUNC read_base64(FILE *src_stream, FILE *dst_stream, int flags)
 #endif
 			out_tail = decode_base64(buf, &in_tail);
 
-		fwrite(buf, (out_tail - buf), 1, dst_stream);
+        size_t count = out_tail - buf;
+        if (fwrite(buf, 1, count, dst_stream) != count)
+            bb_simple_perror_msg_and_die(bb_msg_standard_output);
 
 		if (term_seen) {
 			/* Did we consume ALL characters? */

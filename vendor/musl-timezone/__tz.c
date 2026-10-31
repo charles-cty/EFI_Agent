@@ -1,18 +1,23 @@
-#include "time_impl.h"
+/* Upstream musl timezone rules, with bounded WASI file buffers. */
+#include <time.h>
 #include <stdint.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <ctype.h>
-#include "libc.h"
-#include "lock.h"
-#include "fork_impl.h"
+#include "efi_timezone.h"
 
-#define malloc __libc_malloc
-#define calloc undef
-#define realloc undef
-#define free undef
+#define weak_alias(old, new) \
+    extern __typeof(old) new __attribute__((weak, alias(#old)))
+#define LOCK(value) ((void)(value))
+#define UNLOCK(value) ((void)(value))
+#define __munmap efi_timezone_unmap
+#define __map_file efi_timezone_map
+#define getenv efi_timezone_setting
+
+long long __year_to_secs(long long, int *);
+int __month_to_secs(int, int);
+extern const char __utc[];
 
 long  __timezone = 0;
 int   __daylight = 0;
@@ -24,12 +29,12 @@ weak_alias(__tzname, tzname);
 
 static char std_name[TZNAME_MAX+1];
 static char dst_name[TZNAME_MAX+1];
-const char __utc[] = "UTC";
+
 
 static int dst_off;
 static int r0[5], r1[5];
 
-static const unsigned char *zi, *trans, *index, *types, *abbrevs, *abbrevs_end;
+static const unsigned char *zi, *trans, *transition_index, *types, *abbrevs, *abbrevs_end;
 static size_t map_size;
 
 static char old_tz_buf[32];
@@ -172,7 +177,7 @@ static void do_tzset()
 	if (!posix_form) {
 		if (*s == ':') s++;
 		if (*s == '/' || *s == '.') {
-			if (!libc.secure || !strcmp(s, "/etc/localtime"))
+			if (1)
 				map = __map_file(s, &map_size);
 		} else {
 			size_t l = strlen(s);
@@ -197,15 +202,15 @@ static void do_tzset()
 	zi = map;
 	if (map) {
 		int scale = 2;
-		if (map[4]!='1') {
+		if (map[4] && map[4]!='1') {
 			size_t skip = zi_dotprod(zi+20, VEC(1,1,8,5,6,1), 6);
 			trans = zi+skip+44+44;
 			scale++;
 		} else {
 			trans = zi+44;
 		}
-		index = trans + (zi_read32(trans-12) << scale);
-		types = index + zi_read32(trans-12);
+		transition_index = trans + (zi_read32(trans-12) << scale);
+		types = transition_index + zi_read32(trans-12);
 		abbrevs = types + 6*zi_read32(trans-8);
 		abbrevs_end = abbrevs + zi_read32(trans-4);
 		if (zi[map_size-1] == '\n') {
@@ -266,7 +271,7 @@ static size_t scan_trans(long long t, int local, size_t *alt)
 	uint64_t x;
 	int off = 0;
 
-	size_t a = 0, n = (index-trans)>>scale, m;
+	size_t a = 0, n = (transition_index-trans)>>scale, m;
 
 	if (!n) {
 		if (alt) *alt = 0;
@@ -279,7 +284,7 @@ static size_t scan_trans(long long t, int local, size_t *alt)
 		x = zi_read32(trans + (m<<scale));
 		if (scale == 3) x = x<<32 | zi_read32(trans + (m<<scale) + 4);
 		else x = (int32_t)x;
-		if (local) off = (int32_t)zi_read32(types + 6 * index[m-1]);
+		if (local) off = (int32_t)zi_read32(types + 6 * transition_index[m-1]);
 		if (t - off < (int64_t)x) {
 			n /= 2;
 		} else {
@@ -288,9 +293,9 @@ static size_t scan_trans(long long t, int local, size_t *alt)
 		}
 	}
 
-	/* First and last entry are special. First means to use lowest-index
+	/* First and last entry are special. First means to use lowest-transition_index
 	 * non-DST type. Last means to apply POSIX-style rule if available. */
-	n = (index-trans)>>scale;
+	n = (transition_index-trans)>>scale;
 	if (a == n-1) return -1;
 	if (a == 0) {
 		x = zi_read32(trans);
@@ -303,24 +308,24 @@ static size_t scan_trans(long long t, int local, size_t *alt)
 		}
 		if (local) off = (int32_t)zi_read32(types + j);
 		/* If t is before first transition, use the above-found type
-		 * and the index-zero (after transition) type as the alt. */
+		 * and the transition_index-zero (after transition) type as the alt. */
 		if (t - off < (int64_t)x) {
-			if (alt) *alt = index[0];
+			if (alt) *alt = transition_index[0];
 			return j/6;
 		}
 	}
 
 	/* Try to find a neighboring opposite-DST-status rule. */
 	if (alt) {
-		if (a && types[6*index[a-1]+4] != types[6*index[a]+4])
-			*alt = index[a-1];
-		else if (a+1<n && types[6*index[a+1]+4] != types[6*index[a]+4])
-			*alt = index[a+1];
+		if (a && types[6*transition_index[a-1]+4] != types[6*transition_index[a]+4])
+			*alt = transition_index[a-1];
+		else if (a+1<n && types[6*transition_index[a+1]+4] != types[6*transition_index[a]+4])
+			*alt = transition_index[a+1];
 		else
-			*alt = index[a];
+			*alt = transition_index[a];
 	}
 
-	return index[a];
+	return transition_index[a];
 }
 
 static int days_in_month(int m, int is_leap)

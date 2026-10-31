@@ -210,7 +210,7 @@ struct BUG {
 };
 
 
-enum { zip_fd = 3 };
+static int zip_fd;
 
 
 /* This value means that we failed to find CDF */
@@ -228,7 +228,7 @@ enum { zip_fd = 3 };
  * closer to the end, with bogus cdf_offset).
  * To make extraction work, bumped PEEK_FROM_END from 16k to 64k.
  */
-#define PEEK_FROM_END (64*1024)
+#define PEEK_FROM_END (64*1024 + 22)
 /* NB: does not preserve file position! */
 static uint32_t find_cdf_offset(void)
 {
@@ -249,11 +249,13 @@ static uint32_t find_cdf_offset(void)
 	dbg("Looking for cdf_offset starting from 0x%"OFF_FMT"x", end);
 	xlseek(zip_fd, end, SEEK_SET);
 	buf = xzalloc(PEEK_FROM_END);
-	full_read(zip_fd, buf, PEEK_FROM_END);
+    ssize_t count = full_read(zip_fd, buf, PEEK_FROM_END);
+    if (count < 0)
+        bb_simple_perror_msg_and_die(bb_msg_read_error);
 
 	found = BAD_CDF_OFFSET;
 	p = buf;
-	while (p <= buf + PEEK_FROM_END - CDE_LEN - 4) {
+	while (count >= 22 && p <= buf + count - 22) {
 		if (*p != 'P') {
 			p++;
 			continue;
@@ -278,7 +280,13 @@ static uint32_t find_cdf_offset(void)
 		 * where cdf_offset points past EOF - ??
 		 * This check ignores such CDEs:
 		 */
-		if (cde.fmt.cdf_offset < end + (p - buf)) {
+        unsigned comment_size = p[17] | ((unsigned)p[18] << 8);
+        if ((size_t)(p - 3 - buf) + 22 + comment_size == (size_t)count
+            && (uint64_t)cde.fmt.cdf_offset + SWAP_LE32(cde.fmt.cdf_size)
+                == (uint64_t)end + (p - 3 - buf)) {
+            if (cde.fmt.this_disk_no || cde.fmt.disk_with_cdf_no
+                || cde.fmt.cdf_entries_on_this_disk != cde.fmt.cdf_entries_total)
+                bb_simple_error_msg_and_die("multi-volume ZIP is unsupported");
 			found = cde.fmt.cdf_offset;
 			dbg("Possible cdf_offset:0x%x at 0x%"OFF_FMT"x",
 				(unsigned)found, end + (p-3 - buf));
@@ -318,6 +326,8 @@ static uint32_t read_next_cdf(uint32_t cdf_offset, cdf_header_t *cdf)
 		dbg("got ZIP64_CDE_MAGIC");
 		return 0; /* EOF */
 	}
+    if (magic != ZIP_CDF_MAGIC)
+        bb_simple_error_msg_and_die("invalid central directory");
 	xread(zip_fd, cdf->raw, CDF_HEADER_LEN);
 
 	FIX_ENDIANNESS_CDF(*cdf);
@@ -329,10 +339,11 @@ static uint32_t read_next_cdf(uint32_t cdf_offset, cdf_header_t *cdf)
 	);
 //TODO: require that magic == ZIP_CDF_MAGIC?
 
-	cdf_offset += 4 + CDF_HEADER_LEN
-		+ cdf->fmt.filename_len
-		+ cdf->fmt.extra_len
-		+ cdf->fmt.file_comment_length;
+    uint64_t next = (uint64_t)cdf_offset + 4 + CDF_HEADER_LEN
+        + cdf->fmt.filename_len + cdf->fmt.extra_len + cdf->fmt.file_comment_length;
+    if (next >= BAD_CDF_OFFSET)
+        bb_simple_error_msg_and_die("central directory offset overflow");
+    cdf_offset = next;
 
 	dbg("Next cdf_offset 0x%x", cdf_offset);
 	return cdf_offset;
@@ -377,21 +388,24 @@ static void unzip_extract_symlink(llist_t **symlink_placeholders,
 		/* Method 0 - stored (not compressed) */
 		target = xzalloc(zip->fmt.ucmpsize + 1);
 		xread(zip_fd, target, zip->fmt.ucmpsize);
+        if (zip->fmt.cmpsize != zip->fmt.ucmpsize)
+            bb_simple_error_msg_and_die("bad length");
 	} else {
-#if 1
-		bb_simple_error_msg_and_die("compressed symlink is not supported");
-#else
-		transformer_state_t xstate;
-		init_transformer_state(&xstate);
-		xstate.mem_output_size_max = zip->fmt.ucmpsize;
-		/* ...unpack... */
-		if (!xstate.mem_output_buf)
-			WTF();
-		target = xstate.mem_output_buf;
-		target = xrealloc(target, xstate.mem_output_size + 1);
-		target[xstate.mem_output_size] = '\0';
-#endif
+        transformer_state_t xstate;
+        if (zip->fmt.method != 8 || zip->fmt.ucmpsize == 0)
+            bb_simple_error_msg_and_die("unsupported symlink compression");
+        init_transformer_state(&xstate);
+        xstate.src_fd = zip_fd;
+        xstate.bytes_in = zip->fmt.cmpsize;
+        xstate.mem_output_size_max = zip->fmt.ucmpsize;
+        if (inflate_unzip(&xstate) < 0 || xstate.mem_output_size != zip->fmt.ucmpsize)
+            bb_simple_error_msg_and_die("inflate error");
+        target = xstate.mem_output_buf;
 	}
+    if (strlen(target) != zip->fmt.ucmpsize || !target[0])
+        bb_simple_error_msg_and_die("invalid symlink target");
+    if (efi_archive_crc(target, zip->fmt.ucmpsize) != zip->fmt.crc32)
+        bb_simple_error_msg_and_die("crc error");
 	create_or_remember_link(symlink_placeholders,
 			target,
 			dst_fn,
@@ -406,10 +420,23 @@ static void unzip_extract(zip_header_t *zip, int dst_fd)
 
 	if (zip->fmt.method == 0) {
 		/* Method 0 - stored (not compressed) */
-		off_t size = zip->fmt.ucmpsize;
-		if (size)
-			bb_copyfd_exact_size(zip_fd, dst_fd, size);
-		return;
+        unsigned char buffer[16384];
+        uint32_t remaining = zip->fmt.ucmpsize;
+        uint32_t crc = ~0u;
+        if (remaining != zip->fmt.cmpsize)
+            bb_simple_error_msg_and_die("bad length");
+        if (!global_crc32_table)
+            global_crc32_new_table_le();
+        while (remaining) {
+            size_t count = MIN(remaining, sizeof(buffer));
+            xread(zip_fd, buffer, count);
+            crc = crc32_block_endian0(crc, buffer, count, global_crc32_table);
+            xwrite(dst_fd, buffer, count);
+            remaining -= count;
+        }
+        if (~crc != zip->fmt.crc32)
+            bb_simple_error_msg_and_die("crc error");
+        return;
 	}
 
 	init_transformer_state(&xstate);
@@ -461,7 +488,7 @@ static void unzip_extract(zip_header_t *zip, int dst_fd)
 	) {
 		/* Don't die. Who knows, maybe len calculation
 		 * was botched somewhere. After all, crc matched! */
-		bb_simple_error_msg("bad length");
+		bb_simple_error_msg_and_die("bad length");
 	}
 }
 
@@ -658,7 +685,9 @@ int unzip_main(int argc, char **argv)
 
 	/* Open input file */
 	if (LONE_DASH(src_fn)) {
-		xdup2(STDIN_FILENO, zip_fd);
+        zip_fd = dup(STDIN_FILENO);
+        if (zip_fd < 0)
+            bb_simple_perror_msg_and_die("standard input");
 		/* Cannot use prompt mode since zip data is arriving on STDIN */
 		if (overwrite == O_PROMPT)
 			overwrite = O_NEVER;
@@ -680,7 +709,7 @@ int unzip_main(int argc, char **argv)
 			}
 			strcpy(ext, extn[i - 1]);
 		}
-		xmove_fd(src_fd, zip_fd);
+		zip_fd = src_fd;
 	}
 
 	/* Change dir if necessary */
@@ -729,6 +758,8 @@ int unzip_main(int argc, char **argv)
  * 0070 [50 4b]05 06 00 00 00 00 01 00 01 00 3c 00 00 00 |PK..........<...|
  * 0080  34 00 00 00 00 00                               |4.....|
  */
+    if (!(opts & OPT_l) && dst_fd != STDOUT_FILENO)
+        efi_archive_begin();
 	total_usize = 0;
 	total_size = 0;
 	total_entries = 0;
@@ -791,9 +822,11 @@ int unzip_main(int argc, char **argv)
 			if (cdf_offset == 0) /* EOF? */
 				break;
 # if 1
-			xlseek(zip_fd,
-				SWAP_LE32(cdf.fmt.relative_offset_of_local_header) + 4,
-				SEEK_SET);
+            uint32_t local_magic;
+            xlseek(zip_fd, SWAP_LE32(cdf.fmt.relative_offset_of_local_header), SEEK_SET);
+            xread(zip_fd, &local_magic, sizeof(local_magic));
+            if (local_magic != ZIP_FILEHEADER_MAGIC)
+                bb_simple_error_msg_and_die("invalid local file header");
 			xread(zip_fd, zip.raw, ZIP_HEADER_LEN);
 			FIX_ENDIANNESS_ZIP(zip);
 			if (zip.fmt.zip_flags & SWAP_LE16(0x0008)) {
@@ -855,6 +888,8 @@ int unzip_main(int argc, char **argv)
 		die_if_bad_fnamesize(zip.fmt.filename_len);
 		dst_fn = xzalloc(zip.fmt.filename_len + 1);
 		xread(zip_fd, dst_fn, zip.fmt.filename_len);
+        if (strlen(dst_fn) != zip.fmt.filename_len)
+            bb_simple_error_msg_and_die("invalid member name");
 		/* Skip extra header bytes */
 		unzip_skip(zip.fmt.extra_len);
 
@@ -946,7 +981,7 @@ int unzip_main(int argc, char **argv)
 					printf("   creating: %s\n", printable_string(dst_fn));
 				}
 				unzip_create_leading_dirs(dst_fn);
-				if (bb_make_directory(dst_fn, dir_mode, FILEUTILS_IGNORE_CHMOD_ERR)) {
+				if (bb_make_directory(dst_fn, dir_mode | 0700, 0)) {
 					xfunc_die();
 				}
 			} else {
@@ -957,6 +992,8 @@ int unzip_main(int argc, char **argv)
 					);
 				}
 			}
+            efi_archive_remember_attributes(dst_fn, dir_mode,
+                zip.fmt.moddate, zip.fmt.modtime);
 			goto skip_cmpsize;
 		}
  check_file:
@@ -1018,15 +1055,22 @@ int unzip_main(int argc, char **argv)
  do_extract:
 #if ENABLE_FEATURE_UNZIP_CDF
 			if (S_ISLNK(file_mode)) {
-				if (dst_fd != STDOUT_FILENO) /* not -p? */
-					unzip_extract_symlink(&symlink_placeholders, &zip, dst_fn);
+                if (dst_fd != STDOUT_FILENO) { /* not -p? */
+                    unzip_extract_symlink(&symlink_placeholders, &zip, dst_fn);
+                    efi_archive_remember_attributes(dst_fn, file_mode,
+                        zip.fmt.moddate, zip.fmt.modtime);
+                } else {
+                    unzip_extract(&zip, STDOUT_FILENO);
+                }
 			} else
 #endif
 			{
 				unzip_extract(&zip, dst_fd);
 				if (dst_fd != STDOUT_FILENO) {
 					/* closing STDOUT is potentially bad for future business */
-					close(dst_fd);
+                    efi_archive_file_attributes(dst_fd, file_mode,
+                        zip.fmt.moddate, zip.fmt.modtime);
+					xclose(dst_fd);
 				}
 			}
 			break;
@@ -1084,5 +1128,7 @@ int unzip_main(int argc, char **argv)
 		}
 	}
 
-	return 0;
+    xclose(zip_fd);
+    efi_archive_end();
+    fflush_stdout_and_exit_SUCCESS();
 }

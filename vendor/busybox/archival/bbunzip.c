@@ -67,9 +67,15 @@ int FAST_FUNC bbunpack(char **argv,
 					exitcode = 1;
 					goto free_name;
 				}
+                if (!S_ISREG(stat_buf.st_mode)) {
+                    errno = S_ISDIR(stat_buf.st_mode) ? EISDIR : EINVAL;
+                    goto err_name;
+                }
 				if (open_to_or_warn(STDIN_FILENO, filename, O_RDONLY, 0))
 					goto err;
-			} else {
+			}
+#if SEAMLESS_COMPRESSION
+            else {
 				/* "clever zcat" with FILE */
 				/* fail_if_not_compressed because zcat refuses uncompressed input */
 				int fd = open_zipped(filename, /*fail_if_not_compressed:*/ 1);
@@ -77,13 +83,17 @@ int FAST_FUNC bbunpack(char **argv,
 					goto err_name;
 				xmove_fd(fd, STDIN_FILENO);
 			}
-		} else
+#endif
+        }
+#if SEAMLESS_COMPRESSION
+        else
 		if (option_mask32 & BBUNPK_SEAMLESS_MAGIC) {
 			/* "clever zcat" on stdin */
 			if (setup_unzip_on_fd(STDIN_FILENO, /*fail_if_not_compressed*/ 1))
 				goto err;
 		}
 
+#endif
 		/* Special cases: test, stdout */
 		if (option_mask32 & (BBUNPK_OPT_STDOUT|BBUNPK_OPT_TEST)) {
 			if (option_mask32 & BBUNPK_OPT_TEST)
@@ -151,7 +161,11 @@ int FAST_FUNC bbunpack(char **argv,
 					 * On some systems calling utimes
 					 * then closing resets the mtime
 					 * back to current time. */
-					utimes(new_name, times); /* ignoring errors */
+                    if (utimes(new_name, times) < 0) {
+                        bb_simple_perror_msg(new_name);
+                        exitcode = 1;
+                        goto free_name;
+                    }
 				}
 
 				if (ENABLE_DESKTOP)

@@ -88,6 +88,7 @@ typedef struct state_t {
 //	unsigned bytebuffer_max;        /* buffer size */
 	unsigned bytebuffer_offset;     /* buffer position */
 	unsigned bytebuffer_size;       /* how much data is there (size <= max) */
+	smallint input_error;
 
 	/* private data of inflate_codes() */
 	unsigned inflate_codes_ml; /* masks for bl and bd bits */
@@ -133,6 +134,7 @@ typedef struct state_t {
 #define bytebuffer          (S()bytebuffer         )
 #define bytebuffer_offset   (S()bytebuffer_offset  )
 #define bytebuffer_size     (S()bytebuffer_size    )
+#define input_error (S()input_error)
 #define inflate_codes_ml    (S()inflate_codes_ml   )
 #define inflate_codes_md    (S()inflate_codes_md   )
 #define inflate_codes_bb    (S()inflate_codes_bb   )
@@ -249,7 +251,7 @@ static void huft_free_all(STATE_PARAM_ONLY)
 	inflate_codes_td = NULL;
 }
 
-static void abort_unzip(STATE_PARAM_ONLY) NORETURN;
+static void abort_unzip(STATE_PARAM_ONLY) NOINLINE;
 static void abort_unzip(STATE_PARAM_ONLY)
 {
 	huft_free_all(PASS_STATE_ONLY);
@@ -949,6 +951,7 @@ static int inflate_block(STATE_PARAM smallint *e)
 	}
 	default:
 		abort_unzip(PASS_STATE_ONLY);
+        return 0;
 	}
 }
 
@@ -1099,6 +1102,7 @@ static int top_up(STATE_PARAM unsigned n)
 		bytebuffer_offset = 0;
 		bytebuffer_size = full_read(gunzip_src_fd, &bytebuffer[count], bytebuffer_max - count);
 		if ((int)bytebuffer_size < 0) {
+            input_error = 1;
 			bb_simple_error_msg(bb_msg_read_error);
 			return 0;
 		}
@@ -1149,6 +1153,8 @@ static int check_header_gzip(STATE_PARAM transformer_state_t *xstate)
 			uint8_t os_flags_UNUSED;
 		} PACKED formatted;
 	} header;
+    uint32_t header_table[256];
+    uint32_t header_crc;
 
 	BUILD_BUG_ON(sizeof(header) != 8);
 
@@ -1165,8 +1171,11 @@ static int check_header_gzip(STATE_PARAM transformer_state_t *xstate)
 	memcpy(header.raw, &bytebuffer[bytebuffer_offset], 8);
 	bytebuffer_offset += 8;
 
-	/* Check the compression method */
-	if (header.formatted.gz_method != 8) {
+    crc32_filltable(header_table, 0);
+    header_crc = crc32_block_endian0(~0u, "\x1f\x8b", 2, header_table);
+    header_crc = crc32_block_endian0(header_crc, header.raw, 8, header_table);
+    /* Reserved flags and unknown methods are invalid RFC 1952 members. */
+	if (header.formatted.gz_method != 8 || (header.formatted.flags & 0xe0)) {
 		return 0;
 	}
 
@@ -1176,11 +1185,18 @@ static int check_header_gzip(STATE_PARAM transformer_state_t *xstate)
 
 		if (!top_up(PASS_STATE 2))
 			return 0;
+        header_crc = crc32_block_endian0(header_crc,
+            &bytebuffer[bytebuffer_offset], 2, header_table);
 		extra_short = buffer_read_le_u16(PASS_STATE_ONLY);
-		if (!top_up(PASS_STATE extra_short))
-			return 0;
-		/* Ignore extra field */
-		bytebuffer_offset += extra_short;
+        while (extra_short) {
+            unsigned count = MIN(extra_short, bytebuffer_max);
+            if (!top_up(PASS_STATE count))
+                return 0;
+            header_crc = crc32_block_endian0(header_crc,
+                &bytebuffer[bytebuffer_offset], count, header_table);
+            bytebuffer_offset += count;
+            extra_short -= count;
+        }
 	}
 
 	/* Discard original name and file comment if any */
@@ -1191,6 +1207,8 @@ static int check_header_gzip(STATE_PARAM transformer_state_t *xstate)
 			do {
 				if (!top_up(PASS_STATE 1))
 					return 0;
+                header_crc = crc32_block_endian0(header_crc,
+                    &bytebuffer[bytebuffer_offset], 1, header_table);
 			} while (bytebuffer[bytebuffer_offset++] != 0);
 			if ((header.formatted.flags & 0x18) != 0x18)
 				break;
@@ -1204,7 +1222,8 @@ static int check_header_gzip(STATE_PARAM transformer_state_t *xstate)
 	if (header.formatted.flags & 0x02) {
 		if (!top_up(PASS_STATE 2))
 			return 0;
-		bytebuffer_offset += 2;
+        if (buffer_read_le_u16(PASS_STATE_ONLY) != (uint16_t)~header_crc)
+            return 0;
 	}
 	return 1;
 }
@@ -1278,6 +1297,7 @@ unpack_gz_stream(transformer_state_t *xstate)
 	if ((uint32_t)gunzip_bytes_out != v32) {
 		bb_simple_error_msg("incorrect length");
 		total = -1;
+        goto ret;
 	}
 
 	if (!top_up(PASS_STATE 2))
@@ -1293,6 +1313,8 @@ unpack_gz_stream(transformer_state_t *xstate)
 	/*bb_error_msg("decompression OK, trailing garbage ignored");*/
 
  ret:
+    if (input_error)
+        total = -1;
 	free(bytebuffer);
 	DEALLOC_STATE;
 	return total;

@@ -49,6 +49,22 @@
 #define LN_VERBOSE          (1 << 5)
 #define LN_LINKFILE         (1 << 6)
 
+static int efi_same_entry(const char *source, const char *destination)
+{
+    char *source_path = xstrdup(source);
+    char *destination_path = xstrdup(destination);
+    struct stat source_parent, destination_parent;
+    int same = strcmp(bb_get_last_path_component_strip(source_path),
+                      bb_get_last_path_component_strip(destination_path)) == 0
+        && stat(dirname(source_path), &source_parent) == 0
+        && stat(dirname(destination_path), &destination_parent) == 0
+        && source_parent.st_dev == destination_parent.st_dev
+        && source_parent.st_ino == destination_parent.st_ino;
+    free(source_path);
+    free(destination_path);
+    return same;
+}
+
 int ln_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
 int ln_main(int argc, char **argv)
 {
@@ -124,13 +140,35 @@ int ln_main(int argc, char **argv)
 			}
 		}
 
+        /* Never remove the source when force or backup names the same inode. */
+        if (opts & (LN_FORCE | LN_BACKUP)) {
+            struct stat source_info, destination_info;
+            if (lstat(*argv, &source_info) == 0 && lstat(src, &destination_info) == 0
+                && source_info.st_dev == destination_info.st_dev
+                && source_info.st_ino == destination_info.st_ino
+                && efi_same_entry(*argv, src)) {
+                bb_error_msg("'%s' and '%s' are the same file", *argv, src);
+                status = EXIT_FAILURE;
+                free(src_name);
+                continue;
+            }
+        }
 		if (opts & LN_BACKUP) {
 			char *backup;
-			backup = xasprintf("%s%s", src, suffix);
+            backup = xasprintf("%s%s", src, suffix);
+            if (!suffix[0] || (lstat(*argv, &statbuf) == 0
+                              && efi_same_entry(*argv, backup))) {
+                bb_error_msg("backup '%s' would replace a source or destination", backup);
+                status = EXIT_FAILURE;
+                free(backup);
+                free(src_name);
+                continue;
+            }
 			if (rename(src, backup) < 0 && errno != ENOENT) {
 				bb_simple_perror_msg(src);
 				status = EXIT_FAILURE;
 				free(backup);
+				free(src_name);
 				continue;
 			}
 			free(backup);
@@ -149,17 +187,15 @@ int ln_main(int argc, char **argv)
 			link_func = symlink;
 		}
 
-		if (opts & LN_VERBOSE) {
-			printf("'%s' -> '%s'\n", src, *argv);
-		}
-
 		if (link_func(*argv, src) != 0) {
 			bb_simple_perror_msg(src);
-			status = EXIT_FAILURE;
-		}
+            status = EXIT_FAILURE;
+        } else if (opts & LN_VERBOSE) {
+            printf("'%s' -> '%s'\n", src, *argv);
+        }
 
-		free(src_name);
+        free(src_name);
 	} while ((++argv)[1]);
 
-	return status;
+	fflush_stdout_and_exit(status);
 }

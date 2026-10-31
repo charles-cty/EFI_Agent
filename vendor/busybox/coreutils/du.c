@@ -110,7 +110,7 @@ static void print(unsigned long long size, const char *filename)
 {
 	/* TODO - May not want to defer error checking here. */
 #if ENABLE_FEATURE_HUMAN_READABLE
-# if ENABLE_DESKTOP
+# if 1
 	/* ~30 bytes of code for extra compat:
 	 * coreutils' du rounds sizes up:
 	 * for example,  1025k file is shown as "2" by du -m.
@@ -199,7 +199,16 @@ static unsigned long long du(const char *filename)
 			return sum;
 		}
 
-		while ((entry = readdir(dir))) {
+        for (;;) {
+            errno = 0;
+            entry = readdir(dir);
+            if (!entry) {
+                if (errno) {
+                    bb_simple_perror_msg(filename);
+                    G.status = EXIT_FAILURE;
+                }
+                break;
+            }
 			newfile = concat_subpath_file(filename, entry->d_name);
 			if (newfile == NULL)
 				continue;
@@ -208,7 +217,10 @@ static unsigned long long du(const char *filename)
 			--G.du_depth;
 			free(newfile);
 		}
-		closedir(dir);
+        if (closedir(dir) < 0) {
+            bb_simple_perror_msg(filename);
+            G.status = EXIT_FAILURE;
+        }
 	} else {
 		if (!(option_mask32 & OPT_a_files_too) && G.du_depth != 0)
 			return sum;

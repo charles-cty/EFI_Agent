@@ -178,8 +178,10 @@ int touch_main(int argc UNUSED_PARAM, char **argv)
 				/* Try to create the file */
 				fd = open(*argv, O_RDWR | O_CREAT, 0666);
 				if (fd >= 0) {
-					if (opts & (OPT_r|OPT_d|OPT_t))
-						futimens(fd, timebuf);
+                    if ((opts & (OPT_r|OPT_d|OPT_t)) && futimens(fd, timebuf) < 0) {
+                        status = EXIT_FAILURE;
+                        bb_simple_perror_msg(*argv);
+                    }
 					xclose(fd);
 					continue;
 				}

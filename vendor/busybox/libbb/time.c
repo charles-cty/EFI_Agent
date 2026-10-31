@@ -267,8 +267,9 @@ int FAST_FUNC parse_datestr(const char *date_str, struct tm *ptm)
 
 time_t FAST_FUNC validate_tm_time(const char *date_str, struct tm *ptm)
 {
-	time_t t = mktime(ptm);
-	if (t == (time_t) -1L) {
+    errno = 0;
+    time_t t = mktime(ptm);
+    if (t == (time_t)-1 && errno == EOVERFLOW) {
 		bb_error_msg_and_die(bb_msg_invalid_date, date_str);
 	}
 	return t;

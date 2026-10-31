@@ -9,6 +9,20 @@ Maintain this document `./docs/verification.md` by yourself, too.
 
 # Current state
 
+BusyBox 1.37.0 is maintained as complete source under vendor/busybox, with a
+separate pristine upstream import commit. The former build-time source
+rewrites are applied directly to the maintained source. The fixed feature
+header and 140-source compilation list are under guests/busybox. The musl
+dependency consists of its timezone rules file and license under
+vendor/musl-timezone. The native Python build driver serves both Windows and
+Linux entry points; packaging rebuilds BusyBox and refreshes its catalog.
+Set WASI_SDK_PATH and BINARYEN_PATH or pass the toolchain directories.
+Other application ports still require their prepared assets before packaging.
+The Windows direct build and a Git-only clean source build under a path with
+spaces produce byte-identical ash.wasm and timezone assets. Eight native
+BusyBox/ash/session suites, parsing checks and VM-only packaging pass.
+Evidence is under artifacts/busybox-vendor and docs/verification.md.
+
 The shared persistent namespace now supports mutations, permissions, hard and
 symbolic links, anchored cwd, actual capacity and allocation, and recoverable
 FAT save/reload. Shell, Python, model files and module lookup use the same tree.
@@ -301,9 +315,10 @@ See artifacts/wasm-wolfssh-combined, artifacts/wasm-wolfssh-no-rdrand,
 artifacts/wasm-curl-tls-final,
 artifacts/wasm-curl-tls-no-rdrand and artifacts/wasm-curl-combined-final
 and docs/verification.md.
-BusyBox 1.37.0 sources are staged under artifacts/guest-sources. The actual ash
-translation unit now compiles to a wasm32 object through check_busybox.ps1 and
-prepare_busybox.py. build_busybox.ps1 now links and Asyncify-transforms ash.wasm.
+BusyBox 1.37.0 sources are maintained under vendor/busybox. The actual ash
+translation unit compiles to a wasm32 object through check_busybox.ps1.
+build_busybox.ps1 invokes the shared native build driver, which links and
+Asyncify-transforms ash.wasm without generating C source.
 Real ash echo, quoting, functions, loops, conditions, exit status and syntax
 errors pass in host wasmi. Real ash and concurrent QuickJS shell capture also
 pass in QEMU/OVMF. Streams expose filestat; unchanged fd flags are accepted and
@@ -523,8 +538,9 @@ providers, C guest helpers, BusyBox ash, QuickJS, CPython, POSIX networking,
 curl/wolfSSL, WolfSSH, and combined verification/documentation. The latest
 recorded complete regression is artifacts/environment-applications-whpx-idle.
 Prepared manifests include guest binaries, libraries and licenses in fresh
-VM/native packages. Source-built ports require their upstream sources, the
-explicit Windows WASI SDK and Binaryen; CPython uses its unchanged prebuilt.
+VM/native packages. BusyBox uses checked-in sources with the explicit native
+WASI SDK and Binaryen. Other source-built ports require their upstream sources;
+CPython uses its unchanged prebuilt.
 
 The 2026-10-12 native allocation investigation found linear-memory capacity
 amplification: each Python instance starts at 18.875 MiB, grows to a visible

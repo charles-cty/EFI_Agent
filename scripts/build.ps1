@@ -1,6 +1,8 @@
 param(
     [ValidateSet('release', 'debug')][string]$Profile = 'release',
     [string]$Guests = 'artifacts/wasm-guests',
+    [string]$WasiSdk = $env:WASI_SDK_PATH,
+    [string]$Binaryen = $env:BINARYEN_PATH,
     [switch]$VmOnly
 )
 Set-StrictMode -Version 3.0
@@ -27,6 +29,7 @@ if (-not $VmOnly) {
     }
     $env:EFI_AGENT_SHELL = $shell
 }
+& ./scripts/build_busybox.ps1 -WasiSdk $WasiSdk -Binaryen $Binaryen -Output $Guests
 $profileArgs = @()
 if ($Profile -eq 'release') { $profileArgs += '--release' }
 $targetDirectory = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
@@ -35,9 +38,7 @@ cargo.exe build -p efi-agent-uefi --target x86_64-unknown-uefi --target-dir $tar
 cargo.exe build -p efi-agent --target-dir $targetDirectory @profileArgs
 $launcher = Join-Path $targetDirectory "$Profile/efi-agent.exe"
 $efi = Join-Path $targetDirectory "x86_64-unknown-uefi/$Profile/efi-agent-uefi.efi"
-if (-not (Test-Path -LiteralPath (Join-Path $Guests 'programs.json'))) {
-    & $launcher catalog $Guests
-}
+& $launcher catalog $Guests
 $packageArgs = @($efi, 'artifacts', $Guests)
 if ($VmOnly) { $packageArgs += '--vm-only' }
 & $launcher package @packageArgs

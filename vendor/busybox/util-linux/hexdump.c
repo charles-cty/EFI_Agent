@@ -50,6 +50,8 @@
 //usage:       "hd is an alias for hexdump -C"
 
 #include "libbb.h"
+#define OFF_T_MAX ((off_t)~((off_t)1 << (sizeof(off_t) * 8 - 1)))
+
 #include "dump.h"
 
 /* This is a NOEXEC applet. Be very careful! */
@@ -60,7 +62,7 @@ static void bb_dump_addfile(dumper_t *dumper, char *name)
 	FILE *fp;
 	char *buf;
 
-	fp = xfopen_for_read(name);
+	fp = xfopen(name, "r");
 	while ((buf = xmalloc_fgetline(fp)) != NULL) {
 		p = skip_whitespace(buf);
 		if (*p && (*p != '#')) {
@@ -68,7 +70,10 @@ static void bb_dump_addfile(dumper_t *dumper, char *name)
 		}
 		free(buf);
 	}
-	fclose(fp);
+    int read_error = ferror(fp);
+    int close_error = fclose(fp);
+    if (read_error || close_error)
+        bb_simple_perror_msg_and_die(name);
 }
 
 static const char *const add_strings[] ALIGN_PTR = {

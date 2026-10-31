@@ -15,7 +15,7 @@
 int FAST_FUNC file_is_executable(const char *name)
 {
 	struct stat s;
-	return (!access(name, X_OK) && !stat(name, &s) && S_ISREG(s.st_mode));
+	return (!stat(name, &s) && (s.st_mode & S_IXUSR) && S_ISREG(s.st_mode));
 }
 
 /* search (*PATHp) for an executable file;
@@ -72,22 +72,4 @@ int FAST_FUNC executable_exists(const char *filename)
 	char *ret = find_executable(filename, &path);
 	free(ret);
 	return ret != NULL;
-}
-
-#if ENABLE_FEATURE_PREFER_APPLETS
-/* just like the real execvp, but try to launch an applet named 'file' first */
-int FAST_FUNC BB_EXECVP(const char *file, char *const argv[])
-{
-	if (find_applet_by_name(file) >= 0)
-		execvp(bb_busybox_exec_path, argv);
-	return execvp(file, argv);
-}
-#endif
-
-void FAST_FUNC BB_EXECVP_or_die(char **argv)
-{
-	BB_EXECVP(argv[0], argv);
-	/* SUSv3-mandated exit codes */
-	xfunc_error_retval = (errno == ENOENT) ? 127 : 126;
-	bb_perror_msg_and_die("can't execute '%s'", argv[0]);
 }

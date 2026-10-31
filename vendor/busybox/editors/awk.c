@@ -46,6 +46,9 @@
 //usage:	)
 
 #include "libbb.h"
+#include "awk_support.h"
+struct globals;
+static struct globals *ptr_to_globals;
 #include "xregex.h"
 #include <math.h>
 

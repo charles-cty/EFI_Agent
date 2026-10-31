@@ -90,6 +90,8 @@
 //usage:       ""
 
 #include "libbb.h"
+#include "sort_support.h"
+#define HAVE_STRVERSCMP 1
 
 /* These are sort types */
 enum {
@@ -156,7 +158,7 @@ static char *get_key(char *str, struct sort_key *key, int flags)
 	}
 
 	/* Find start of key on first pass, end on second pass */
-	len = strlen(str);
+	len = sort_length(str);
 	for (j = 0; j < 2; j++) {
 		if (!key->range[2*j])
 			end = len;
@@ -165,20 +167,22 @@ static char *get_key(char *str, struct sort_key *key, int flags)
 			unsigned char ch = 0;
 
 			end = 0;
-			for (i = 1; i < key->range[2*j] + j; i++) {
+			for (i = 1; i < key->range[2*j] + j && end < len; i++) {
 				if (key_separator) {
 					/* Skip body of key and separator */
-					while ((ch = str[end]) != '\0') {
-							end++;
-						if (ch == key_separator)
-							break;
-					}
+                    ch = 0;
+                    while (end < len) {
+                        ch = str[end++];
+                        if (ch == key_separator)
+                            break;
+                        ch = 0;
+                    }
 				} else {
 					/* Skip leading blanks */
 					while (isspace(str[end]))
 						end++;
 					/* Skip body of key */
-					while (str[end] != '\0') {
+					while (end < len) {
 						if (isspace(str[end]))
 							break;
 						end++;
@@ -205,35 +209,41 @@ static char *get_key(char *str, struct sort_key *key, int flags)
 		while (end > start && isspace(str[end-1])) end--;
 	/* -kSTART,N.ENDCHAR: honor ENDCHAR (1-based) */
 	if (key->range[3]) {
-		end = key->range[3];
-		if (end > len) end = len;
+        end = sort_field_start(str, len, key->range[2], key_separator);
+        if (flags & FLAG_bb)
+            while (end < len && isspace((unsigned char)str[end]))
+                ++end;
+        unsigned offset = key->range[3];
+        end += offset > (unsigned)(len - end) ? len - end : offset;
 	}
 	/* -kN.STARTCHAR[,...]: honor STARTCHAR (1-based) */
 	if (key->range[1]) {
-		start += key->range[1] - 1;
-		if (start > len) start = len;
+        unsigned offset = key->range[1] - 1;
+        start += offset > (unsigned)(len - start) ? len - start : offset;
 	}
 	/* Make the copy */
 	if (end < start)
 		end = start;
-	str = xstrndup(str+start, end-start);
+	str = sort_duplicate(str+start, end-start);
 	/* Handle -d */
 	if (flags & FLAG_d) {
-		for (start = end = 0; str[end]; end++)
+		for (start = end = 0; end < sort_length(str); end++)
 			if (isspace(str[end]) || isalnum(str[end]))
 				str[start++] = str[end];
 		str[start] = '\0';
+        sort_record(str)->length = start;
 	}
 	/* Handle -i */
 	if (flags & FLAG_i) {
-		for (start = end = 0; str[end]; end++)
+		for (start = end = 0; end < sort_length(str); end++)
 			if (isprint_asciionly(str[end]))
 				str[start++] = str[end];
 		str[start] = '\0';
+        sort_record(str)->length = start;
 	}
 	/* Handle -f */
 	if (flags & FLAG_f)
-		for (i = 0; str[i]; i++)
+		for (i = 0; i < sort_length(str); i++)
 			str[i] = toupper(str[i]);
 
 	return str;
@@ -247,32 +257,12 @@ static struct sort_key *add_key(void)
 	return *pkey = xzalloc(sizeof(struct sort_key));
 }
 
-#define GET_LINE(fp) \
-	((option_mask32 & FLAG_z) \
-	? bb_get_chunk_from_file(fp, NULL) \
-	: xmalloc_fgetline(fp))
+#define GET_LINE(fp) sort_read(fp, (option_mask32 & FLAG_z) ? 0 : '\n')
 #else
 #define GET_LINE(fp) xmalloc_fgetline(fp)
 #endif
 
-#if ENABLE_FEATURE_SORT_BIG
-static int scale_suffix(const char *tail)
-{
-	static const char suffix[] ALIGN1 = "kmgtpezy";
-	const char *s;
-	int n;
 
-	if (!tail[0])
-		return -1;
-	s = strchr(suffix, tail[0] | 0x20);
-	if (!s)
-		return -1;
-	n = s - suffix;
-	if (n != 0 && tail[0] >= 'a')
-		return -1; /* mg... not accepted, only MG... */
-	return n;
-}
-#endif
 
 /* Iterate through keys list and perform comparisons */
 static int compare_keys(const void *xarg, const void *yarg)
@@ -310,12 +300,14 @@ static int compare_keys(const void *xarg, const void *yarg)
 #if ENABLE_LOCALE_SUPPORT
 			retval = strcoll(x, y);
 #else
-			retval = strcmp(x, y);
+			retval = sort_compare(x, y);
 #endif
 			break;
 #if ENABLE_FEATURE_SORT_BIG
-		case FLAG_g:
-		case FLAG_h: {
+        case FLAG_h:
+            retval = bb_compare_human(x, y);
+            break;
+        case FLAG_g: {
 			char *xx, *yy;
 //TODO: needs setlocale(LC_NUMERIC, "C")?
 			double dx = strtod(x, &xx);
@@ -331,14 +323,7 @@ static int compare_keys(const void *xarg, const void *yarg)
 			else if (dy != dy)
 				retval = 1;
 			else {
-				if (flags & FLAG_h) {
-					int xs = scale_suffix(xx);
-					int ys = scale_suffix(yy);
-					if (xs != ys) {
-						retval = xs - ys;
-						break;
-					}
-				}
+
 				/* Check for infinity.  Could underflow, but it avoids libm. */
 				if (1.0 / dx == 0.0) {
 					if (dx < 0)
@@ -353,7 +338,7 @@ static int compare_keys(const void *xarg, const void *yarg)
 			break;
 		}
 		case FLAG_M: {
-			struct tm thyme;
+			struct tm thyme = {0};
 			int dx;
 			char *xx, *yy;
 
@@ -370,15 +355,13 @@ static int compare_keys(const void *xarg, const void *yarg)
 		}
 		/* Full floating point version of -n */
 		case FLAG_n: {
-			double dx = atof(x);
-			double dy = atof(y);
-			retval = (dx > dy) ? 1 : ((dx < dy) ? -1 : 0);
+			retval = bb_compare_decimal(x, y);
 			break;
 		}
 		} /* switch */
 		/* Free key copies. */
-		if (x != *(char **)xarg) free(x);
-		if (y != *(char **)yarg) free(y);
+		if (x != *(char **)xarg) sort_free(x);
+		if (y != *(char **)yarg) sort_free(y);
 		/* if (retval) break; - done by for () anyway */
 #else
 		/* Integer version of -n for tiny systems */
@@ -396,29 +379,16 @@ static int compare_keys(const void *xarg, const void *yarg)
 			/* "Stable sort": later line is "greater than",
 			 * IOW: do not allow qsort() to swap equal lines.
 			 */
-			uint32_t *p32;
-			uint32_t x32, y32;
-			char *line;
-			unsigned len;
-
-			line = *(char**)xarg;
-			len = (strlen(line) + 4) & (~3u);
-			p32 = (void*)(line + len);
-			x32 = *p32;
-			line = *(char**)yarg;
-			len = (strlen(line) + 4) & (~3u);
-			p32 = (void*)(line + len);
-			y32 = *p32;
-
-			/* If x > y, 1, else -1 */
-			retval = (x32 > y32) * 2 - 1;
+            uint32_t x32 = sort_record(*(char **)xarg)->ordinal;
+            uint32_t y32 = sort_record(*(char **)yarg)->ordinal;
+            retval = (x32 > y32) - (x32 < y32);
 			/* Here, -r has no effect! */
 			return retval;
 		}
 		if (!(option_mask32 & FLAG_no_tie_break)) {
 			/* fallback sort */
 			flags = option_mask32;
-			retval = strcmp(*(char **)xarg, *(char **)yarg);
+			retval = sort_compare(*(char **)xarg, *(char **)yarg);
 		}
 	}
 
@@ -434,8 +404,9 @@ static unsigned str2u(char **str)
 	unsigned long lu;
 	if (!isdigit((*str)[0]))
 		bb_simple_error_msg_and_die("bad field specification");
+	errno = 0;
 	lu = strtoul(*str, str, 10);
-	if ((sizeof(long) > sizeof(int) && lu > INT_MAX) || !lu)
+	if (errno || lu > INT_MAX || !lu)
 		bb_simple_error_msg_and_die("bad field specification");
 	return lu;
 }
@@ -607,9 +578,12 @@ int sort_main(int argc UNUSED_PARAM, char **argv)
 //TODO: lighter version which only drops total dups if can_drop_dups == true
 #endif
 			lines = xrealloc_vector(lines, 6, linecount);
+			sort_record(line)->ordinal = linecount;
 			lines[linecount++] = line;
 		}
-		fclose_if_not_stdin(fp);
+        die_if_ferror(fp, *argv);
+        if (fclose_if_not_stdin(fp))
+            bb_simple_perror_msg_and_die(*argv);
 	} while (*++argv);
 
 #if ENABLE_FEATURE_SORT_BIG
@@ -629,22 +603,6 @@ int sort_main(int argc UNUSED_PARAM, char **argv)
 	}
 #endif
 
-	/* For stable sort, store original line position beyond terminating NUL */
-	if (option_mask32 & FLAG_s) {
-		for (i = 0; i < linecount; i++) {
-			uint32_t *p32;
-			char *line;
-			unsigned len;
-
-			line = lines[i];
-			len = (strlen(line) + 4) & (~3u);
-			lines[i] = line = xrealloc(line, len + 4);
-			p32 = (void*)(line + len);
-			*p32 = i;
-		}
-		/*option_mask32 |= FLAG_no_tie_break;*/
-		/* ^^^redundant: if FLAG_s, compare_keys() does no tie break */
-	}
 
 	/* Perform the actual sort */
 	qsort(lines, linecount, sizeof(lines[0]), compare_keys);
@@ -660,7 +618,7 @@ int sort_main(int argc UNUSED_PARAM, char **argv)
 		option_mask32 = (option_mask32 | FLAG_no_tie_break) & (~FLAG_s);
 		for (i = 1; i < linecount; i++) {
 			if (compare_keys(&lines[j], &lines[i]) == 0)
-				free(lines[i]);
+				sort_free(lines[i]);
 			else
 				lines[++j] = lines[i];
 		}
@@ -676,8 +634,10 @@ int sort_main(int argc UNUSED_PARAM, char **argv)
 #endif
 	{
 		int ch = (option_mask32 & FLAG_z) ? '\0' : '\n';
-		for (i = 0; i < linecount; i++)
-			printf("%s%c", lines[i], ch);
+        for (i = 0; i < linecount; i++) {
+            fwrite(lines[i], 1, sort_length(lines[i]), stdout);
+            putchar(ch);
+        }
 	}
 
 	fflush_stdout_and_exit_SUCCESS();

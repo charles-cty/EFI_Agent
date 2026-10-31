@@ -648,6 +648,7 @@ evaluate_string(arith_state_t *math_state, const char *expr)
 	var_or_num_t *numstack, *numstackptr;
 	/* Stack of operator tokens */
 	operator *opstack, *opstackptr;
+    unsigned *logical_disabled;
 	/* To detect whether we are after a "value": */
 	operator lasttok;
 	/* To insert implicit () in ?: ternary op: */
@@ -677,6 +678,7 @@ evaluate_string(arith_state_t *math_state, const char *expr)
 		 */
 		expr_len++; /* +1 for 1st LPAREN. See what $((1?)) pushes to opstack */
 		opstackptr = opstack = alloca(expr_len * sizeof(opstack[0]));
+        logical_disabled = alloca(expr_len * sizeof(logical_disabled[0]));
 		/* There can be no more than (expr_len/2 + 1)
 		 * integers/names in any given correct or incorrect expression.
 		 * (modulo "09", "0v" cases where 2 chars are 2 ints/names,
@@ -932,7 +934,9 @@ evaluate_string(arith_state_t *math_state, const char *expr)
 					/* else: ...x~y@. Evaluate x~y, replace it on stack with result. Then repeat */
 				}
 				dbg("arith_apply(prev_op:%02x, numstack:%d)", prev_op, (int)(numstackptr - numstack));
-				errmsg = arith_apply(math_state, prev_op, numstack, &numstackptr);
+				if (prev_op == TOK_AND || prev_op == TOK_OR)
+                    math_state->evaluation_disabled = logical_disabled[opstackptr - opstack];
+                errmsg = arith_apply(math_state, prev_op, numstack, &numstackptr);
 				if (errmsg)
 					goto err_with_custom_msg;
 dbg("    numstack:%d val:%lld '%s'", (int)(numstackptr - numstack), numstackptr[-1].val, numstackptr[-1].var_name);
@@ -974,7 +978,14 @@ dbg("    numstack:%d val:%lld '%s'", (int)(numstackptr - numstack), numstackptr[
 
 		/* Push this operator to opstack */
 		dbg("(%d) op:%02x insert_op:%02x", (int)(opstackptr - opstack), op, insert_op);
-		*opstackptr++ = lasttok = op;
+		if (op == TOK_AND || op == TOK_OR) {
+            logical_disabled[opstackptr - opstack] = math_state->evaluation_disabled;
+            if (!math_state->evaluation_disabled &&
+                ((op == TOK_AND && numstackptr[-1].val == 0) ||
+                 (op == TOK_OR && numstackptr[-1].val != 0)))
+                math_state->evaluation_disabled = UINT_MAX;
+        }
+        *opstackptr++ = lasttok = op;
  next:
 		if (insert_op != 0xff) {
 			op = insert_op;

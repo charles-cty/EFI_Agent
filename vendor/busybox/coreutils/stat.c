@@ -165,6 +165,8 @@ static const char *human_time(struct timespec *ts)
 
 #if ENABLE_FEATURE_STAT_FILESYSTEM
 #define FS_TYPE_LIST \
+FS_TYPE(0x45464941, "efi-agent") \
+FS_TYPE(0x1373, "devfs") \
 FS_TYPE(0xADFF,     "affs") \
 FS_TYPE(0x1CD1,     "devpts") \
 FS_TYPE(0x137D,     "ext") \
@@ -382,20 +384,20 @@ static void FAST_FUNC print_stat(char *pformat, const char m,
 	} else if (m == 'x') {
 		printfs(pformat, human_time(&statbuf->st_atim));
 	} else if (m == 'X') {
-		strcat(pformat, TYPE_SIGNED(time_t) ? "ld" : "lu");
+		strcat(pformat, TYPE_SIGNED(time_t) ? "lld" : "llu");
 		/* note: (unsigned long) would be wrong:
 		 * imagine (unsigned long64)int32 */
-		printf(pformat, (long) statbuf->st_atime);
+		printf(pformat, (long long) statbuf->st_atime);
 	} else if (m == 'y') {
 		printfs(pformat, human_time(&statbuf->st_mtim));
 	} else if (m == 'Y') {
-		strcat(pformat, TYPE_SIGNED(time_t) ? "ld" : "lu");
-		printf(pformat, (long) statbuf->st_mtime);
+		strcat(pformat, TYPE_SIGNED(time_t) ? "lld" : "llu");
+		printf(pformat, (long long) statbuf->st_mtime);
 	} else if (m == 'z') {
 		printfs(pformat, human_time(&statbuf->st_ctim));
 	} else if (m == 'Z') {
-		strcat(pformat, TYPE_SIGNED(time_t) ? "ld" : "lu");
-		printf(pformat, (long) statbuf->st_ctime);
+		strcat(pformat, TYPE_SIGNED(time_t) ? "lld" : "llu");
+		printf(pformat, (long long) statbuf->st_ctime);
 # if ENABLE_SELINUX
 	} else if (m == 'C' && (option_mask32 & OPT_SELINUX)) {
 		printfs(pformat, scontext);
@@ -789,5 +791,9 @@ int stat_main(int argc UNUSED_PARAM, char **argv)
 	for (i = 0; argv[i]; ++i)
 		ok &= statfunc(argv[i] IF_FEATURE_STAT_FORMAT(, format));
 
-	return (ok ? EXIT_SUCCESS : EXIT_FAILURE);
+    if (fflush(stdout) != 0 || ferror(stdout)) {
+        bb_simple_perror_msg("standard output");
+        ok = 0;
+    }
+    return (ok ? EXIT_SUCCESS : EXIT_FAILURE);
 }

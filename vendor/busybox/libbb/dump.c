@@ -11,6 +11,11 @@
  * Original copyright notice is retained at the end of this file.
  */
 #include "libbb.h"
+#define move_from_unaligned16(value, pointer) memcpy(&(value), (pointer), 2)
+#define move_from_unaligned32(value, pointer) memcpy(&(value), (pointer), 4)
+#define move_from_unaligned64(value, pointer) memcpy(&(value), (pointer), 8)
+void FAST_FUNC xfstat(int fd, struct stat *stat_buf, const char *errmsg);
+char *FAST_FUNC strcpy_and_process_escape_sequences(char *dst, const char *src);
 #include "dump.h"
 
 #define	F_IGNORE	0x01		/* %_A */
@@ -423,7 +428,8 @@ static unsigned char *get(priv_dumper_t *dumper)
 				dumper->pub.dump_length == -1 ? need : MIN(dumper->pub.dump_length, need), stdin);
 		if (n == 0) {
 			if (ferror(stdin)) {
-				bb_simple_perror_msg(dumper->argv[-1]);
+                bb_simple_perror_msg("read");
+                dumper->exitval = 1;
 			}
 			dumper->get__ateof = 1;
 			continue;
@@ -745,7 +751,12 @@ int FAST_FUNC bb_dump_dump(dumper_t *pub_dumper, char **argv)
 	dumper->argv = argv;
 	display(dumper);
 
-	return dumper->exitval;
+    int output_error = fflush(stdout) != 0;
+    if (ferror(stdout) || output_error) {
+        bb_simple_perror_msg("standard output");
+        dumper->exitval = 1;
+    }
+    return dumper->exitval;
 }
 
 void FAST_FUNC bb_dump_add(dumper_t* pub_dumper, const char *fmt)
@@ -902,3 +913,9 @@ void FAST_FUNC bb_dump_add(dumper_t* pub_dumper, const char *fmt)
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+
+void FAST_FUNC xfstat(int fd, struct stat *stat_buf, const char *errmsg)
+{
+    if (fstat(fd, stat_buf))
+        bb_simple_perror_msg_and_die(errmsg);
+}
