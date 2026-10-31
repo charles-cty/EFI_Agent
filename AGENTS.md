@@ -14,6 +14,12 @@ completion. Verification of a staging package does not verify those paths.
 
 # Current state
 
+The 2026-11-01 writable vvfat trial failed acceptance on Windows WHPX.
+Guest-successful writes did not reliably reach host filenames or lengths;
+directory renames also failed in QEMU. The runtime proposal was withdrawn.
+The VM still stages a private FAT disk and exports workspace changes on exit.
+See docs/verification.md for evidence and the retained proposal location.
+
 Dependency notices are prepared under artifacts/wasm-guests/licenses and
 distributed under EFI/AGENT/LICENSES in both boot trees and disk images.
 programs.json declares only command modules, aliases and libraries. Installation

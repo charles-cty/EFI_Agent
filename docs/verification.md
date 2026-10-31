@@ -1,5 +1,53 @@
 # Verification record
 
+## 2026-11-01: Writable vvfat did not pass workspace acceptance
+
+Tested a separate writable FAT16 vvfat drive with the native Windows launcher,
+OVMF and WHPX, using QEMU 11.1.0 (v11.1.0-12130-ge470268ff4). The proposal
+mounted it at /work and kept installed commands, libraries, /bin, /tmp, /dev
+and /proc independent. File tools and both interpreter sessions used /work.
+Native routing, cwd, mutation and installation checks passed (28 cases), as
+did all 26 launcher unit tests. Host and UEFI builds and Clippy also passed.
+These checks did not establish reliable vvfat writes.
+
+Actual firmware acceptance failed. After creating a six-byte file, renaming it
+and overwriting it with `live bytes`, the guest reported success but the host
+contained only `live b` (six bytes). The host bytes remained wrong after VM
+termination. A separate root-level create/overwrite/empty-file sequence also
+reported guest success, but the expected host result file was absent after a
+two-second observation interval. QEMU reported no write error in these runs.
+Directory rename terminated QEMU with assertions in its vvfat implementation.
+A directory-move workaround also failed and was removed. FAT32 did not commit
+host changes. Rejecting directory rename did not resolve the writeback failures.
+The current upstream vvfat source also attempts commits during individual
+sector writes; EFI file-close success alone cannot validate host persistence.
+
+The runtime proposal was withdrawn. The existing private FAT disk and export
+flow remain. A usable replacement needs reliable host writeback before it can
+become the default; the vvfat request remains incomplete.
+
+Evidence is outside artifacts, under the Windows OS temporary directory:
+`C:\Users\Administrator\AppData\Local\Temp\2\efi-agent`.
+`vvfat-6f42be6a94ba4fe59af403717083f0ce` retains the short host result and QEMU
+log; `vvfat-e5f99a2fa7d24cb09fae622b2a14177c` retains the later workspace and
+log. `vvfat-proposal/tracked.patch` and its adjacent new source files retain
+the withdrawn implementation for review. These are temporary local evidence,
+not distribution inputs. Each test stopped only its own VM and psmux session.
+
+Intermediate issues: Windows Git replaced slow WSL working-tree operations.
+A routing lifetime error and unused imports were corrected. FAT creation
+initially rejected unsupported permissions; creation-only handling fixed that
+error but did not fix vvfat writeback. `efi-agent.exe pack artifacts/esp
+artifacts/efi-agent-vm.img` rejected an existing image; subsequent builds used
+new temporary image paths. `cargo.exe build --locked --release -p efi-agent
+--bin efi-agent` initially met a Windows file lock from a test-owned launcher;
+it succeeded after that test exited. An initial `curl.exe -fL --connect-timeout
+15 --max-time 30 https://raw.githubusercontent.com/qemu/qemu/master/block/vvfat.c
+-o ...` timed out, and the Windows port-2080 proxy refused the retry. A later
+WSL curl request obtained the source. No proxy settings were added to the repo.
+Read-only probes of nonexistent paths and a failed documentation patch anchor
+were corrected. QEMU interrupt-vector and GLib manifest warnings were nonfatal.
+
 ## 2026-11-01: Keep dependency notices outside the workspace
 
 Removed license paths from the runtime installation manifest and command
