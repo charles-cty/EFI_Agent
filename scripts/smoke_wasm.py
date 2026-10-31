@@ -605,7 +605,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                 text = send("/wasm run ash -c echo${IFS}ASH_REAL_ENGINE_OK", f"PID {pid}: Completed (exit code 0)")
                 assert any(line.strip() == "ASH_REAL_ENGINE_OK" for line in text.splitlines())
                 if args.quickjs:
-                    script = (r'''Promise.all([$`echo\x20${"a'b"}`,$`echo\x20second`])'''
+                    script = (r'''Promise.all([ash`echo\x20${"a'b"}`,ash`echo\x20second`])'''
                               r'''.then(r=>{if(r[0].stdout!=="a'b\n"||r[1].stdout!=='second\n')throw(Error('capture'));'''
                               r"print('QUICKJS_REAL_ASH_OK')})")
                     text = send(f"/wasm run quickjs -e {script}", f"PID {pid + 1}: Completed (exit code 0)")
@@ -621,7 +621,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                     send(f"/wasm reap {pid + 1}", f"WASM: Unknown WASM process: {pid + 1}")
                     if args.quickjs:
                         pid += 2
-                        script = (r"$`ash_child\x20exit\x2017`.then(()=>{throw(Error('status'))},"
+                        script = (r"ash`ash_child\x20exit\x2017`.then(()=>{throw(Error('status'))},"
                                   r"r=>{if(r.exitCode!==17)throw(Error('status'));print('QUICKJS_ASH_EXTERNAL_OK')})")
                         text = send(f"/wasm run quickjs -e {script}", f"PID {pid}: Completed (exit code 0)")
                         assert any(line.strip() == "QUICKJS_ASH_EXTERNAL_OK" for line in text.splitlines())
@@ -641,7 +641,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                         send(f"/wasm reap {pid + 1}", f"WASM: Unknown WASM process: {pid + 1}")
                         if args.quickjs:
                             pid += 2
-                            script = (r"if((await($`value=$(ash_child\x20produce|ash_child\x20copy|ash_child\x20verify);"
+                            script = (r"if((await(ash`value=$(ash_child\x20produce|ash_child\x20copy|ash_child\x20verify);"
                                       r"echo\x20$value`)).stdout!=='ASH_BOUNDED_PIPELINE_OK\n')throw(Error('pipeline'));"
                                       r"print('UEFI_ASH_TASKS_OK')")
                             text = send(f"/wasm run quickjs -e {script}", f"PID {pid}: Completed (exit code 0)")
@@ -666,7 +666,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                             send(f"/wasm reap {child}", f"WASM: Unknown WASM process: {child}")
                         if args.quickjs:
                             pid += 3
-                            script = (r'''if((await($`echo\x20${'one\x20two\x20位'}|'''
+                            script = (r'''if((await(ash`echo\x20${'one\x20two\x20位'}|'''
                                       r'''(read\x20-r\x20a\x20b;echo\x20"$a:$b")`)).stdout!=='''
                                       r"'one:two\x20位\n')throw(Error('read'));print('UEFI_QUICKJS_READ_OK')")
                             text = send(f"/wasm run quickjs -e {script}", f"PID {pid}: Completed (exit code 0)")
@@ -680,7 +680,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                             assert "-9223372036854775808:fffffffffffffffe" in text
                             if args.quickjs:
                                 pid += 1
-                                script = (r"const/**/r=await($`printf\x20'%b'\x20'a\\000b'`);"
+                                script = (r"const/**/r=await(ash`printf\x20'%b'\x20'a\\000b'`);"
                                           r"if(r.stdout!=='a\0b'||r.stderr!=='')throw(Error('binary'));"
                                           r"print('UEFI_QUICKJS_PRINTF_BINARY_OK')")
                                 text = send(f"/wasm run quickjs -e {script}", f"PID {pid}: Completed (exit code 0)")
@@ -698,7 +698,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                     text = send(f"/wasm run ash -c {script}", "UEFI_ASH_FILES_OK", complete_line=True)
                     assert "<first>" in text and "<second>" in text
                     if args.quickjs:
-                        script = (r"if((await($`read\x20-r\x20line<shell.txt;printf\x20'%s'\x20\"$line\"`)).stdout!=="
+                        script = (r"if((await(ash`read\x20-r\x20line<shell.txt;printf\x20'%s'\x20\"$line\"`)).stdout!=="
                                   r"'first')throw(Error('file'));print('UEFI_QUICKJS_FILES_OK')")
                         send(f"/wasm run quickjs -e {script}", "UEFI_QUICKJS_FILES_OK", complete_line=True)
             if args.directories:
@@ -710,7 +710,7 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                     send(f"/wasm run ash -c {script}", "UEFI_ASH_DIRECTORY_OK", complete_line=True)
                     if args.quickjs:
                         expected = json.dumps(expected_glob(directory_entries).decode("utf-8")).replace(" ", r"\x20")
-                        script = (r"const/**/r=await($`printf\x20'<%s>\\n'\x20directory-fixture/*.txt`);"
+                        script = (r"const/**/r=await(ash`printf\x20'<%s>\\n'\x20directory-fixture/*.txt`);"
                                   f"if(r.stdout!=={expected}||r.stderr!=='')throw(Error('glob'));"
                                   "print('UEFI_QUICKJS_DIRECTORY_OK')")
                         send(f"/wasm run quickjs -e {script}", "UEFI_QUICKJS_DIRECTORY_OK", complete_line=True)
@@ -804,8 +804,8 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                 send(f'/wasm reap {peer[1]}', f'Reaped {peer[1]}: Exited(37)')
                 digest = hashlib.sha256(CURL_UPLOAD).hexdigest()
                 if args.quickjs and args.ash:
-                    script = (r"Promise.all([$`curl\x20--silent\x20--show-error\x20--noproxy\x20'*'\x20--data-binary\x20@curl-upload.bin\x20"
-                              + base + r"/upload`,$`echo\x20SHELL_PEER`]).then(r=>{if(r[0].stdout!=='"
+                    script = (r"Promise.all([ash`curl\x20--silent\x20--show-error\x20--noproxy\x20'*'\x20--data-binary\x20@curl-upload.bin\x20"
+                              + base + r"/upload`,ash`echo\x20SHELL_PEER`]).then(r=>{if(r[0].stdout!=='"
                               + digest + r"'||r[1].stdout!=='SHELL_PEER\n')throw(Error('curl'));print('QUICKJS_ASH_CURL_OK')})")
                     send("/clear", "Conversation cleared")
                     text = send(f"/wasm run quickjs -e {script}", "QUICKJS_ASH_CURL_OK", complete_line=True)
@@ -899,9 +899,9 @@ print('UEFI_PYTHON_STANDARD_SCRIPT_OK')
                     assert ssh_peer.commands == commands
                     assert ssh_peer.auth_attempts == attempts + [("guest", "incorrect")]
                     if args.quickjs:
-                        script = (r"Promise.all([$`wolfssh\x20" + ssh_arguments.replace(" ", r"\x20")
+                        script = (r"Promise.all([ash`wolfssh\x20" + ssh_arguments.replace(" ", r"\x20")
                                   + r"\x20nonzero`.then(()=>{throw(Error('status'))},r=>{if(r.exitCode!==23||r.stdout!=='remote-output\n'||r.stderr!=='remote-error\n')throw(Error('capture'))}),"
-                                  + r"$`echo\x20SSH_PEER`]).then(r=>{if(r[1].stdout!=='SSH_PEER\n')throw(Error('peer'));print('QUICKJS_ASH_WOLFSSH_OK')})")
+                                  + r"ash`echo\x20SSH_PEER`]).then(r=>{if(r[1].stdout!=='SSH_PEER\n')throw(Error('peer'));print('QUICKJS_ASH_WOLFSSH_OK')})")
                         send("/clear", "Conversation cleared")
                         send(f"/wasm run quickjs -e {script}", "QUICKJS_ASH_WOLFSSH_OK", complete_line=True)
                         text = wait("Ready")
@@ -979,8 +979,8 @@ print('UEFI_CPYTHON_SHELL_OK')
                     assert actual_status == status, (name, actual_status, status, text)
                     send(f'/wasm reap {root}', f'Reaped {root}: Exited({status})')
                 if args.quickjs:
-                    script = (r"await(Promise.all([$`i=0;sum=0;while\x20[\x20$i\x20-lt\x2021\x20];do\x20sum=$((sum+i*i));i=$((i+1));done;echo\x20CALC:$sum`,"
-                              r"$`test\x20invalid\x20-eq\x201`.then(()=>{throw(Error('test'))},r=>{if(r.exitCode!==2||r.stderr!=='invalid:\x20out\x20of\x20range\n')throw(Error('status'))})])"
+                    script = (r"await(Promise.all([ash`i=0;sum=0;while\x20[\x20$i\x20-lt\x2021\x20];do\x20sum=$((sum+i*i));i=$((i+1));done;echo\x20CALC:$sum`,"
+                              r"ash`test\x20invalid\x20-eq\x201`.then(()=>{throw(Error('test'))},r=>{if(r.exitCode!==2||r.stderr!=='invalid:\x20out\x20of\x20range\n')throw(Error('status'))})])"
                               r".then(r=>{if(r[0].stdout!=='CALC:2870\n')throw(Error('math'));print('QUICKJS_ASH_MATH_OK')}))")
                     send("/clear", "Conversation cleared")
                     send(f"/wasm run quickjs -e {script}", "QUICKJS_ASH_MATH_OK", complete_line=True)

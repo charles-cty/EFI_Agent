@@ -49,13 +49,13 @@ def main():
     if args.quickjs:
         script = r"""
 const results = await Promise.all([
-    $`echo ${"a'b"} ${['', 'x;$(bad)', 'λ']}`,
-    $`echo ${"second"}`,
+    ash`echo ${"a'b"} ${['', 'x;$(bad)', 'λ']}`,
+    ash`echo ${"second"}`,
 ]);
 if (results[0].stdout !== "a'b  x;$(bad) λ\n" ||
     results[1].stdout !== 'second\n') throw Error('Shell quoting or capture');
 let rejected = false;
-try { await $`exit 17`; } catch (result) {
+try { await ash`exit 17`; } catch (result) {
     rejected = result.exitCode === 17;
 }
 if (!rejected) throw Error('Shell status lost');

@@ -56,7 +56,7 @@ def main():
         print("PASS raw directory cookies, partial records, rewind, rights and libc enumeration")
         assert run("ash", "-c", "printf '<%s>\\n' directory-fixture/*.txt") == expected_glob(entries)
         print("PASS actual ash Unicode, spaces, hidden-name exclusion and directory glob matches")
-        script = ("const result=await $`printf '<%s>\\n' directory-fixture/*.txt`;"
+        script = ("const result=await ash`printf '<%s>\\n' directory-fixture/*.txt`;"
                   f"if(result.stdout!=={json.dumps(expected_glob(entries).decode('utf-8'))}"
                   "||result.stderr!=='')throw Error('glob');print('QUICKJS_DIRECTORY_OK')")
         assert run("quickjs", "-e", script) == b"QUICKJS_DIRECTORY_OK\n"
@@ -69,7 +69,7 @@ def main():
         assert run("ash", "-c", script) == b"<nested>"
         assert DirectoryWorkspace(tree).read("task.txt") == b"nested\n"
         print("PASS fresh ash task sees the same filesystem")
-        script = "const result=await $`read -r line < shell.txt; printf '%s' \"$line\"`; if(result.stdout!=='first')throw Error('file'); print('QUICKJS_FILE_OK')"
+        script = "const result=await ash`read -r line < shell.txt; printf '%s' \"$line\"`; if(result.stdout!=='first')throw Error('file'); print('QUICKJS_FILE_OK')"
         assert run("quickjs", "-e", script) == b"QUICKJS_FILE_OK\n"
         print("PASS QuickJS actual ash file capture")
 

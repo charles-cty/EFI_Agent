@@ -14,6 +14,17 @@ completion. Verification of a staging package does not verify those paths.
 
 # Current state
 
+QuickJS exposes the zx-style shell template as ash. The public dollar global
+is absent. Model instructions, tool descriptions and maintained examples use
+ash. Real session/REPL checks cover quoting, configured templates, output
+iteration and reset/cancel behavior. All 256 host checks, host/UEFI Clippy and
+Release builds pass. Both standard trees and images were refreshed and checked
+against all 1,150 declared runtime files, EFI entries and ten notices. Native
+configuration bytes are preserved. Actual Windows WHPX at 256 MiB passes new
+BusyBox arithmetic/truncate, ash templates and independently checked saved
+host bytes. This focused run does not repeat the full network/application
+combination or native hardware boot. Evidence is in docs/verification.md.
+
 The shared BusyBox image now installs 78 command names, including 27 new
 file/text, comparison, arithmetic, checksum and compression applets.
 The full selection and deferred commands are in docs/busybox-applets.md.
@@ -191,7 +202,7 @@ C stat/lstat/fstatat preserve retained cwd and original link/parent components.
 The model tools are read, write, edit, shell, js and reset_js. Each conversation creates
 ash and QuickJS interpreters on first use and retains each started interpreter.
 JavaScript global declarations, functions and closures persist. Top-level await,
-print, console.log/error, quit and asynchronous $ shell commands are available.
+print, console.log/error, quit and asynchronous ash shell commands are available.
 The QuickJS WASI adapter uses vendored zx@8.8.5-lite quoting, interpolation and
 ProcessOutput. Supported options and port limits are in vendor/zx/PORT.md.
 BusyBox ASH_BASH_COMPAT is enabled. Bash extensions cross fresh shell tasks,
@@ -299,7 +310,7 @@ waitpid_nohang lets command event loops drain all child streams. Module
 registration eagerly compiles functions; execution remains fuel-scheduled.
 Stream fd_seek returns SPIPE. QuickJS 2026-06-04 builds with Windows WASI SDK
 34 through scripts/build_quickjs.ps1. It links the engine without quickjs-libc
-and exposes print and a Promise-based $ command template, quoting each
+and exposes print and a Promise-based ash command template, quoting each
 interpolated shell word. Commands spawn registered ash instances with -c and
 capture stdout/stderr. Host wasmi verified the real engine and command ABI
 against both a probe and actual ash builtins. Actual QEMU/OVMF also verified the

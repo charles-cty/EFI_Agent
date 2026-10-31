@@ -78,11 +78,11 @@ echo "$EXPORTED:${TEMP-unset}"
         print("PASS ash converts direct i32 guest exits to eight-bit shell statuses")
 
         result = run("quickjs", r"""
-const ok = await $`TEMP=temporary EXPORTED=override ash_child inspect ${['', "a'b", 'λ']}; echo status:$?`;
+const ok = await ash`TEMP=temporary EXPORTED=override ash_child inspect ${['', "a'b", 'λ']}; echo status:$?`;
 if (ok.stdout !== 'ASH_EXTERNAL_ARGUMENTS_ENV_OK\nstatus:7\n' ||
     ok.stderr !== 'ASH_EXTERNAL_STDERR_OK\n') throw Error('External capture');
 let rejected = false;
-try { await $`ash_child exit 17`; } catch (result) {
+try { await ash`ash_child exit 17`; } catch (result) {
     rejected = result.exitCode === 17;
 }
 if (!rejected) throw Error('External status');

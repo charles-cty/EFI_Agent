@@ -88,7 +88,7 @@ def main():
         print("PASS ash read invalid options and unsupported terminal control")
 
         script = r"""
-const result = await $`echo ${'one two λ'} | { read -r a b; echo "$a:$b"; }`;
+const result = await ash`echo ${'one two λ'} | { read -r a b; echo "$a:$b"; }`;
 if (result.stdout !== 'one:two λ\n' || result.stderr !== '') throw Error('read capture');
 print('QUICKJS_ASH_READ_OK');
 """

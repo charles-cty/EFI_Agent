@@ -172,7 +172,7 @@ def main():
         print("PASS 300 fresh shell tasks release snapshot descriptors")
 
         script = r"""
-const result = await $`ash_child produce | ash_child copy | ash_child verify`;
+const result = await ash`ash_child produce | ash_child copy | ash_child verify`;
 if (result.stdout !== 'ASH_BOUNDED_PIPELINE_OK\n' || result.stderr !== '')
     throw Error('Pipeline capture');
 print('QUICKJS_ASH_PIPELINE_OK');

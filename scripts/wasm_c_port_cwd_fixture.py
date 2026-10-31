@@ -44,7 +44,7 @@ assert open(cwd + '/download', 'rb').read() == payload
 child(['curl', '-q', '-sS', '-T', 'input', 'file://' + cwd + '/uploaded'], cwd=cwd)
 assert open(cwd + '/uploaded', 'rb').read() == payload
 expected = cwd + '\n' + hashlib.sha256(payload).hexdigest() + '  input\n'
-script = ('const r = await $`pwd -P; sha256sum input`;'
+script = ('const r = await ash`pwd -P; sha256sum input`;'
           'if(r.stdout !== ' + repr(expected) + ') throw Error(r.stdout);'
           'print("QUICKJS_CWD_OK");')
 child(['quickjs', '-e', script], b'QUICKJS_CWD_OK\n', cwd=cwd)

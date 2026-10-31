@@ -15,8 +15,8 @@ const fixed = 731;
 var mutable = 'retained';
 function add(value) { return value + fixed; }
 let closure = () => counter;
-let shellResult = await $`test -z "$SESSION_VALUE"`;
-await $`printf '%s' js-started > /session-js-started`;
+let shellResult = await ash`test -z "$SESSION_VALUE"`;
+await ash`printf '%s' js-started > /session-js-started`;
 print('JS_SESSION_STARTED');''', 'JS_SESSION_STARTED'),
     ('shell', '''test "$?" -eq 1 || exit 21
 test "$SESSION_VALUE" = retained || exit 22
@@ -29,8 +29,8 @@ if read unexpected; then exit 25; fi
 printf 'SHELL_SESSION_RETAINED\\n' ''', 'SHELL_SESSION_RETAINED'),
     ('js', '''counter += 1;
 if (counter !== 42 || closure() !== 42 || add(1) !== 732 || mutable !== 'retained') throw Error('Lost globals');
-await $`mv /tmp/session-old /tmp/session-new`;
-shellResult = await $`if read value; then exit 1; fi; echo FINITE_STDIN`;
+await ash`mv /tmp/session-old /tmp/session-new`;
+shellResult = await ash`if read value; then exit 1; fi; echo FINITE_STDIN`;
 if (shellResult.stdout.trim() !== 'FINITE_STDIN') throw Error('Unexpected stdin');
 print('JS_SESSION_RETAINED');''', 'JS_SESSION_RETAINED'),
     ('shell', '''test "$(pwd)" = /tmp/session-new || exit 31
@@ -49,7 +49,7 @@ export CLEAR_SESSION=pending
 cd /tmp/session-new''', 'SHELL_EXIT_RESET_OK'),
     ('js', 'quit(9);', 'Session reset.'),
     ('js', '''if (typeof counter !== 'undefined') throw Error('State survived quit');
-await $`printf 'SESSIONS_OK\\n' > /sessions-result`;
+await ash`printf 'SESSIONS_OK\\n' > /sessions-result`;
 print('SESSIONS_OK');
 let clear_token = 'pending';''', 'SESSIONS_OK'),
     ('js', "let clear_token = 'again';", 'SyntaxError'),
@@ -57,12 +57,12 @@ let clear_token = 'pending';''', 'SESSIONS_OK'),
     ('js', "await Promise.reject(Error('JS_EXPECTED_REJECTION'));", 'JS_EXPECTED_REJECTION'),
     ('js', "let handled = Promise.reject(Error('JS_HANDLED')); handled.catch(() => {}); print('JS_HANDLED_REJECTION_OK');", 'JS_HANDLED_REJECTION_OK'),
     ('js', "Promise.reject(Error('JS_UNHANDLED_REJECTION'));", 'JS_UNHANDLED_REJECTION'),
-    ('js', "$`sleep 100`; throw Error('JS_CANCEL_PENDING_ON_ERROR');", 'JS_CANCEL_PENDING_ON_ERROR'),
-    ('js', '''shellResult = await $`printf '%s' ${["a b", "'quoted'", '中', '$HOME']}`;
+    ('js', "ash`sleep 100`; throw Error('JS_CANCEL_PENDING_ON_ERROR');", 'JS_CANCEL_PENDING_ON_ERROR'),
+    ('js', '''shellResult = await ash`printf '%s' ${["a b", "'quoted'", '中', '$HOME']}`;
 if (shellResult.stdout !== "a b'quoted'中$HOME") throw Error('Word quoting failed');
-try { await $`echo bad >&2; exit 7`; throw Error('Command succeeded'); }
+try { await ash`echo bad >&2; exit 7`; throw Error('Command succeeded'); }
 catch (error) { if (error.exitCode !== 7 || error.stderr !== 'bad\\n') throw error; }
-await Promise.all([$`printf a`, $`printf b`]);
+await Promise.all([ash`printf a`, ash`printf b`]);
 print('JS_ASYNC_RECOVERED');''', 'JS_ASYNC_RECOVERED'),
     ('js', "if (typeof clear_token !== 'string') throw Error('Lost state'); console.error('JS_STDERR_OK');", 'JS_STDERR_OK'),
     ('js', "let lateResolve; await new Promise(resolve => { lateResolve = resolve; }); print('STALE_REQUEST_RESUMED');", 'Session reset.'),

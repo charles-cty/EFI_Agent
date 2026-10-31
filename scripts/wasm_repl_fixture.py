@@ -76,7 +76,7 @@ def exercise_repl(send, wait, connection, provider, timeout):
 
     enter('js')
     command('modelValue + 2', '733', exact=True)
-    command("(await $`printf '%s%s' REPL_ AWAITED`).stdout", 'REPL_AWAITED')
+    command("(await ash`printf '%s%s' REPL_ AWAITED`).stdout", 'REPL_AWAITED')
     command("throw Error('REPL_' + 'EXPECTED_ERROR')", 'REPL_EXPECTED_ERROR')
     command('modelValue + 4', '735', exact=True)
     connection.sendall(b'unsubmitted draft\x03')
@@ -89,7 +89,7 @@ def exercise_repl(send, wait, connection, provider, timeout):
     visible = command('/wasm start ash background-loop.sh', 'WASM: ash background-loop.sh')
     background = int(re.search(r'WASM: ash background-loop.sh.*PID (\d+)', visible)[1])
     enter('js')
-    send("print('REPL_' + 'JS_CANCEL_READY'); await $`sleep 100`;")
+    send("print('REPL_' + 'JS_CANCEL_READY'); await ash`sleep 100`;")
     wait('REPL_JS_CANCEL_READY', timeout)
     connection.sendall(b'\x03')
     wait('Interpreter reset after cancellation', timeout, idle=True)

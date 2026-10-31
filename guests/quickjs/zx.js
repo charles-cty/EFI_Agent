@@ -12,6 +12,8 @@ const import_util = {once, getLines, iteratorToArray,
 const bufToString = value => String(value);
 const __yieldStar = value => value;
 const DLMTR = /\r?\n/;
+// The unchanged upstream ProcessOutput iterator reads this private setting.
+const $ = {delimiter: DLMTR};
 
 class ProcessPromise {
   constructor(command, options) {
@@ -102,7 +104,7 @@ function createShell(options) {
   const invoke = (pieces, ...args) => {
     if (isStringLiteral(pieces, ...args)) return makeCommand(pieces, args, {...options});
     if (args.length || pieces == null || typeof pieces !== 'object' || Array.isArray(pieces))
-      throw TypeError('$ requires a command template or options');
+      throw TypeError('ash requires a command template or options');
     checkOptions(pieces);
     return createShell({...options, ...pieces});
   };
@@ -127,7 +129,7 @@ ProcessOutput.prototype.text = function(encoding = 'utf8') {
     throw RangeError(`Unsupported WASI text encoding: ${encoding}`);
   return this.toString();
 };
-globalThis.$ = createShell({quote, prefix: '', postfix: '', quiet: false,
+globalThis.ash = createShell({quote, prefix: '', postfix: '', quiet: false,
   verbose: false, nothrow: false, cwd: null, env: null, input: ''});
 globalThis.quote = quote;
 globalThis.ProcessOutput = ProcessOutput;

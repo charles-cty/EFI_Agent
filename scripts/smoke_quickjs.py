@@ -24,8 +24,8 @@ if (typeof std !== 'undefined' || typeof os !== 'undefined' ||
     throw Error('Unexpected host interface');
 }
 const results = await Promise.all([
-    $`inspect ${"a'b"} ${['', 'x;$(bad)', 'λ']}`,
-    $`inspect ${"a'b"} ${['', 'x;$(bad)', 'λ']}`,
+    ash`inspect ${"a'b"} ${['', 'x;$(bad)', 'λ']}`,
+    ash`inspect ${"a'b"} ${['', 'x;$(bad)', 'λ']}`,
 ]);
 for (const result of results) {
     if (result.exitCode !== 0 || result.stdout !== 'probe-output' ||
@@ -34,12 +34,12 @@ for (const result of results) {
     }
 }
 let rejected = false;
-try { await $`fail`; } catch (result) {
+try { await ash`fail`; } catch (result) {
     rejected = result.exitCode === 17 && result.stderr === 'probe-error';
 }
 if (!rejected) throw Error('Missing rejection');
 let nulRejected = false;
-try { await $`inspect ${'x\0y'}`; } catch (error) {
+try { await ash`inspect ${'x\0y'}`; } catch (error) {
     nulRejected = error instanceof TypeError;
 }
 if (!nulRejected) throw Error('NUL accepted');

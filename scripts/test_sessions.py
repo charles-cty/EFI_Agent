@@ -30,7 +30,7 @@ def main():
         steps += [('clear', ''), *[(language, source) for language, source, _ in CLEAR_STEPS]]
         steps += [('cancel-shell', "echo SESSION_CANCEL_READY; sleep 100"),
                   ('shell', 'test "$(pwd)" = /; echo SHELL_CANCEL_RESET_OK'),
-                  ('cancel-js', "if (survivor !== 71) throw Error('Lost survivor'); print('SESSION_CANCEL_READY'); await $`sleep 100`;"),
+                  ('cancel-js', "if (survivor !== 71) throw Error('Lost survivor'); print('SESSION_CANCEL_READY'); await ash`sleep 100`;"),
                   ('js', "if (typeof survivor !== 'undefined') throw Error('Cancel retained state'); print('JS_CANCEL_RESET_OK');")]
         steps += [('shell', BASH_COMPAT_CHECK), ('js', ZX_CHECK),
                   ('shell', 'export JS_RESET_KEEP=retained; cd /tmp/session-new; exec 7> /reset-fd; printf first >&7'),
@@ -54,7 +54,7 @@ def main():
             ('shell', 'test "$REPL_SHARED" = yes && test "$(pwd)" = /tmp/session-new || exit 90; echo REPL_SHELL_SHARED'),
             ('repl-shell', '/bin/cat /repl-file'),
             ('repl-js', "/hello/.test('hello')"),
-            ('repl-js', '(await $`printf awaited`).stdout'),
+            ('repl-js', '(await ash`printf awaited`).stdout'),
             ('repl-js', '123n'),
             ('repl-js', 'undefined'),
             ('repl-js', 'quit(3)'),

@@ -67,7 +67,7 @@ def main():
         print("PASS signed and hexadecimal conversions match independent integer oracle")
 
         script = r"""
-const result = await $`printf '%b' 'a\\000b'`;
+const result = await ash`printf '%b' 'a\\000b'`;
 if (result.stdout !== 'a\0b' || result.stderr !== '') throw Error('binary capture');
 print('QUICKJS_PRINTF_BINARY_OK');
 """

@@ -374,7 +374,7 @@ IDs survive parent adoption. Idle session roots keep their output routing and
 do not create extra WASM panels.
 
 The JavaScript tool provides print, console.log, console.error, quit and the
-asynchronous $ command template. Top-level await is supported. Template values
+asynchronous ash command template. Top-level await is supported. Template values
 are quoted as shell words; arrays expand to separate words. Each command starts
 a fresh ash child, independent of the shell tool's retained state. The build
 embeds unchanged quoting, interpolation and ProcessOutput code from the pinned
@@ -386,7 +386,7 @@ stderr, stdall, ok and captureError. .nothrow() returns failed results. Outputs
 and ProcessPromises provide text(), json(), lines() and buffer(); buffer returns
 UTF-8 bytes as Uint8Array. Input is text, bounded to 512 KiB. Commands capture
 512 KiB per stream; stdall preserves dispatcher read order.
-`$({cwd, env, input, quiet, verbose, nothrow, prefix, postfix})` creates a configured
+`ash({cwd, env, input, quiet, verbose, nothrow, prefix, postfix})` creates a configured
 template. Environment settings overlay the child environment. Settings are
 snapshotted before asynchronous execution. `.pipe\`command\`` starts its consumer
 after collecting the producer's bounded stdout. Live streams, sync execution,
@@ -634,7 +634,7 @@ Packaging places these notices in EFI/AGENT/LICENSES. Run `quickjs -e SCRIPT`;
 top-level await is supported.
 The engine has a 32 MiB allocation limit and a 512 KiB JS stack limit.
 
-`$` uses the vendored zx@lite quote/buildCmd/substitute functions and
+`ash` uses the vendored zx@lite quote/buildCmd/substitute functions and
 ProcessOutput class. Safe words can remain unquoted; other words use upstream
 ANSI-C quoting, supported by ASH_BASH_COMPAT. Arrays expand to distinct words;
 Promises and command outputs follow upstream substitution rules. NUL is rejected.

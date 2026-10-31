@@ -9,7 +9,16 @@ License: Apache-2.0. Dependency notices are in `build/3rd-party-licenses`.
 The generated C header embeds that code with `guests/quickjs/zx.js`.
 The build needs Node.js but does not download packages or run npm.
 
-The WASI adapter supplies process execution and a thenable ProcessPromise.
+The WASI adapter exposes `ash` as its command template and supplies a thenable
+ProcessPromise. Use a tagged template, for example:
+
+```javascript
+const result = await ash`printf '%s' ${'two words'}`;
+```
+
+`ash({cwd, env, input})` creates a configured template. The global `$` is
+absent. The unchanged upstream output iterator uses a private delimiter
+settings object inside the bootstrap closure.
 It supports asynchronous commands, upstream interpolation, ProcessOutput errors,
 nothrow/quiet/verbose, text/JSON/lines/UTF-8 bytes, cwd, environment overlays,
 text input, and bounded completed-output pipelines through stdout/stderr/stdall.

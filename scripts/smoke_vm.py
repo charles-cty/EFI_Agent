@@ -122,7 +122,7 @@ class Provider(BaseHTTPRequestHandler):
         ("shell", {"command": "printf '%s\\n' 'a b' '中' > code-shell.txt\necho shell-out; echo shell-err >&2"}),
         ("shell", {"command": "export TOOL_SESSION_VALUE=retained; echo session-ash"}),
         ("shell", {"command": "test \"$TOOL_SESSION_VALUE\" = retained || exit 9; echo retained-ash"}),
-        ("js", {"code": "let retained = 731; const result = await $`printf '%s' 'js child 中' > code-js.txt`; print('js child 中');"}),
+        ("js", {"code": "let retained = 731; const result = await ash`printf '%s' 'js child 中' > code-js.txt`; print('js child 中');"}),
         ("shell", {"command": "echo failure-out; echo failure-err >&2; exit 7"}),
         ("js", {"code": "throw Error('code-error-419');"}),
         ("js", {"code": "print('A'.repeat(65535)); console.error('B'.repeat(65537));"}),
@@ -230,7 +230,7 @@ class Provider(BaseHTTPRequestHandler):
             else:
                 text = Provider.code_verified
         elif prompt == "Cancel JS code tool":
-            code = "await $`sleep 100`;"
+            code = "await ash`sleep 100`;"
             call = {"id": "cancel-code", "type": "function", "function": {"name": "js", "arguments": json.dumps({"code": code})}, "extra_content": {"signature": "SIGNED_419"}}
             text = ""
         elif prompt == "Cancel code tool":

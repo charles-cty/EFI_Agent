@@ -122,7 +122,7 @@ The default guest RAM is 256 MiB. Use `--memory-mib <MiB>` to change it.
 
 The model has `read`, `write`, `edit`, `shell`, `js` and `reset_js` tools. Shell and QuickJS
 state persist across calls. JavaScript supports top-level `await`, `print`,
-`console.log/error` and the asynchronous `$` shell command template. Run Python
+`console.log/error` and the asynchronous `ash` shell command template. Run Python
 through shell scripts or `python - <<'PY'` heredocs. `reset_js` releases only the
 JavaScript session; `/clear` resets both. Ash enables BusyBox Bash extensions.
 The WASI zx adapter uses vendored zx@lite quoting and output handling; see

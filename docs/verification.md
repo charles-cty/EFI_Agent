@@ -1,5 +1,60 @@
 # Verification record
 
+## 2026-11-01: Rename the JavaScript command template to ash
+
+The public QuickJS command template is now ash, with configured templates
+through ash(options). The dollar global is absent. Model instructions, the js
+tool definition, maintained examples and session/firmware fixtures use ash.
+The pinned zx distribution remains unchanged. Its ProcessOutput iterator reads
+a private delimiter settings object inside the bootstrap closure; that object
+does not export a command or global alias.
+
+The native Windows WASI SDK 34 QuickJS build and real session/REPL integration
+pass. The zx fixture checks absence of both a dollar global property and a
+resolvable dollar binding. It exercises shell-word quoting with structured
+random inputs, Promise/output interpolation, rejection/status, JSON/text/lines/
+bytes, configured cwd/environment/input, concurrent commands, output ordering,
+completed pipes and input-size boundaries. The session suite also checks shared
+REPL values/state, finite stdin, cancellation, reset, exit and saved bytes.
+
+All 256 Rust host unit/integration checks pass. Formatting, host all-targets
+Clippy and UEFI Clippy pass, with warnings denied. Both Release programs build.
+The final BusyBox extra-applet suite also passes after the vvfat proposal was
+withdrawn. Both standard trees (artifacts/esp and artifacts/native-esp) and
+both standard disk images were rebuilt with the current EFI and guest modules.
+Independent directory-journal and FAT readers verify all 1,150 runtime files,
+78 BusyBox aliases, boot entries and ten notices byte for byte. The original
+native CONFIG.JSON bytes are preserved. Old standard outputs were moved to
+the Windows temporary directory before promotion of the new outputs.
+
+Actual Windows WHPX with the standard VM tree and the default 256 MiB passes
+expr 64-bit arithmetic, bc arbitrary precision, truncate, direct shell exit,
+ash interpolation/options/input/lines, absence of the old global, QuickJS exit
+and launcher shutdown. Independent host reads verify both interpreter-written
+files and the truncated file length after exit. This acceptance uses the
+retained private-disk workspace flow. Native hardware boot and the complete
+network/application workload were not repeated.
+
+Evidence is under the Windows OS temporary directory efi-agent: host-tests.log
+(256 passing checks), ash-sessions.log, busybox-build.log,
+delivery-f4c4f95c6c814582a68308c2ca3ade33 (WHPX workspace and QEMU log), and
+final-package-acae95969575423298870007d42a3228/previous (previous packages).
+verify_delivery.py and test-delivery.ps1 there retain the independent checks.
+No verification workspaces were added to artifacts. The user's VM and workspace
+were not modified.
+
+Intermediate issues: a JavaScript text-replacement helper interpreted the
+dollar-quote sequence in a replacement string and broke a Python fixture.
+Restoring that fixture and using a replacement callback fixed it. The first
+renamed-command session then exposed upstream ProcessOutput.lines() referring
+to the former global; the private delimiter object fixed that failure, and
+the complete session suite passed. Expected negative-case session diagnostics
+remain visible in its log. QEMU's interrupt-vector and GLib manifest warnings
+were nonfatal. The cleanup command
+`if [ -d scripts/__pycache__ ]; then rm -rf scripts/__pycache__; fi` was rejected
+by the command runner. Cleanup instead deleted the nine generated .pyc files
+with .NET File.Delete and removed the now-empty directory with Directory.Delete.
+
 ## 2026-11-01: Additional upstream BusyBox applets
 
 Enabled 27 additional upstream applets in the maintained BusyBox image, for
