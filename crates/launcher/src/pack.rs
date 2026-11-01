@@ -8,13 +8,10 @@ use std::{
 };
 
 const MIB: u64 = 1024 * 1024;
-pub(crate) const MAX_SOURCE_BYTES: u64 = 64 * MIB;
+pub(crate) const MAX_SOURCE_BYTES: u64 = 160 * MIB;
 const MAX_ENTRIES: usize = 4096;
-
-fn esp_bytes(source_bytes: u64) -> u64 {
-    // Reserve room for FAT metadata, cluster rounding and guest mutations.
-    (source_bytes + 16 * MIB).div_ceil(64 * MIB) * 64 * MIB
-}
+// Leave space for a 128 MiB workspace, boot assets and FAT metadata.
+const ESP_BYTES: u64 = 192 * MIB;
 
 struct Entry {
     source: PathBuf,
@@ -134,7 +131,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         .try_fold(0u64, |sum, length| sum.checked_add(length))
         .ok_or("Boot tree size overflow")?;
     if source_bytes > MAX_SOURCE_BYTES {
-        return Err("Boot tree exceeds 64 MiB".into());
+        return Err("Boot tree exceeds 160 MiB".into());
     }
     // Never open a disk device or overwrite an existing artifact.
     let mut file = File::options()
@@ -142,7 +139,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         .write(true)
         .create_new(true)
         .open(output)?;
-    let result = build(&mut file, &entries, esp_bytes(source_bytes));
+    let result = build(&mut file, &entries);
     drop(file);
     if let Err(error) = result {
         fs::remove_file(output)?;
@@ -151,12 +148,38 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn build(
-    file: &mut File,
-    entries: &[Entry],
-    esp_bytes: u64,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let disk_bytes = esp_bytes + 2 * MIB;
+#[cfg(windows)]
+fn enable_sparse(file: &File) -> io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::{IO::DeviceIoControl, Ioctl::FSCTL_SET_SPARSE};
+
+    let mut returned = 0;
+    // The synchronous call borrows the live file handle and output count only.
+    if unsafe {
+        DeviceIoControl(
+            file.as_raw_handle(),
+            FSCTL_SET_SPARSE,
+            core::ptr::null(),
+            0,
+            core::ptr::null_mut(),
+            0,
+            &mut returned,
+            core::ptr::null_mut(),
+        )
+    } == 0
+    {
+        return Err(io::Error::other(format!(
+            "Enable sparse disk image: {}",
+            io::Error::last_os_error()
+        )));
+    }
+    Ok(())
+}
+
+fn build(file: &mut File, entries: &[Entry]) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(windows)]
+    enable_sparse(file)?;
+    let disk_bytes = ESP_BYTES + 2 * MIB;
     file.set_len(disk_bytes)?;
     gpt::mbr::ProtectiveMBR::with_lb_size((disk_bytes / 512 - 1) as u32).overwrite_lba0(file)?;
     let mut disk = gpt::GptConfig::new()
@@ -165,7 +188,7 @@ fn build(
         .create_from_device(&mut *file, None)?;
     let id = disk.add_partition(
         "EFI Agent",
-        esp_bytes,
+        ESP_BYTES,
         gpt::partition_types::EFI,
         0,
         Some(2048),
@@ -226,7 +249,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn fat_roundtrips_both_sizes_and_rejects_oversize_before_creating_output() {
+    fn fat_roundtrips_boot_tree_sizes_and_rejects_oversize_before_creating_output() {
         let temporary = std::env::temp_dir().join(format!(
             "efi-pack-boundaries-{}-{}",
             std::process::id(),
@@ -239,11 +262,7 @@ mod tests {
         fs::create_dir_all(tree.join("EFI/BOOT")).unwrap();
         fs::write(tree.join("EFI/BOOT/BOOTX64.EFI"), b"test EFI").unwrap();
         let payload = tree.join("payload.bin");
-        for (index, source_size, disk_size) in [
-            (0, 48 * MIB, 66 * MIB),
-            (1, 48 * MIB + 1, 130 * MIB),
-            (2, 64 * MIB, 130 * MIB),
-        ] {
+        for (index, source_size, disk_size) in [(0, MIB, 194 * MIB), (1, 160 * MIB, 194 * MIB)] {
             let size = source_size - 8;
             let mut source = File::create(&payload).unwrap();
             source.set_len(size).unwrap();
@@ -283,7 +302,7 @@ mod tests {
             .write(true)
             .open(payload)
             .unwrap()
-            .set_len(64 * MIB - 7)
+            .set_len(160 * MIB - 7)
             .unwrap();
         let rejected = temporary.join("oversize.img");
         let error = run(vec![
@@ -291,7 +310,7 @@ mod tests {
             rejected.to_string_lossy().into(),
         ])
         .unwrap_err();
-        assert!(error.to_string().contains("exceeds 64 MiB"));
+        assert!(error.to_string().contains("exceeds 160 MiB"));
         assert!(!rejected.exists());
         fs::remove_dir_all(temporary).unwrap();
     }

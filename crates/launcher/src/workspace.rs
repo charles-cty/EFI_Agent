@@ -17,7 +17,7 @@ use std::{
 
 type Error = Box<dyn std::error::Error>;
 const HOST_METADATA: &str = ".efi-agent-workspace.json";
-const MAX_BYTES: u64 = 48 * 1024 * 1024;
+const MAX_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_ENTRIES: usize = 4096;
 const MAX_METADATA: u64 = 4 * 1024 * 1024;
 
@@ -751,6 +751,52 @@ mod tests {
     }
 
     #[test]
+    fn workspace_byte_limit_roundtrips_and_rejects_one_extra_byte_before_staging() {
+        let source = Work::new();
+        let payload = vec![193; 32 * 1024 * 1024];
+        for name in ["a", "b", "c", "d"] {
+            fs::write(source.0.join(name), &payload).unwrap();
+        }
+        let expected = host(&source.0).unwrap();
+        let temporary = Work::new();
+        let staged = temporary.0.join("staged");
+        stage(&expected, &staged).unwrap();
+        let exported = guest(&staged, &Snapshot::new()).unwrap();
+        assert_eq!(exported, expected);
+        let destination = Work::new();
+        save(&destination.0, &Snapshot::new(), &exported).unwrap();
+        assert_eq!(fs::read(destination.0.join("a")).unwrap(), payload);
+        assert_eq!(fs::read(destination.0.join("b")).unwrap(), payload);
+        assert_eq!(host(&destination.0).unwrap(), expected);
+
+        let mut oversized = expected;
+        oversized.insert("extra".into(), file(b"x"));
+        let rejected = temporary.0.join("rejected");
+        assert!(stage(&oversized, &rejected).is_err());
+        assert!(!rejected.exists());
+        fs::write(source.0.join("extra"), b"x").unwrap();
+        assert!(host(&source.0).is_err());
+        let namespace = Namespace::open(Rc::new(NativeFileSystem(staged.clone())), None).unwrap();
+        let mut extra = namespace
+            .open(
+                "extra",
+                OpenOptions {
+                    read: false,
+                    write: true,
+                    create: true,
+                    exclusive: false,
+                    truncate: false,
+                    append: false,
+                },
+            )
+            .unwrap();
+        extra.write(b"x").unwrap();
+        drop(extra);
+        namespace.flush().unwrap();
+        assert!(guest(&staged, &Snapshot::new()).is_err());
+    }
+
+    #[test]
     fn staged_namespace_survives_fat_save_reload_and_restage_with_all_attributes() {
         let work = Work::new();
         let tree = work.0.join("tree");
@@ -869,7 +915,7 @@ mod tests {
     #[test]
     fn hard_link_groups_count_bytes_once_and_reject_inconsistent_snapshots_before_staging() {
         let work = Work::new();
-        let original = entry(Contents::File(Rc::from(vec![193; 25 * 1024 * 1024])));
+        let original = entry(Contents::File(Rc::from(vec![193; 65 * 1024 * 1024])));
         let mut alias = original.clone();
         alias.hard_link = Some("a".into());
         let valid = Snapshot::from([("a".into(), original), ("b".into(), alias)]);
@@ -878,7 +924,7 @@ mod tests {
             let mut invalid = valid.clone();
             let alias = invalid.get_mut("b").unwrap();
             match case {
-                0 => alias.hard_link = None, // Two independent 25 MiB files exceed the limit.
+                0 => alias.hard_link = None, // Two independent 65 MiB files exceed the limit.
                 1 => alias.hard_link = Some("missing".into()),
                 2 => alias.hard_link = Some("b".into()),
                 3 => alias.attributes.mode ^= 0o100,

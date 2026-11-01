@@ -492,7 +492,12 @@ The current WASI Preview 1 imports are `args_sizes_get`, `args_get`,
 `fd_readdir`, `fd_prestat_get`, `fd_prestat_dir_name`, `path_open`,
 `path_filestat_get`, `path_readlink`, `random_get`, `poll_oneoff`,
 `clock_time_get`, `clock_res_get`, `proc_exit`, and `sched_yield`.
-Firmware roots start with an empty environment. Descriptor 0 reads finite input and
+Firmware roots and new shell/JavaScript sessions start with `PYTHON_BASIC_REPL=1`.
+The config `environment` object overrides default values; the launcher accepts
+this object through `EFI_AGENT_ENVIRONMENT`. Shell exports and unsets persist
+within a session. Children inherit their parent's current values, and explicit
+child environments replace them. Resetting a session restores configured defaults.
+Descriptor 0 reads finite input and
 returns EOF when the input is empty. Descriptors 1 and 2 append to distinct
 output buffers, each bounded to 512 KiB between host drains. Full buffers
 suspend writes until the host drains them; available space permits a short
@@ -542,8 +547,10 @@ WASI environ_sizes_get/environ_get return this process-local startup list.
 Shell exports and guest libc mutations require explicit environment passing;
 they do not update the host's stored list automatically.
 
-Hosts can create roots with `World::spawn_with_environment`; no Windows or
-Linux host environment is copied implicitly. The C helper
+Hosts can set defaults for future roots and sessions with
+`World::set_default_environment`, or create a root with an explicit environment
+through `World::spawn_with_environment`. No Windows or Linux host environment
+is copied implicitly. The C helper
 `efi_process_spawn_argv_env_fds` packs both lists into caller-owned scratch
 space. BusyBox can use it with the actual shell export list when dispatching
 external commands as fresh instances.
@@ -1042,7 +1049,7 @@ its source error rather than fabricated executable metadata. The installed
 CPython startup name is retained to locate its unchanged packaged library,
 including under `-I`.
 
-`efi-agent catalog <prepared-directory>` writes the standard five-port catalog
+`efi-agent catalog <prepared-directory>` writes the standard six-port catalog
 after checking prepared binaries, libraries and the separate licenses directory.
 `efi-agent install <prepared-directory> <workspace>` installs the declared
 runtime assets with conflict checks and preserves other workspace files. An
@@ -1054,7 +1061,7 @@ name alone does not advertise Node.js or Git.
 
 `scripts/build.ps1` uses the guest directory selected by `-Guests` (default
 `artifacts/wasm-guests`). It calls `scripts/build_guests.py` to prepare CPython
-and build BusyBox, QuickJS, wolfSSL, curl and WolfSSH, then builds the Rust
+and build BusyBox, QuickJS, wolfSSL, curl, WolfSSH and jq, then builds the Rust
 programs, refreshes the catalog and passes the assets to `efi-agent package`.
 `scripts/build.sh` uses the same native driver and accepts `--guests`.
 The driver uses Windows executables on Windows and native Linux tools on Linux.
@@ -1066,8 +1073,9 @@ Native packaging prepares the official UEFI Shell 26H1 x64 binary in
 Shell submodule for its license and source notice; EDK II compilation and
 recursive submodule initialization are unnecessary for this prebuilt binary.
 VM-only packaging skips the Shell step. VM and native packages include each module once
-and the Python library in work. BusyBox/curl/QuickJS/CPython/wolfSSH notices and
-the linked wolfSSL license are collected in the prepared licenses directory and
+and the Python library in work. BusyBox/curl/QuickJS/CPython/wolfSSH/jq notices and
+the linked wolfSSL and Oniguruma licenses are collected in the prepared licenses
+directory and
 copied to EFI/AGENT/LICENSES, outside work. Runtime installation and discovery
 do not require these notices in the user workspace. Build caches and undeclared
 files are excluded before size accounting. Existing package workspaces are

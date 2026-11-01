@@ -1,5 +1,5 @@
 //! Direct provider and boot-volume workspace configuration.
-use alloc::{format, string::String, vec::Vec};
+use alloc::{collections::BTreeMap, format, string::String, vec::Vec};
 use serde::Deserialize;
 
 #[derive(Clone, Deserialize, serde::Serialize)]
@@ -23,6 +23,25 @@ pub struct AgentConfig {
     /// Optional additional DER certificate on the boot volume for a private CA.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ca_certificate: Option<String>,
+    /// Guest startup values override the built-in defaults.
+    #[serde(default = "default_environment")]
+    pub environment: BTreeMap<String, String>,
+}
+
+pub fn default_environment() -> BTreeMap<String, String> {
+    BTreeMap::from([(String::from("PYTHON_BASIC_REPL"), String::from("1"))])
+}
+
+/// Resolve defaults once for new roots. Children inherit their parent's values.
+pub fn guest_environment(overrides: Option<&BTreeMap<String, String>>) -> Vec<String> {
+    let mut environment = default_environment();
+    if let Some(overrides) = overrides {
+        environment.extend(overrides.clone());
+    }
+    environment
+        .into_iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect()
 }
 
 #[derive(Clone, Deserialize, serde::Serialize)]
@@ -49,6 +68,19 @@ fn default_workspace() -> String {
 
 impl AgentConfig {
     pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in &self.environment {
+            if name.is_empty() || name.contains(['=', '\0']) || value.contains('\0') {
+                return Err("Guest environment requires non-empty names without '=' or NUL, and values without NUL".into());
+            }
+        }
+        if guest_environment(Some(&self.environment))
+            .iter()
+            .map(|entry| entry.len() + 1)
+            .sum::<usize>()
+            > 64 * 1024
+        {
+            return Err("Guest environment exceeds 64 KiB".into());
+        }
         if self.api_key.trim().is_empty() || self.model.trim().is_empty() {
             return Err("API key and model must be non-empty".into());
         }
@@ -148,6 +180,57 @@ fn components(path: &str) -> Result<Vec<&str>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn configuration() -> AgentConfig {
+        serde_json::from_str(
+            r#"{"api_base":"https://provider.example/v1","api_key":"test","model":"test"}"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn guest_environment_defaults_merge_with_explicit_overrides() {
+        let mut config = configuration();
+        config.validate().unwrap();
+        assert_eq!(guest_environment(None), ["PYTHON_BASIC_REPL=1"]);
+        assert_eq!(
+            guest_environment(Some(&config.environment)),
+            ["PYTHON_BASIC_REPL=1"]
+        );
+        config.environment = BTreeMap::from([
+            ("CUSTOM".into(), "a=b λ".into()),
+            ("PYTHON_BASIC_REPL".into(), String::new()),
+        ]);
+        config.validate().unwrap();
+        assert_eq!(
+            guest_environment(Some(&config.environment)),
+            ["CUSTOM=a=b λ", "PYTHON_BASIC_REPL="]
+        );
+        let restored: AgentConfig =
+            serde_json::from_slice(&serde_json::to_vec(&config).unwrap()).unwrap();
+        assert_eq!(restored.environment, config.environment);
+        config.environment.remove("PYTHON_BASIC_REPL");
+        assert_eq!(
+            guest_environment(Some(&config.environment)),
+            ["CUSTOM=a=b λ", "PYTHON_BASIC_REPL=1"]
+        );
+    }
+
+    #[test]
+    fn invalid_guest_environment_and_oversized_values_are_rejected() {
+        for (name, value) in [("", "x"), ("A=B", "x"), ("A\0B", "x"), ("A", "x\0y")] {
+            let mut config = configuration();
+            config.environment.insert(name.into(), value.into());
+            assert!(config.validate().is_err());
+        }
+        // Default entry takes 20 bytes; X=value plus NUL takes value.len() + 3.
+        for (size, valid) in [(65_512, true), (65_513, true), (65_514, false)] {
+            let mut config = configuration();
+            config.environment.insert("X".into(), "x".repeat(size));
+            assert_eq!(config.validate().is_ok(), valid, "{size}");
+        }
+    }
+
     #[test]
     fn module_paths_use_the_workspace_or_explicit_boot_volume_root() {
         let workspace = "\\projects\\demo";
@@ -210,6 +293,7 @@ mod tests {
             ipv4: None,
             ca_certificate: None,
             workspace: "\\work\\project".into(),
+            environment: default_environment(),
         };
         assert_eq!(
             config.resolve("src/main.rs").unwrap(),

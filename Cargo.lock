@@ -553,6 +553,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "vt100",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -603,9 +604,11 @@ dependencies = [
 name = "efi-agent-wasm"
 version = "0.1.0"
 dependencies = [
+ "efi-agent-core",
  "efi-agent-filesystem",
  "getrandom 0.2.17",
  "mio",
+ "serde_json",
  "wasmi",
  "wat",
 ]

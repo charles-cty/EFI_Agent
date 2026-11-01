@@ -107,6 +107,7 @@ impl Runtime {
         workspace: &str,
         ipv4: Option<efi_agent_core::config::StaticIpv4>,
         dns: ([u8; 4], u16),
+        environment: Vec<String>,
     ) -> Result<Self, String> {
         use efi_agent_wasm::clock::{Clock, ClockId};
         let clock = Rc::new(crate::wasm_clock::FirmwareClock::new());
@@ -123,6 +124,9 @@ impl Runtime {
             .map_err(|error| format!("Initialize workspace: {error:?}"))?,
         );
         let mut world = World::new();
+        world
+            .set_default_environment(environment)
+            .map_err(|error| error.to_string())?;
         world.set_clock(clock.clone());
         world.set_random(Rc::new(FirmwareRandom));
         world.set_network(Rc::new(crate::tcp::cooperative::FirmwareNetwork(ipv4)));

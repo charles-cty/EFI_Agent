@@ -176,7 +176,7 @@ pub fn run(args: Vec<String>) -> Result<(), Error> {
     install(Path::new(&args[0]), Path::new(&args[1]))
 }
 
-/// Generate the catalog for the five prepared application ports. User-supplied
+/// Generate the catalog for the prepared application ports. User-supplied
 /// modules use the same schema through an explicit installation manifest.
 pub fn catalog(args: Vec<String>) -> Result<(), Error> {
     if args.len() != 1 {
@@ -196,6 +196,7 @@ pub fn catalog(args: Vec<String>) -> Result<(), Error> {
             module("curl.wasm", &["curl"], &[]),
             module("quickjs.wasm", &["quickjs", "qjs"], &[]),
             module("wolfssh.wasm", &["wolfssh"], &[]),
+            module("jq.wasm", &["jq"], &[]),
         ],
     };
     selected(root, &manifest, false)?;
@@ -211,6 +212,8 @@ pub fn catalog(args: Vec<String>) -> Result<(), Error> {
         "zx.LICENSE",
         "zx-third-party.LICENSE",
         "wolfssh.LICENSING",
+        "jq.COPYING",
+        "oniguruma.COPYING",
     ] {
         if !notices.contains_key(name) {
             return Err(format!("Prepared distribution license is missing: {name}").into());

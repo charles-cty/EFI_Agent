@@ -10,6 +10,8 @@ efi-agent-filesystem.workspace = true
 wasmi = { version = "2.0.0", default-features = false, features = ["stable", "validate", "portable-dispatch", "indirect-dispatch", "prefer-btree-collections", "libm"] }
 
 [dev-dependencies]
+efi-agent-core.workspace = true
+serde_json = { workspace = true, features = ["std"] }
 efi-agent-filesystem = { workspace = true, features = ["std"] }
 getrandom = "0.2"
 mio = { version = "1", features = ["net", "os-poll"] }

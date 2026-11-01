@@ -124,6 +124,30 @@ def build_wolfssh(sdk, source, wolfssl, output):
     copy(wolfssl / 'COPYING', output / 'licenses/wolfssl.COPYING')
 
 
+def build_jq(sdk, source, output, jobs, msys_bash, reconfigure):
+    build = output / 'jq-build'
+    build.mkdir(parents=True, exist_ok=True)
+    cwd = build / 'cwd.o'
+    run(sdk / f'bin/clang{SUFFIX}', '--target=wasm32-wasip1', '-O2',
+        '-Wall', '-Wextra', '-Werror', '-c', 'guests/lib/cwd.c', '-o', cwd)
+    run(sdk / f'bin/llvm-ar{SUFFIX}', 'rcs', build / 'libefi_cwd.a', cwd)
+    script = (REPOSITORY / 'scripts/build_jq.sh').read_text(encoding='utf-8')
+    configuration = json.dumps({'source': str(source), 'sdk': str(sdk),
+                                'project': str(REPOSITORY), 'script': script}, indent=2)
+    record = build / 'configuration.json'
+    changed = not record.is_file() or record.read_text(encoding='utf-8') != configuration
+    if (reconfigure or changed) and (build / 'Makefile').exists():
+        (build / 'Makefile').unlink()
+    print(f'jq logs: {build / "configure.log"}, {build / "build.log"}', flush=True)
+    shell = msys_bash if os.name == 'nt' else 'bash'
+    run(shell, '-c', script, 'efi-jq-build', source, sdk, build, jobs,
+        'windows' if os.name == 'nt' else 'linux')
+    record.write_text(configuration, encoding='utf-8')
+    copy(build / 'jq', output / 'jq.wasm')
+    copy(source / 'COPYING', output / 'licenses/jq.COPYING')
+    copy(source / 'vendor/oniguruma/COPYING', output / 'licenses/oniguruma.COPYING')
+
+
 def prepare_python(output, archive=None):
     cache = REPOSITORY / 'artifacts/python-prebuilt'
     if archive is None:
@@ -164,7 +188,7 @@ def prepare_shell():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--component', default='all',
-                        choices=('all', 'quickjs', 'wolfssl', 'curl', 'wolfssh', 'python', 'shell'))
+                        choices=('all', 'quickjs', 'wolfssl', 'curl', 'wolfssh', 'jq', 'python', 'shell'))
     parser.add_argument('--wasi-sdk', type=Path, default=os.environ.get('WASI_SDK_PATH'))
     parser.add_argument('--binaryen', type=Path, default=os.environ.get('BINARYEN_PATH'))
     parser.add_argument('--output', type=Path)
@@ -191,7 +215,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     sdk = args.wasi_sdk.resolve() if args.wasi_sdk else None
     wolfssl = (args.wolfssl or REPOSITORY / 'artifacts/wasm-guests/wolfssl').resolve()
-    components = ('python', 'busybox', 'quickjs', 'wolfssl', 'curl', 'wolfssh')
+    components = ('python', 'busybox', 'quickjs', 'wolfssl', 'curl', 'wolfssh', 'jq')
     if args.component != 'all':
         components = (args.component,)
     else:
@@ -217,6 +241,8 @@ def main():
                            args.msys_bash, args.reconfigure)
             elif component == 'wolfssh':
                 build_wolfssh(sdk, source, wolfssl, output)
+            elif component == 'jq':
+                build_jq(sdk, source, output, args.jobs, args.msys_bash, args.reconfigure)
 
 
 if __name__ == '__main__':

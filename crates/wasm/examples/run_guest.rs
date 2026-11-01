@@ -51,8 +51,19 @@ impl Clock for HostClock {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = env::args().skip(1);
     let directory = PathBuf::from(arguments.next().ok_or("Expected program directory")?);
-    let argv: Vec<String> = arguments.collect();
+    let mut argv: Vec<String> = arguments.collect();
+    let environment = if argv.first().is_some_and(|arg| arg == "--config") {
+        let path = argv.get(1).ok_or("Expected --config path")?;
+        let config: efi_agent_core::config::AgentConfig =
+            serde_json::from_slice(&std::fs::read(path)?)?;
+        config.validate()?;
+        argv.drain(..2);
+        efi_agent_core::config::guest_environment(Some(&config.environment))
+    } else {
+        efi_agent_core::config::guest_environment(None)
+    };
     let mut world = World::new();
+    world.set_default_environment(environment)?;
     world.set_clock(Rc::new(HostClock(Instant::now())));
     world.set_random(Rc::new(HostRandom));
     world.set_network(Rc::new(native_net::NativeNetwork));

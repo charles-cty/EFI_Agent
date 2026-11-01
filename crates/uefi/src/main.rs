@@ -361,6 +361,11 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
             .map_or(([1, 1, 1, 1], 53), |runtime| {
                 (runtime.config.dns_address, runtime.config.dns_port)
             }),
+        efi_agent_core::config::guest_environment(
+            runtime_state
+                .as_ref()
+                .map(|runtime| &runtime.config.environment),
+        ),
     )
     .map_err(|error| {
         uefi::println!("Workspace initialization failed: {error}");

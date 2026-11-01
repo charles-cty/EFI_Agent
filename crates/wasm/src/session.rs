@@ -176,7 +176,7 @@ impl World {
         let pid = self.spawn_child(
             0,
             args,
-            Some(vec![]),
+            Some(self.default_environment.clone()),
             vec![],
             None,
             SpawnSettings {

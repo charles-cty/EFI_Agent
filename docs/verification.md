@@ -1,5 +1,212 @@
 # Verification record
 
+## 2026-11-01: 128 MiB workspace and sparse disk images
+
+Raised the logical workspace import/export limit to 128 MiB and the boot-tree
+limit to 160 MiB. Images now reserve a 192 MiB FAT partition and have a 194 MiB
+logical size, including when the initial workspace is small. This leaves room
+for guest writes during a session. Entry/depth limits and runtime module-size
+limits are unchanged. Existing capacity test expectations were adjusted.
+
+On Windows, the common pack path calls FSCTL_SET_SPARSE before extending the
+image. The same path creates standard packages and private VM disks. Sparse
+setup errors stop packaging and remove the incomplete output. Windows output
+requires a sparse-capable filesystem. Linux keeps the existing set_len and
+partial-write behavior, which creates holes on supporting filesystems.
+Guest file deletion does not automatically reclaim host image allocation.
+
+Verification was limited to launcher compilation, the Release build, formatting
+and delivered image properties/allocation. No unit suite, capacity-boundary
+suite, VM run or Linux build was performed for this update.
+
+Repacked both standard images directly from artifacts/esp and artifacts/native-esp
+with the new launcher. Both delivered images have a logical size of 194 MiB
+and the Windows sparse attribute. GetCompressedFileSizeW reports approximately
+59.75 MiB allocated for artifacts/efi-agent-vm.img and 57.19 MiB for
+artifacts/efi-agent-native.img. Native CONFIG.JSON bytes are preserved.
+
+Evidence: %TEMP%\efi-agent\capacity-sparse-7c010e6a36904af18a43c957ec09022a,
+containing check.log, build.log, image-allocation.json and the native config
+backup. Cargo.lock adds the existing windows-sys 0.61.2 dependency reference;
+no dependency version changes were required.
+
+Intermediate issue: cargo.exe fmt --all --check found an array-layout change
+after the existing test cases were adjusted. cargo.exe fmt --all corrected it;
+the repeated formatting check passes.
+
+## 2026-11-01: Packaged jq and configurable guest startup environment
+
+The standard guest driver builds jq 1.8.1 from the official release archive,
+including bundled Oniguruma 6.9.10. It uses native MSYS2 configure/make and
+Windows WASI SDK 34, with the shared cwd adapter and WASI signal emulation.
+The module is 1,536,140 bytes. The catalog installs jq and its two notices.
+Both root build entry points select it through scripts/build_guests.py.
+The release's 314 source files match the original archive byte for byte.
+Build instructions and supported operations are in docs/jq.md.
+
+AgentConfig.environment accepts guest startup values. EFI_AGENT_ENVIRONMENT
+supplies the same JSON object when the launcher generates configuration.
+Configured entries override the built-in PYTHON_BASIC_REPL=1 default. New
+WASM roots and shell/JavaScript sessions receive these values. Session exports
+and unsets persist, children inherit their current parent values, and explicit
+child environments replace the inherited values. Reset restores configured
+defaults. Tests cover Unicode, additional equals signs, empty overrides,
+invalid names/NULs, size boundaries and rejected setters preserving defaults.
+No host environment is copied implicitly. The Python binary, all 537 upstream
+library files and the private startup adapters retain their previous bytes.
+
+The first actual VM run passed jq, Python basic REPL and environment checks,
+then failed workspace export. Its saved logical files totaled 50,578,726 bytes,
+including 1,132,613 bytes in 41 Python cache files. This exceeded the old
+48 MiB limit by 247,078 bytes. The launcher retained the recovery disk under
+%TEMP%\efi-agent-29376-1793501870719029800. The workspace limit is now 64 MiB;
+the full boot-tree limit is 96 MiB. The dynamic FAT image sizing is unchanged.
+The independent runtime module-size limit is unchanged. A filesystem integration
+test saves and reloads exactly 64 MiB, then rejects one additional byte on host
+import, guest export and staging before staging effects. Hard-link accounting
+still counts shared bytes once. The FAT pack/extract test verifies both image
+sizes, the exact 96 MiB boot-tree boundary and rejection one byte above it before
+creating an output image.
+
+Verification passed on native Windows:
+
+- All 272 host tests passed; two existing ignored cases remain ignored.
+  Formatting, host all-target Clippy and UEFI-target Clippy pass with warnings
+  denied. Release launcher, UEFI and real-WASM runner builds pass.
+- All five jq integration cases pass with the real module: aliases and explicit
+  paths, file/filter arguments, Unicode regex, relative modules/cwd, pipelines,
+  an independently checked structured random JSON stream, and exit statuses
+  through Python subprocess capture.
+- All four environment integration cases pass: direct Python/jq defaults,
+  basic REPL without warning, explicit empty overrides restoring the warning,
+  empty/replaced child environments, retained shell changes, independent JS
+  and session resets. All 17 existing CPython cases, the retained-session suite
+  and the full installation/saved-byte suite also pass.
+- scripts/test_vm_guest_environment.ps1 passes actual Windows WHPX at 256 MiB
+  using the standard artifacts/esp. It verifies jq --version, a saved jq pipe
+  result, interactive ./python.wasm without the pyrepl warning, Python output,
+  configured inheritance, shell unset, independent JS and new-session defaults.
+  Exit and workspace export succeed. An independent host check compares all
+  1,151 declared saved files with prepared bytes and checks exact jq-result
+  and python-env bytes. The exported files exceed the former 48 MiB limit.
+- Independent directory-journal and FAT readers verify both standard trees
+  and both standard images: 1,151 runtime files, 95 command aliases, 12 notices
+  and matching EFI entries. Native configuration bytes are preserved. The
+  precompiled Python and all 537 upstream library files still match the fixed
+  distribution. C:\Temp\work was not used or modified.
+
+Evidence is under
+%TEMP%\efi-agent\jq-environment-5ab22527a4394090a0a357babe1c63d9:
+host-tests-final.log, host-clippy-final.log, launcher-build-final.log,
+uefi-build.log, uefi-clippy.log, runner-build.log, jq-integration.log,
+environment-integration.log, cpython-integration.log, sessions-integration.log,
+installation-integration.log, package-verification-final.log,
+vm-integration-final.log and vm-saved-verification.log. Interactive captures
+and the exported host workspace are under
+%TEMP%\efi-agent\jq-environment-vm-f6de0f2818744d8ea674c1c74e052010.
+The first VM attempt is retained under jq-environment-vm-c754deadf1124483a2f2f0b4ad1404ee.
+This task did not repeat the full network/application workload, a Linux build,
+or native hardware boot.
+
+Intermediate issues and resolutions:
+
+- Native Windows rg does not expand path globs. Directory arguments with -g
+  resolved these failed commands:
+
+  ```powershell
+  rg.exe -n 'AGENT.*JSON|config\.json|Environment|environment:|set_environment|spawn_with_environment|PATH=|TERM=' crates/uefi/src crates/core/src crates/wasm/src/session* crates/launcher/src scripts/build.ps1
+  rg.exe -n 'programs.json|licenses|wasm-guests|quickjs.wasm|wolfssh.wasm|python.wasm' scripts/build* scripts/*.ps1 crates/wasm/src/installation.rs
+  ```
+
+- File searches initially assumed catalog.rs, ui/mod.rs and namespace.rs;
+  directory searches located installation.rs, ui.rs and namespace/mod.rs.
+  The last failed command was:
+
+  ```powershell
+  rg.exe -n 'fn flush|pub fn sync|fn sync|impl FileSystem for Namespace' crates/filesystem/src/namespace.rs
+  ```
+
+- The initial default-environment field placement was in Context rather than
+  World. Compilation caught it; the corrected field passes both target checks.
+  cargo.exe test --locked --workspace --jobs 4 included UEFI in a host build
+  and failed with duplicate panic_impl. Default host members and the separate
+  UEFI target checks pass.
+- Initial jq build attempts used the wrong bundled-regex directory, omitted
+  generated builtin/version/config headers, and lacked WASI signal emulation.
+  The final driver uses vendor/oniguruma, generates those headers and links
+  wasi-emulated-signal. All upstream source bytes remain unchanged. One upstream
+  parser unused-variable warning remains in the successful C build log.
+- The initial malformed-JSON test expected exit code 4. Official jq main.c
+  uses JQ_ERROR_UNKNOWN, code 5; the corrected behavioral check passes.
+- Tool-script quoting errors were corrected before shell execution. An earlier
+  inline uv.exe Python measurement also failed with a SyntaxError after native
+  argument escaping. The full earlier inline command was not retained. A
+  temporary Python file invoked through uv.exe, with Standard native argument
+  passing, measured the workspace successfully. All probes and fixtures stay
+  in Windows temporary storage.
+- An initial WSL git status recursively inspected the large Shell submodule
+  without finishing promptly. It was stopped; native Git with explicit
+  submodule exclusion completed the task checks. The existing Shell symlink
+  status was left intact.
+
+### Capacity follow-up: prospective 128 MiB workspace
+
+Read-only review confirmed that the workspace byte limit governs launcher
+snapshot import/export. Firmware reports actual FAT volume space, and namespace
+files use firmware file handles. Raising the logical limit does not reserve an
+equal amount of VM RAM or enlarge the current disk. The current 130 MiB images
+have neither the Windows SparseFile nor Compressed attribute. Packaging uses
+an ordinary file and sets its full length; it does not enable sparse storage.
+With the existing 16 MiB reserve and 64 MiB partition sizing increments, a
+192 MiB FAT partition (194 MiB image) can provide room for a 128 MiB workspace
+plus the current boot assets. Such support requires coordinated workspace,
+boot-tree and minimum disk-size changes. Host snapshots retain actual file
+contents in memory, so populated workspaces also increase host memory and I/O.
+No capacity setting was changed for this review.
+
+The initial search used a nonexistent firmware provider filename:
+
+```powershell
+rg.exe -n 'capacity|fn space|fn open|read_all|read_to_end|load_file|free_bytes|available' crates/filesystem/src/namespace crates/uefi/src/filesystem.rs crates/wasm/src/lib.rs
+```
+
+A directory search located crates/uefi/src/wasm_filesystem.rs and confirmed the
+firmware capacity implementation there.
+
+## 2026-11-01: Prebuilt Python interactive terminal dependency diagnosis
+
+The preceding ash banner change and its verification records were committed
+as 4118ddc, fix(busybox): suppress the ash startup banner.
+
+An isolated native Windows real-WASM probe confirmed that sitecustomize was
+loaded in CPython 3.14.7. Imports of termios, fcntl and readline fail because
+those modules are absent. select and select.poll are available; os lacks
+get_terminal_size. Importing _pyrepl.simple_interact reproduces the exact
+No module named 'termios' error reported from interactive startup.
+
+The existing private Python adapters install process and filesystem operations.
+They provide no terminal attribute or ioctl backend. BusyBox's terminal adapter
+calls the runtime terminal imports directly, while the Python process-control
+endpoint has no corresponding terminal operations. Upstream _pyrepl.main
+records the failed dependency check, emits the warning and calls sys._baserepl.
+The new REPL also imports fcntl.ioctl and uses terminal dimensions and input
+readiness, so a termios import alone does not establish full support.
+
+The prepared python.wasm and all 537 upstream library files match the original
+python-3.14.7-wasi_sdk-24.zip bytes. The binary SHA256 is
+d24bd98d3071af6b17d51d53a08700b9acef59172a0afcb6adb733645c2a1715.
+Terminal support can be added through Python adapters and runtime control
+operations while retaining this precompiled interpreter.
+
+This was a dependency diagnosis. No Python adapter, prepared asset or standard
+package was changed, and no VM or interactive keyboard test was run. The probe
+workspace was removed at exit. Evidence is in
+%TEMP%\efi-agent\python-repl-diagnosis-f4cab359c2854b47a1f1af24ab9dcb20\diagnosis.log.
+
+Intermediate issue: a search assumed a nonexistent terminal.c file:
+rg.exe -n 'def install|terminal|tty|tcgetattr|tcsetattr|ioctl|isatty|select|fcntl|BASIC_REPL' guests/python crates/wasm/src/process_control.rs guests/busybox/terminal.c
+Searching the existing guests/busybox directory located terminal_support.c.
+
 ## 2026-11-01: Remove the ash startup banner
 
 Enabled FEATURE_SH_EXTRA_QUIET in guests/busybox/include/ash_config.h and

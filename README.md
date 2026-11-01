@@ -59,9 +59,15 @@ Optional variables:
 | `EFI_AGENT_DNS_ADDRESS` | `1.1.1.1` | IPv4 DNS server; DNS queries use TCP |
 | `EFI_AGENT_DNS_PORT` | `53` | DNS server port |
 | `EFI_AGENT_CA_CERTIFICATE` | unset | Host path to an additional private CA certificate in DER format |
+| `EFI_AGENT_ENVIRONMENT` | `{"PYTHON_BASIC_REPL":"1"}` | JSON object of guest startup environment values |
 
 Both build scripts use these same environment variables. You do not need to
 create a config file. They generate the firmware configuration automatically.
+
+The firmware config accepts the same values in its `environment` object.
+Configured entries override built-in defaults for new WASM roots and shell/JS
+sessions. Children inherit the current parent environment; an explicit child
+environment replaces it. Python uses its basic REPL by default.
 
 API credentials are available to the firmware:
 VM launches write them into a private temporary boot disk; native packages
@@ -142,8 +148,13 @@ The launcher copies the host workspace into a private writable FAT disk. Guest
 file tools operate there; changed files are saved back after QEMU stops. Host
 files do not change during the session. Conflicting host edits prevent saving;
 the launcher reports an error and retains the disk for recovery. Workspace
-contents are limited to 48 MiB, 4096 entries, and 32 directory levels. The full
-boot tree can contain 64 MiB. Boot-tree symlinks and special files are rejected.
+contents are limited to 128 MiB, 4096 entries, and 32 directory levels. The full
+boot tree can contain 160 MiB. Images have a 192 MiB FAT partition and a 194 MiB
+logical size. Windows enables sparse storage before extending the image file;
+Linux leaves unwritten regions sparse on filesystems that support holes.
+Windows image output requires a filesystem that supports sparse files.
+Guest file deletion does not automatically reclaim host image allocation.
+Boot-tree symlinks and special files are rejected.
 Firmware variables use a temporary snapshot. The supplied boot input and OVMF
 VARS template are not modified.
 
@@ -205,7 +216,7 @@ Set `WASI_SDK_PATH` to WASI SDK 34 and `BINARYEN_PATH` to Binaryen 133.
 Windows also needs the Visual Studio C++ tools and MSYS2; the script initializes
 Visual Studio automatically. Use `-MsysBash` to select another MSYS2 Bash path.
 
-The scripts prepare CPython, build BusyBox, QuickJS, wolfSSL, curl and WolfSSH,
+The scripts prepare CPython, build BusyBox, QuickJS, wolfSSL, curl, WolfSSH and jq,
 then build both Rust programs and package the assets. Missing upstream sources
 and the fixed CPython prebuilt package are downloaded automatically. Native
 packaging also downloads the official UEFI Shell 26H1 x64 binary; set

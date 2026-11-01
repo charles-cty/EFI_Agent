@@ -29,6 +29,56 @@ const DUMP: &str = r#"(module
     (if (call $write (i32.const 1) (i32.const 8) (i32.const 1) (i32.const 16)) (then unreachable))))"#;
 
 #[test]
+fn default_environment_is_a_root_snapshot_and_explicit_environments_replace_it() {
+    let mut world = World::new();
+    for name in ["dump", "ash", "quickjs"] {
+        register(&mut world, name, DUMP);
+    }
+    world
+        .set_default_environment(vec!["DEFAULT=first".into()])
+        .unwrap();
+    let first = world.spawn(vec!["dump".into()], vec![]).unwrap();
+    world
+        .set_default_environment(vec!["DEFAULT=second".into()])
+        .unwrap();
+    for invalid in [vec!["missing".into()], vec!["X=1".into(), "X=2".into()]] {
+        assert!(matches!(
+            world.set_default_environment(invalid),
+            Err(Error::InvalidArguments)
+        ));
+    }
+    assert!(matches!(
+        world.set_default_environment(vec![format!("X={}", "x".repeat(65_534))]),
+        Err(Error::ArgumentsTooLarge)
+    ));
+    let second = world.spawn(vec!["dump".into()], vec![]).unwrap();
+    let empty = world
+        .spawn_with_environment(vec!["dump".into()], vec![], vec![])
+        .unwrap();
+    let replacement = world
+        .spawn_with_environment(vec!["dump".into()], vec!["EXPLICIT=only".into()], vec![])
+        .unwrap();
+    let shell = world
+        .start_session(efi_agent_wasm::session::SessionKind::Shell)
+        .unwrap();
+    let js = world
+        .start_session(efi_agent_wasm::session::SessionKind::JavaScript)
+        .unwrap();
+    for (pid, expected) in [
+        (first, &b"DEFAULT=first\0"[..]),
+        (second, &b"DEFAULT=second\0"[..]),
+        (empty, &b""[..]),
+        (replacement, &b"EXPLICIT=only\0"[..]),
+        (shell.pid(), &b"DEFAULT=second\0"[..]),
+        (js.pid(), &b"DEFAULT=second\0"[..]),
+    ] {
+        finish(&mut world, pid);
+        assert_eq!(world.status(pid).unwrap(), &Status::Exited(0));
+        assert_eq!(world.take_output(pid).unwrap().0, expected);
+    }
+}
+
+#[test]
 fn environment_validation_and_joint_limit_do_not_consume_pids() {
     let mut world = World::new();
     register(&mut world, "dump", DUMP);

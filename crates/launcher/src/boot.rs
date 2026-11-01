@@ -47,6 +47,11 @@ pub fn configuration() -> Result<AgentConfig, Error> {
         ipv4: static_ipv4()?,
         workspace: "\\work".into(),
         ca_certificate: None,
+        environment: std::env::var("EFI_AGENT_ENVIRONMENT")
+            .ok()
+            .map(|value| serde_json::from_str(&value))
+            .transpose()?
+            .unwrap_or_else(efi_agent_core::config::default_environment),
     };
     config.validate()?;
     Ok(config)
@@ -210,7 +215,7 @@ impl Budget {
         self.bytes = self.bytes.checked_add(bytes).ok_or("Tree size overflow")?;
         self.entries += 1;
         if self.bytes > MAX_TREE_BYTES || self.entries > MAX_TREE_ENTRIES || depth > 32 {
-            return Err("Tree exceeds 64 MiB, 4096 entries, or 32 directory levels".into());
+            return Err("Tree exceeds 160 MiB, 4096 entries, or 32 directory levels".into());
         }
         Ok(())
     }

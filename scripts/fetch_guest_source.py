@@ -11,6 +11,9 @@ import urllib.request
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 SOURCES = {
+    'jq': ('jq-1.8.1',
+           'https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz',
+           'configure'),
     'curl': ('curl-8.22.0', 'https://curl.se/download/curl-8.22.0.tar.xz', 'configure'),
     'wolfssl': ('wolfssl-5.9.4-stable',
                 'https://github.com/wolfSSL/wolfssl/archive/refs/tags/v5.9.4-stable.tar.gz',

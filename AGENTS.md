@@ -14,6 +14,34 @@ completion. Verification of a staging package does not verify those paths.
 
 # Current state
 
+The workspace limit is now 128 MiB and the full boot-tree limit is 160 MiB.
+Images reserve a 192 MiB FAT partition and have a 194 MiB logical size.
+Windows marks new images sparse before extending them; Linux retains the
+existing hole-based allocation. Both standard images were rebuilt from their
+standard trees. Their actual Windows allocations are approximately 59.75 MiB
+(VM) and 57.19 MiB (native), with sparse attributes confirmed. Launcher compile
+checks and the Release build pass. Verification for this update was limited
+to compilation, formatting and delivered image properties/allocation; VM and
+capacity-boundary suites were not run. Native config bytes are preserved.
+Evidence is in docs/verification.md.
+
+The standard build now includes jq 1.8.1 with bundled Oniguruma 6.9.10, built
+from unchanged official release sources. Both standard trees and images contain
+1,151 runtime files, 95 command aliases and 12 notices. Guest startup defaults
+are configurable through EFI_AGENT_ENVIRONMENT or the config environment map;
+PYTHON_BASIC_REPL=1 is the default. Children retain normal inheritance and
+explicit replacement behavior. Prebuilt Python and all 537 upstream library
+files retain their distribution bytes. The initial workspace/boot-tree limits
+were 64/96 MiB, after actual Python cache writes exposed the old export limit.
+Before the capacity expansion, all 272 host tests, host/UEFI Clippy, Release builds,
+jq/environment/Python/session/installation integration and actual 256 MiB
+Windows WHPX acceptance pass. The VM exported more than 48 MiB successfully;
+all 1,151 declared saved files and both result files match expected bytes.
+Standard packages were independently rechecked; native config bytes are
+preserved. C:\Temp\work was not used or updated for this task. Full network
+regression, Linux builds and hardware boot were not repeated. Evidence and
+intermediate fixes are in docs/verification.md and jq details are in docs/jq.md.
+
 Interactive ash now starts without its BusyBox banner or surrounding blank
 lines. Native output and retained-session checks pass. Both standard trees
 and images contain the rebuilt ash. After VM exit, C:\Temp\work\ash.wasm was

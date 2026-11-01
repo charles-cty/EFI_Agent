@@ -291,6 +291,7 @@ pub struct World {
     random: Option<Rc<dyn random::Random>>,
     network: Option<Rc<dyn network::Network>>,
     dns_server: Option<([u8; 4], u16)>,
+    default_environment: Vec<String>,
 }
 
 impl World {
@@ -317,6 +318,7 @@ impl World {
             random: None,
             network: None,
             dns_server: None,
+            default_environment: Vec::new(),
         }
     }
 
@@ -499,7 +501,25 @@ impl World {
     }
 
     pub fn spawn(&mut self, args: Vec<String>, stdin: Vec<u8>) -> Result<Pid, Error> {
-        self.spawn_with_environment(args, Vec::new(), stdin)
+        self.spawn_with_environment(args, self.default_environment.clone(), stdin)
+    }
+
+    /// Set startup values for future roots and sessions. Explicit environments
+    /// replace these values; children keep normal inheritance semantics.
+    pub fn set_default_environment(&mut self, environment: Vec<String>) -> Result<(), Error> {
+        if !valid_environment(&environment) {
+            return Err(Error::InvalidArguments);
+        }
+        if environment
+            .iter()
+            .map(|entry| entry.len() + 1)
+            .sum::<usize>()
+            > 64 * 1024
+        {
+            return Err(Error::ArgumentsTooLarge);
+        }
+        self.default_environment = environment;
+        Ok(())
     }
 
     /// Start a root with an explicit startup environment. No host variables are

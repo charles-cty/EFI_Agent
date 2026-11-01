@@ -27,6 +27,10 @@ assert result.returncode == 0 and len(result.stdout.splitlines()) == len(command
 assert not result.stderr, result
 result = subprocess.run(['qjs', '-e', 'print("INSTALLED_QJS_OK")'], capture_output=True)
 assert (result.returncode, result.stdout, result.stderr) == (0, b'INSTALLED_QJS_OK\n', b''), result
+result = subprocess.run(['jq', '-cn', '{installed:true, value:([1,2,3]|add)}'],
+                        capture_output=True)
+assert result.returncode == 0 and not result.stderr, result
+assert json.loads(result.stdout) == {'installed': True, 'value': 6}, result
 result = subprocess.run(['curl', '--version'], capture_output=True)
 assert result.returncode == 0 and result.stdout.startswith(b'curl ') and not result.stderr, result
 with open('/installed-curl-version', 'wb') as output:
