@@ -58,6 +58,39 @@ impl App {
     /// Keep editing responsive during execution and defer only submission.
     pub fn request_key(&mut self, deferred: &mut VecDeque<Key>, key: Key) -> bool {
         if let crate::repl::Mode::Repl(language) = self.input_mode {
+            let terminal = &mut self.terminals[language.slot()];
+            if terminal.raw {
+                if key == Key::Control(17) {
+                    terminal.interrupted = true;
+                    return true;
+                }
+                let text = match key {
+                    Key::Character(ch) => String::from(ch),
+                    Key::Control(byte) => String::from(byte as char),
+                    Key::Enter => String::from("\r"),
+                    Key::Newline => String::from("\n"),
+                    Key::Quit => String::from("\x03"),
+                    Key::Eof => String::from("\x04"),
+                    Key::ClearScreen => String::from("\x0c"),
+                    Key::ClearLine => String::from("\x15"),
+                    Key::KillEnd => String::from("\x0b"),
+                    Key::Escape => String::from("\x1b"),
+                    Key::Tab => String::from("\t"),
+                    Key::Backspace => String::from("\x7f"),
+                    Key::Up => String::from("\x1b[A"),
+                    Key::Down => String::from("\x1b[B"),
+                    Key::Right => String::from("\x1b[C"),
+                    Key::Left => String::from("\x1b[D"),
+                    Key::Home => String::from("\x1b[H"),
+                    Key::End => String::from("\x1b[F"),
+                    Key::Delete => String::from("\x1b[3~"),
+                    Key::PageUp | Key::ScrollUp => String::from("\x1b[5~"),
+                    Key::PageDown | Key::ScrollDown => String::from("\x1b[6~"),
+                    _ => return false,
+                };
+                terminal.input.push_back(crate::repl::Input::Bytes(text));
+                return false;
+            }
             match key {
                 Key::Escape | Key::Quit => {
                     self.editor.take();
@@ -69,10 +102,14 @@ impl App {
                     let eof = key == Key::Eof;
                     let terminal = &mut self.terminals[language.slot()];
                     let mut text = self.editor.take();
-                    terminal.append(&text);
+                    if !terminal.no_echo {
+                        terminal.append(&text);
+                    }
                     if !eof {
                         text.push('\n');
-                        terminal.append("\n");
+                        if !terminal.no_echo {
+                            terminal.append("\n");
+                        }
                     }
                     if !text.is_empty() {
                         terminal.input.push_back(crate::repl::Input::Bytes(text));
@@ -190,8 +227,8 @@ impl App {
             Key::Delete => self.editor.delete(),
             Key::Left => self.editor.left(),
             Key::Right => self.editor.right(),
-            Key::Home => self.editor.home(),
-            Key::End => self.editor.end(),
+            Key::Home | Key::Control(1) => self.editor.home(),
+            Key::End | Key::Control(5) => self.editor.end(),
             Key::Up if !self.editor.text.is_empty() => self.editor.vertical(false),
             Key::Down if !self.editor.text.is_empty() => self.editor.vertical(true),
             Key::Up | Key::ScrollUp => self.scroll = self.scroll.saturating_add(3),
@@ -548,12 +585,33 @@ impl App {
             height: area.height.saturating_sub(1),
             ..area
         };
+        terminal.dimensions = (body.width.clamp(1, 300), body.height.clamp(1, 120));
+        if let Some(screen) = terminal.screen.as_mut() {
+            screen.resize(body.width, body.height);
+            let cursor = screen.render(body, buffer);
+            self.selection_view = crate::serial::SelectionView {
+                terminal_input: true,
+                dimensions: (area.right(), area.bottom()),
+                revision: terminal.revision,
+                top: body.y,
+                height: body.height,
+                input_cursor: cursor,
+                ..Default::default()
+            };
+            Paragraph::new(" Guest terminal  •  Ctrl+Q cancel")
+                .style(Style::default().fg(Color::DarkGray))
+                .render(
+                    Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1),
+                    buffer,
+                );
+            return;
+        }
         let prefix = if terminal.running {
             ""
         } else {
             language.prompt()
         };
-        let editing = !terminal.running || !self.editor.text.is_empty();
+        let editing = !terminal.no_echo && (!terminal.running || !self.editor.text.is_empty());
         let before = &self.editor.text[..self.editor.cursor()];
         let after = &self.editor.text[self.editor.cursor()..];
         let mut screen = crate::repl::Screen::new(body.width);
@@ -658,6 +716,41 @@ mod tests {
         let mut app = App::default();
         app.key(Key::Quit);
         assert!(app.quit);
+    }
+
+    #[test]
+    fn raw_terminal_delivers_keys_immediately_and_restores_line_input() {
+        use crate::repl::{Input, Language, Mode};
+        let mut app = App {
+            input_mode: Mode::Repl(Language::Shell),
+            ..App::default()
+        };
+        let mut deferred = VecDeque::new();
+        app.terminals[0].running = true;
+        app.terminals[0].set_mode(0);
+        for (key, expected) in [
+            (Key::Escape, "\x1b"),
+            (Key::Character(' '), " "),
+            (Key::Quit, "\x03"),
+            (Key::PageDown, "\x1b[6~"),
+            (Key::Eof, "\x04"),
+        ] {
+            assert!(!app.request_key(&mut deferred, key));
+            assert!(
+                matches!(app.terminals[0].input.pop_front(), Some(Input::Bytes(text)) if text == expected)
+            );
+        }
+        assert!(app.editor.text.is_empty());
+        assert!(app.messages.is_empty());
+        assert!(deferred.is_empty());
+        assert!(app.request_key(&mut deferred, Key::Control(17)));
+        app.terminals[0].set_mode(7);
+        assert!(!app.request_key(&mut deferred, Key::Character('x')));
+        assert!(app.terminals[0].input.is_empty());
+        assert!(!app.request_key(&mut deferred, Key::Enter));
+        assert!(
+            matches!(app.terminals[0].input.pop_front(), Some(Input::Bytes(text)) if text == "x\n")
+        );
     }
 
     #[test]

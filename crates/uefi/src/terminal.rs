@@ -397,8 +397,7 @@ fn decode_console_key(key: FirmwareKey) -> Option<Key> {
         FirmwareKey::Printable(c) => match u16::from(c) {
             3 => Some(Key::Quit),
             4 => Some(Key::Eof),
-            1 => Some(Key::Home),
-            5 => Some(Key::End),
+            value @ (1 | 5) => Some(Key::Control(value as u8)),
             11 => Some(Key::KillEnd),
             12 => Some(Key::ClearScreen),
             21 => Some(Key::ClearLine),
@@ -406,6 +405,9 @@ fn decode_console_key(key: FirmwareKey) -> Option<Key> {
             8 => Some(Key::Backspace),
             10 => Some(Key::Newline),
             9 => Some(Key::Tab),
+            value @ (0 | 2 | 6..=7 | 14..=20 | 22..=26 | 28..=31) => {
+                Some(Key::Control(value as u8))
+            }
             _ => Some(Key::Character(char::from(c))),
         },
         FirmwareKey::Special(code) => match code {
@@ -416,6 +418,8 @@ fn decode_console_key(key: FirmwareKey) -> Option<Key> {
             ScanCode::HOME => Some(Key::Home),
             ScanCode::END => Some(Key::End),
             ScanCode::DELETE => Some(Key::Delete),
+            ScanCode::PAGE_UP => Some(Key::PageUp),
+            ScanCode::PAGE_DOWN => Some(Key::PageDown),
             ScanCode::ESCAPE => Some(Key::Escape),
             _ => None,
         },

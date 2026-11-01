@@ -30,6 +30,7 @@ pub(crate) enum Action {
         target: i32,
         signal: i32,
     },
+    TerminalMode(u32),
     ProgramExists(String),
     Spawn {
         args: Vec<String>,
@@ -1462,6 +1463,7 @@ pub(crate) fn linker(engine: &Engine) -> HostLinker {
             },
         )
         .expect("Unique import");
+    crate::terminal::install(&mut linker);
     for (name, nohang) in [("waitpid", false), ("waitpid_nohang", true)] {
         linker
             .func_wrap(

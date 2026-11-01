@@ -194,6 +194,55 @@ fn cancelled_last_reader_wakes_full_pipe_writer_with_epipe() {
 }
 
 #[test]
+fn nonblocking_pipe_duplicates_share_flags_and_preserve_boundary_semantics() {
+    let mut world = World::new();
+    register(
+        &mut world,
+        "nonblock",
+        r#"(module
+      (import "efi_process" "pipe" (func $pipe (param i32) (result i32)))
+      (import "efi_process" "dup2" (func $dup (param i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_fdstat_set_flags" (func $flags (param i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_fdstat_get" (func $stat (param i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_read" (func $read (param i32 i32 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_write" (func $write (param i32 i32 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_close" (func $close (param i32) (result i32)))
+      (memory (export "memory") 2)
+      (func $equal (param $a i32) (param $b i32)
+        (if (i32.ne (local.get $a) (local.get $b)) (then unreachable)))
+      (func (export "_start") (local $count i32)
+        (call $equal (call $pipe (i32.const 0)) (i32.const 0))
+        (call $equal (call $dup (i32.const 3) (i32.const 5)) (i32.const 5))
+        (call $equal (call $flags (i32.const 3) (i32.const 4)) (i32.const 0))
+        (call $equal (call $stat (i32.const 5) (i32.const 32)) (i32.const 0))
+        (call $equal (i32.load16_u (i32.const 34)) (i32.const 4))
+        (i32.store (i32.const 16) (i32.const 128))
+        (i32.store (i32.const 20) (i32.const 4096))
+        (i32.store (i32.const 24) (i32.const 999))
+        (call $equal (call $read (i32.const 5) (i32.const 16) (i32.const 1) (i32.const 24)) (i32.const 6))
+        (call $equal (i32.load (i32.const 24)) (i32.const 999))
+        (call $equal (call $flags (i32.const 4) (i32.const 4)) (i32.const 0))
+        (loop $fill
+          (call $equal (call $write (i32.const 4) (i32.const 16) (i32.const 1) (i32.const 24)) (i32.const 0))
+          (call $equal (i32.load (i32.const 24)) (i32.const 4096))
+          (local.set $count (i32.add (local.get $count) (i32.const 1)))
+          (br_if $fill (i32.lt_u (local.get $count) (i32.const 16))))
+        (call $equal (call $write (i32.const 4) (i32.const 16) (i32.const 1) (i32.const 24)) (i32.const 6))
+        (i32.store (i32.const 20) (i32.const 2))
+        (call $equal (call $read (i32.const 3) (i32.const 16) (i32.const 1) (i32.const 24)) (i32.const 0))
+        (i32.store (i32.const 20) (i32.const 4))
+        (call $equal (call $write (i32.const 4) (i32.const 16) (i32.const 1) (i32.const 24)) (i32.const 0))
+        (call $equal (i32.load (i32.const 24)) (i32.const 2))
+        (drop (call $close (i32.const 3)))
+        (drop (call $close (i32.const 5)))
+        (call $equal (call $write (i32.const 4) (i32.const 16) (i32.const 1) (i32.const 24)) (i32.const 64))))"#,
+    );
+    let pid = world.spawn(vec!["nonblock".into()], vec![]).unwrap();
+    finish(&mut world, pid);
+    assert_eq!(world.status(pid).unwrap(), &Status::Exited(0));
+}
+
+#[test]
 fn descriptor_allocation_and_invalid_arguments_have_no_partial_effects() {
     let mut world = World::new();
     register(
@@ -221,9 +270,9 @@ fn descriptor_allocation_and_invalid_arguments_have_no_partial_effects() {
         (if (i32.ne (call $read (i32.const 4) (i32.const 0) (i32.const 0) (i32.const 8)) (i32.const 8)) (then unreachable))
         (if (i32.ne (call $write (i32.const 3) (i32.const 0) (i32.const 0) (i32.const 8)) (i32.const 8)) (then unreachable))
         (if (call $stat (i32.const 3) (i32.const 16)) (then unreachable))
-        (if (i64.ne (i64.load (i32.const 24)) (i64.const 136314882)) (then unreachable))
+        (if (i64.ne (i64.load (i32.const 24)) (i64.const 136314890)) (then unreachable))
         (if (call $stat (i32.const 4) (i32.const 16)) (then unreachable))
-        (if (i64.ne (i64.load (i32.const 24)) (i64.const 136314944)) (then unreachable))
+        (if (i64.ne (i64.load (i32.const 24)) (i64.const 136314952)) (then unreachable))
         (if (i32.ne (call $dup (i32.const 4) (i32.const 4)) (i32.const 4)) (then unreachable))
         (if (call $move (i32.const 4) (i32.const 5)) (then unreachable))
         (if (i32.ne (call $close (i32.const 4)) (i32.const 8)) (then unreachable))

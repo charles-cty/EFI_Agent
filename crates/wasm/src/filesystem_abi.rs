@@ -353,6 +353,28 @@ fn open(
                 .map_err(|_| 21)?;
             return Ok(());
         }
+        if path == "dev/tty" {
+            if !caller.data().terminal.active.get() {
+                return Err(60); // NXIO: no controlling terminal for model tools.
+            }
+            if oflags != 0 || flags & !4 != 0 {
+                return Err(28);
+            }
+            let available = (0..io::MAX_DESCRIPTORS)
+                .find(|fd| !caller.data().descriptors.contains_key(fd))
+                .ok_or(io::MFILE)?;
+            let descriptor = Descriptor::Tty {
+                terminal: caller.data().terminal.clone(),
+                read: rights & (1 << 1) != 0,
+                write: rights & (1 << 6) != 0,
+                flags: Rc::new(core::cell::Cell::new(flags as u16)),
+            };
+            caller.data_mut().descriptors.insert(available, descriptor);
+            memory
+                .write(&mut caller, opened as usize, &available.to_le_bytes())
+                .map_err(|_| 21)?;
+            return Ok(());
+        }
         let available = (0..io::MAX_DESCRIPTORS)
             .find(|fd| !caller.data().descriptors.contains_key(fd))
             .ok_or(io::MFILE)?;

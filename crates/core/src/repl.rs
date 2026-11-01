@@ -141,12 +141,33 @@ pub struct Terminal {
     pub scroll: u16,
     pub revision: u64,
     pub input: VecDeque<Input>,
+    pub raw: bool,
+    pub no_echo: bool,
+    pub onlcr: bool,
+    pub dimensions: (u16, u16),
+    pub screen: Option<crate::terminal_screen::TerminalScreen>,
     pending: Vec<u8>,
     output_cursor: usize,
     escape: String,
 }
 
 impl Terminal {
+    pub fn set_mode(&mut self, mode: u32) {
+        let raw = mode & 1 == 0;
+        self.no_echo = mode & 2 == 0;
+        self.onlcr = mode & 4 != 0;
+        if raw != self.raw {
+            self.raw = raw;
+            self.screen = raw.then(|| {
+                crate::terminal_screen::TerminalScreen::new(
+                    self.dimensions.0.max(1),
+                    self.dimensions.1.max(1),
+                )
+            });
+            self.revision = self.revision.wrapping_add(1);
+        }
+    }
+
     pub fn begin(&mut self, language: Language, source: &str) {
         self.history.remember(source);
         self.append(language.prompt());
@@ -243,6 +264,28 @@ impl Terminal {
 
     /// Keep UTF-8 fragments until a later write completes the code point.
     pub fn output(&mut self, bytes: &[u8]) {
+        if let Some(screen) = self.screen.as_mut() {
+            let processed;
+            let bytes = if self.onlcr {
+                let mut converted = Vec::with_capacity(bytes.len());
+                for &byte in bytes {
+                    if byte == b'\n' {
+                        converted.push(b'\r');
+                    }
+                    converted.push(byte);
+                }
+                processed = converted;
+                &processed
+            } else {
+                bytes
+            };
+            let reply = screen.output(bytes);
+            if !reply.is_empty() {
+                self.input.push_back(Input::Bytes(reply));
+            }
+            self.revision = self.revision.wrapping_add(1);
+            return;
+        }
         self.pending.extend_from_slice(bytes);
         loop {
             match core::str::from_utf8(&self.pending) {

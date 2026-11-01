@@ -26,7 +26,7 @@ fn special_statistics(device: u32) -> FileSystemStatistics {
             available: 0,
             block_size: 1,
         },
-        files: if device == 2 { 9 } else { 4 },
+        files: if device == 2 { 10 } else { 4 },
         files_free: 0,
         id: device,
         kind: if device == 2 { 0x1373 } else { 0x9fa0 },
@@ -218,6 +218,7 @@ impl VirtualFileSystem {
         }
         match path {
             "dev" | "tmp" | "proc" | "bin" => Some(EntryType::Directory),
+            "dev/tty" => Some(EntryType::CharacterDevice),
             _ => None,
         }
     }
@@ -629,6 +630,10 @@ impl VirtualFileSystem {
         }
         if let Some(kind) = self.virtual_entry(path) {
             let mut metadata = virtual_metadata(kind, 0);
+            if path == "dev/tty" {
+                metadata.mode = 0o666;
+                metadata.inode = 10;
+            }
             metadata.device = match path.split('/').next() {
                 Some("dev") => 2,
                 Some("tmp") => 3,
@@ -689,7 +694,7 @@ impl VirtualFileSystem {
             } else if path == "dev" {
                 entries.push(".".into(), EntryType::Directory)?;
                 entries.push("..".into(), EntryType::Directory)?;
-                for name in ["null", "zero", "random", "urandom"] {
+                for name in ["null", "zero", "random", "urandom", "tty"] {
                     entries.push(name.into(), EntryType::CharacterDevice)?;
                 }
                 for name in ["fd", "stdin", "stdout", "stderr"] {

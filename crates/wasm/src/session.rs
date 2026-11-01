@@ -68,6 +68,8 @@ impl Session {
     pub fn submit_terminal(&mut self, source: &str) -> Result<(), Error> {
         self.submit_repl(source)?;
         self.terminal.input.borrow_mut().open = true;
+        self.terminal.input.borrow_mut().terminal = true;
+        self.terminal.mode.set(7);
         self.terminal.active.set(true);
         Ok(())
     }
@@ -102,11 +104,25 @@ impl Session {
         core::mem::take(&mut *self.terminal.output.borrow_mut())
     }
 
+    /// Bits 0/1 enable line input/echo; bit 2 maps output LF to CRLF.
+    pub fn terminal_mode(&self) -> u32 {
+        self.terminal.mode.get()
+    }
+
+    pub fn set_terminal_size(&self, columns: u16, rows: u16) {
+        self.terminal
+            .size
+            .set((columns.clamp(1, 300), rows.clamp(1, 120)));
+    }
+
     pub fn detach_terminal(&self) {
         self.terminal.active.set(false);
         let mut input = self.terminal.input.borrow_mut();
         input.open = false;
+        input.terminal = false;
         input.bytes.clear();
+        self.terminal.mode.set(7);
+        self.terminal.owner.set(None);
     }
 
     fn submit_request(&mut self, source: &str, display_result: bool) -> Result<(), Error> {

@@ -19,6 +19,13 @@ EFI_PROCESS_IMPORT("getppid") int32_t efi_process_getppid(void);
  * Termination affects the selected process; its children are adopted by PID 0.
  */
 EFI_PROCESS_IMPORT("kill") int32_t efi_process_kill(int32_t pid, int32_t signal);
+/* A controlling terminal exists only during direct input. State consists of
+ * {mode, columns, rows}. Mode bits 0/1 enable canonical input/echo;
+ * bit 2 maps output LF to CRLF in the terminal view.
+ * Attribute calls return negative POSIX errno, including ENOTTY.
+ */
+EFI_PROCESS_IMPORT("terminal_get") int32_t efi_process_terminal_get(uint32_t fd, uint32_t state[3]);
+EFI_PROCESS_IMPORT("terminal_set") int32_t efi_process_terminal_set(uint32_t fd, uint32_t mode);
 /* Exact registry name lookup: 1 present, 0 absent, or negative POSIX errno.
  * The UTF-8 bytes exclude a terminating NUL. Lookup creates no process.
  */

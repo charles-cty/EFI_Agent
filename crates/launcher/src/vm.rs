@@ -545,6 +545,8 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                         KeyCode::Home => b"\x1b[H".to_vec(),
                         KeyCode::End => b"\x1b[F".to_vec(),
                         KeyCode::Delete => b"\x1b[3~".to_vec(),
+                        KeyCode::PageUp => b"\x1b[5~".to_vec(),
+                        KeyCode::PageDown => b"\x1b[6~".to_vec(),
                         KeyCode::Tab => vec![9],
                         _ => Vec::new(),
                     };

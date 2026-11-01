@@ -565,6 +565,8 @@ dependencies = [
  "serde",
  "serde_json",
  "unicode-segmentation",
+ "vt100",
+ "vte",
  "zeroize",
 ]
 

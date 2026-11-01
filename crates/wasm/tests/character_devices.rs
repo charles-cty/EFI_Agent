@@ -87,7 +87,7 @@ fn null_zero_and_random_metadata_are_character_devices_with_distinct_identity() 
     let statfs = root.filesystem_statistics("dev/null").unwrap();
     assert_eq!(
         (statfs.files, statfs.read_only, statfs.capacity.total),
-        (9, true, 0)
+        (10, true, 0)
     );
     assert_eq!(base.metadata("dev").err(), Some(FileError::NotFound));
     let mut null = root.open("dev/null", options()).unwrap();

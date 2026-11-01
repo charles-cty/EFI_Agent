@@ -15,6 +15,7 @@ mod process_control;
 pub mod random;
 pub mod session;
 mod socket;
+mod terminal;
 pub use io::{MAX_DESCRIPTORS, PIPE_CAPACITY};
 
 use alloc::{
@@ -165,6 +166,15 @@ struct Context {
     dns_server: Option<([u8; 4], u16)>,
     dns_query: Option<dns::Query>,
     session: Option<Rc<RefCell<session::Channel>>>,
+}
+
+impl Drop for Context {
+    fn drop(&mut self) {
+        if self.terminal.owner.get() == Some(self.pid) {
+            self.terminal.mode.set(7);
+            self.terminal.owner.set(None);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -897,6 +907,12 @@ impl World {
                     return;
                 }
                 abi::Action::Yield => 0,
+                abi::Action::TerminalMode(mode) => {
+                    let terminal = &self.processes[&pid].execution().store.data().terminal;
+                    terminal.mode.set(mode);
+                    terminal.owner.set((mode != 7).then_some(pid));
+                    0
+                }
                 abi::Action::Signal { target, signal } => {
                     if !(0..65).contains(&signal) {
                         -22

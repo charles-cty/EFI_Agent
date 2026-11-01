@@ -20,6 +20,7 @@ pub(crate) const PIPE: i32 = 64;
 pub(crate) struct Input {
     pub bytes: VecDeque<u8>,
     pub open: bool,
+    pub terminal: bool,
 }
 
 impl FromIterator<u8> for Input {
@@ -27,6 +28,7 @@ impl FromIterator<u8> for Input {
         Self {
             bytes: bytes.into_iter().collect(),
             open: false,
+            terminal: false,
         }
     }
 }
@@ -43,11 +45,26 @@ impl<const N: usize> From<[u8; N]> for Input {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct Terminal {
     pub active: Cell<bool>,
     pub input: Rc<RefCell<Input>>,
     pub output: RefCell<Vec<u8>>,
+    pub mode: Cell<u32>,
+    pub owner: Cell<Option<crate::Pid>>,
+    pub size: Cell<(u16, u16)>,
+}
+
+impl Default for Terminal {
+    fn default() -> Self {
+        Self {
+            active: Cell::new(false),
+            input: Rc::new(RefCell::new(Input::default())),
+            output: RefCell::new(Vec::new()),
+            mode: Cell::new(7),
+            owner: Cell::new(None),
+            size: Cell::new((80, 24)),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -88,6 +105,7 @@ enum Direction {
 pub(crate) struct Endpoint {
     pipe: Rc<RefCell<Pipe>>,
     direction: Direction,
+    flags: Rc<Cell<u16>>,
 }
 
 impl Endpoint {
@@ -96,13 +114,19 @@ impl Endpoint {
             Direction::Read => pipe.borrow_mut().readers += 1,
             Direction::Write => pipe.borrow_mut().writers += 1,
         }
-        Self { pipe, direction }
+        Self {
+            pipe,
+            direction,
+            flags: Rc::new(Cell::new(0)),
+        }
     }
 }
 
 impl Clone for Endpoint {
     fn clone(&self) -> Self {
-        Self::new(self.pipe.clone(), self.direction)
+        let mut endpoint = Self::new(self.pipe.clone(), self.direction);
+        endpoint.flags = self.flags.clone();
+        endpoint
     }
 }
 
@@ -117,6 +141,12 @@ impl Drop for Endpoint {
 
 #[derive(Clone)]
 pub(crate) enum Descriptor {
+    Tty {
+        terminal: Rc<Terminal>,
+        read: bool,
+        write: bool,
+        flags: Rc<Cell<u16>>,
+    },
     Control(Rc<RefCell<VecDeque<u8>>>),
     Session(Rc<RefCell<crate::session::Channel>>),
     Input(Rc<RefCell<Input>>),
@@ -145,8 +175,13 @@ impl Descriptor {
             Self::File { handle, .. } => handle.borrow_mut().metadata(),
             Self::Directory(directory) => directory.filesystem.metadata(&directory.path),
             _ => {
+                let terminal = matches!(self, Self::Tty { .. })
+                    || matches!(self, Self::Input(input) if input.borrow().terminal)
+                    || matches!(self, Self::Output(output) if output.terminal.active.get());
                 let mut metadata = crate::filesystem::Metadata::new(
-                    if matches!(self, Self::Socket { .. }) {
+                    if terminal {
+                        EntryType::CharacterDevice
+                    } else if matches!(self, Self::Socket { .. }) {
                         EntryType::SocketStream
                     } else {
                         EntryType::Unknown
@@ -156,6 +191,10 @@ impl Descriptor {
                 // Access mode belongs to the descriptor, not the object's mode.
                 metadata.mode = 0o666;
                 metadata.allocated = Some(0);
+                if terminal {
+                    metadata.device = 2;
+                    metadata.inode = 10;
+                }
                 Ok(metadata)
             }
         }
@@ -163,6 +202,7 @@ impl Descriptor {
 
     pub(crate) fn description(&self) -> Result<alloc::string::String, FileError> {
         Ok(match self {
+            Self::Tty { .. } => "/dev/tty".into(),
             Self::Input(_) => "input".into(),
             Self::Output(_) => "output".into(),
             Self::Pipe(_) => "pipe".into(),
@@ -202,6 +242,19 @@ impl Descriptor {
             return Ok(Some(Vec::new()));
         }
         match self {
+            Self::Tty {
+                terminal, flags, ..
+            } => {
+                if !terminal.active.get() {
+                    return Err(60); // NXIO: direct terminal is detached.
+                }
+                let result = Self::Input(terminal.input.clone()).read(maximum)?;
+                if result.is_none() && flags.get() & 4 != 0 {
+                    Err(6)
+                } else {
+                    Ok(result)
+                }
+            }
             Self::Session(channel) => Ok(channel.borrow_mut().read(maximum)),
             Self::Control(reply) => {
                 let mut reply = reply.borrow_mut();
@@ -246,7 +299,11 @@ impl Descriptor {
             Self::Pipe(endpoint) => {
                 let mut pipe = endpoint.pipe.borrow_mut();
                 if pipe.bytes.is_empty() && pipe.writers != 0 {
-                    return Ok(None);
+                    return if endpoint.flags.get() & 4 != 0 {
+                        Err(6)
+                    } else {
+                        Ok(None)
+                    };
                 }
                 let count = maximum.min(pipe.bytes.len());
                 Ok(Some(pipe.bytes.drain(..count).collect()))
@@ -268,6 +325,27 @@ impl Descriptor {
             return Ok(Some(0));
         }
         match self {
+            Self::Tty {
+                terminal, flags, ..
+            } => {
+                if !terminal.active.get() {
+                    return Err(60);
+                }
+                let available = MAX_OUTPUT_BYTES - terminal.output.borrow().len();
+                let count = available.min(bytes.len());
+                if count == 0 {
+                    return if flags.get() & 4 != 0 {
+                        Err(6)
+                    } else {
+                        Ok(None)
+                    };
+                }
+                terminal
+                    .output
+                    .borrow_mut()
+                    .extend_from_slice(&bytes[..count]);
+                Ok(Some(count))
+            }
             Self::Session(channel) => {
                 channel.borrow_mut().complete(bytes)?;
                 Ok(Some(bytes.len()))
@@ -318,7 +396,11 @@ impl Descriptor {
                 }
                 let count = bytes.len().min(PIPE_CAPACITY - pipe.bytes.len());
                 if count == 0 {
-                    return Ok(None);
+                    return if endpoint.flags.get() & 4 != 0 {
+                        Err(6)
+                    } else {
+                        Ok(None)
+                    };
                 }
                 pipe.bytes.extend(&bytes[..count]);
                 Ok(Some(count))
@@ -335,6 +417,7 @@ impl Descriptor {
                 | Self::Socket { .. }
                 | Self::File { read: true, .. }
                 | Self::Input(_)
+                | Self::Tty { read: true, .. }
                 | Self::Pipe(Endpoint {
                     direction: Direction::Read,
                     ..
@@ -350,6 +433,7 @@ impl Descriptor {
                 | Self::Socket { .. }
                 | Self::File { write: true, .. }
                 | Self::Output(_)
+                | Self::Tty { write: true, .. }
                 | Self::Pipe(Endpoint {
                     direction: Direction::Write,
                     ..
@@ -360,6 +444,15 @@ impl Descriptor {
     pub(crate) fn fdstat(&self) -> Result<[u8; 24], i32> {
         let mut stat = [0u8; 24];
         match self {
+            Self::Pipe(endpoint) => {
+                stat[2..4].copy_from_slice(&endpoint.flags.get().to_le_bytes());
+            }
+            Self::Tty {
+                terminal, flags, ..
+            } => {
+                stat[0] = if terminal.active.get() { 2 } else { 0 };
+                stat[2..4].copy_from_slice(&flags.get().to_le_bytes());
+            }
             Self::File {
                 handle,
                 rights,
@@ -393,6 +486,11 @@ impl Descriptor {
         }
         // WASI has no pipe type. Finite input and captured output are streams,
         // not terminals. libc uses CHARACTER_DEVICE to implement isatty.
+        if matches!(self, Self::Input(input) if input.borrow().terminal)
+            || matches!(self, Self::Output(output) if output.terminal.active.get())
+        {
+            stat[0] = 2;
+        }
         if let Self::Socket { flags, .. } = self {
             stat[0] = 6; // SOCKET_STREAM
             stat[2..4].copy_from_slice(&flags.get().to_le_bytes());
@@ -404,7 +502,7 @@ impl Descriptor {
         if self.writable() {
             rights |= 1 << 6;
         } // FD_WRITE
-        if matches!(self, Self::Socket { .. }) {
+        if matches!(self, Self::Socket { .. } | Self::Tty { .. } | Self::Pipe(_)) {
             rights |= 1 << 3; // FD_FDSTAT_SET_FLAGS
         }
         stat[8..16].copy_from_slice(&rights.to_le_bytes());
@@ -415,7 +513,12 @@ impl Descriptor {
         if requested & !0x1f != 0 {
             return Err(28);
         }
-        if let Self::Socket { flags, .. } = self {
+        let stream_flags = match self {
+            Self::Socket { flags, .. } | Self::Tty { flags, .. } => Some(flags),
+            Self::Pipe(endpoint) => Some(&endpoint.flags),
+            _ => None,
+        };
+        if let Some(flags) = stream_flags {
             if requested & !4 != 0 {
                 return Err(58);
             }
@@ -428,12 +531,6 @@ impl Descriptor {
             flags,
             ..
         } = self
-            && handle
-                .borrow_mut()
-                .metadata()
-                .map_err(FileError::errno)?
-                .kind
-                == EntryType::CharacterDevice
         {
             if requested == u32::from(flags.get()) {
                 return Ok(());
@@ -441,7 +538,15 @@ impl Descriptor {
             if rights & (1 << 3) == 0 {
                 return Err(76);
             }
-            if requested & !5 != 0 {
+            let character = handle
+                .borrow_mut()
+                .metadata()
+                .map_err(FileError::errno)?
+                .kind
+                == EntryType::CharacterDevice;
+            // Named-file operations complete synchronously. NONBLOCK can
+            // change without changing the handle's append behavior.
+            if requested & !5 != 0 || (!character && (requested as u16 ^ flags.get()) & !4 != 0) {
                 return Err(58);
             }
             flags.set(requested as u16);
@@ -476,6 +581,25 @@ impl Descriptor {
             );
         }
         match self {
+            Self::Tty { terminal, .. } => {
+                if !terminal.active.get() {
+                    return Some(Readiness {
+                        bytes: 0,
+                        hangup: true,
+                        error: 60,
+                    });
+                }
+                if writing {
+                    let available = MAX_OUTPUT_BYTES - terminal.output.borrow().len();
+                    if available == 0 {
+                        None
+                    } else {
+                        ready(available, false, 0)
+                    }
+                } else {
+                    Self::Input(terminal.input.clone()).readiness(false)
+                }
+            }
             Self::Session(channel) => {
                 let channel = channel.borrow();
                 let size = channel.readable();

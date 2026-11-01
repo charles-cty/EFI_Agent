@@ -173,11 +173,22 @@ impl Runtime {
         self.output_changed = false;
         for (index, session) in self.sessions.iter().enumerate() {
             if let Some(session) = session {
+                let mode = session.terminal_mode();
+                let revision = app.terminals[index].revision;
+                if mode & 1 == 0 {
+                    app.terminals[index].set_mode(mode);
+                }
                 let bytes = session.take_terminal_output();
                 if !bytes.is_empty() {
                     app.terminals[index].output(&bytes);
                     self.output_changed = true;
                 }
+                if mode & 1 != 0 {
+                    app.terminals[index].set_mode(mode);
+                }
+                self.output_changed |= app.terminals[index].revision != revision;
+                let (columns, rows) = app.terminals[index].dimensions;
+                session.set_terminal_size(columns.max(1), rows.max(1));
             }
         }
         let pids: Vec<_> = self.world.process_ids().collect();
@@ -325,6 +336,11 @@ impl Runtime {
         }
         .map_err(|error| error.to_string())?;
         let pid = session.pid();
+        if terminal {
+            let (columns, rows) = app.terminals[index].dimensions;
+            session.set_terminal_size(columns.max(1), rows.max(1));
+            app.terminals[index].set_mode(7);
+        }
         self.roots.insert(pid, pid);
         self.tool_outputs.insert(pid, ToolOutput::default());
         let execution = (|| {
@@ -373,6 +389,9 @@ impl Runtime {
         };
         let capture = self.tool_outputs.remove(&pid).expect("Tool capture exists");
         self.sessions[index].as_ref().unwrap().detach_terminal();
+        if terminal {
+            app.terminals[index].set_mode(7);
+        }
         let mut output = if terminal {
             match &status {
                 Status::Trapped(error) => format!("Trap: {error}\n"),

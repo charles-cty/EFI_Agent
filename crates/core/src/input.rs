@@ -25,6 +25,9 @@ pub enum Key {
     Click(u16, u16),
     PointerMove(u16, u16),
     Tab,
+    Control(u8),
+    PageUp,
+    PageDown,
 }
 
 /// Keeps partial UTF-8 and CSI input across serial reads.
@@ -89,6 +92,8 @@ impl Decoder {
                     b"3" => Some(Key::Delete),
                     b"1" | b"7" => Some(Key::Home),
                     b"4" | b"8" => Some(Key::End),
+                    b"5" => Some(Key::PageUp),
+                    b"6" => Some(Key::PageDown),
                     b"200" => {
                         self.paste = true;
                         None
@@ -122,10 +127,10 @@ impl Decoder {
             return result;
         }
         let result = match self.pending[0] {
+            byte @ (0 | 2 | 6..=7 | 14..=20 | 22..=26 | 28..=31) => Some(Key::Control(byte)),
             3 => Some(Key::Quit),
             4 => Some(Key::Eof),
-            1 => Some(Key::Home),
-            5 => Some(Key::End),
+            1 | 5 => Some(Key::Control(byte)),
             11 => Some(Key::KillEnd),
             12 => Some(Key::ClearScreen),
             21 => Some(Key::ClearLine),
@@ -158,6 +163,7 @@ impl Decoder {
                         | Key::ClearScreen
                         | Key::ClearLine
                         | Key::Backspace
+                        | Key::Control(_)
                 )
             )
         {
