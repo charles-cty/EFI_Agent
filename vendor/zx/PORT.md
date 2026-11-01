@@ -32,8 +32,12 @@ selection and alternate text encodings are not implemented. Unsupported options
 fail explicitly. buffer() returns a Uint8Array. Blob needs a user polyfill.
 The selected upstream text() method is replaced to reject unsupported encodings.
 Default prefix is empty so ordinary ash errors keep their usual semantics.
-Commands are captured by default (verbose is false); quiet suppresses verbose
-output. Quoting requires the enabled BusyBox ASH_BASH_COMPAT feature.
+Commands are captured by default (verbose is false). Like zx, stderr is still
+reported by default; `quiet` suppresses that diagnostic output. `verbose` also
+reports the command and captured output on stderr. The WASI adapter reports
+these messages after command completion because its child output is bounded and
+captured before the Promise settles. Quoting requires the enabled BusyBox
+ASH_BASH_COMPAT feature.
 
 For an update, replace this distribution, review the selected sections, and run
 the real-ash quote, process, session and firmware integration checks. Keep this

@@ -1,5 +1,6 @@
 // WASI process adapter. Quoting, interpolation and ProcessOutput are upstream zx.
 const utf8Buffer = text => new Uint8Array(__utf8(text));
+const writeStderr = text => __write_stderr(String(text));
 const import_node_buffer = {Buffer: {from: utf8Buffer}};
 const inspect = value => String(value);
 inspect.custom = Symbol('inspect');
@@ -32,9 +33,18 @@ class ProcessPromise {
         result.stdout, result.stderr, result.stdall, '', Date.now() - started,
         result.captureError ? Error(`Command capture failed: ${result.captureError}`) : null);
       output.captureError = result.captureError;
-      if (options.verbose && !options.quiet) {
-        if (output.stdout) print(output.stdout);
-        if (output.stderr) console.error(output.stderr);
+      if (!options.quiet) {
+        if (options.verbose) {
+          const lines = String(text).split('\n');
+          writeStderr(`$ ${lines.join('\n> ')}\n`);
+          if (options.piped) {
+            if (output.stderr) writeStderr(output.stderr);
+          } else if (output.stdall) {
+            writeStderr(output.stdall);
+          }
+        } else if (output.stderr) {
+          writeStderr(output.stderr);
+        }
       }
       if ((!output.ok || output.captureError) && !options.nothrow) throw output;
       return output;
@@ -60,7 +70,8 @@ class ProcessPromise {
   }
   _pipe(stream, pieces, ...args) {
     if (!isStringLiteral(pieces, ...args)) throw TypeError('pipe requires a command template');
-    return makeCommand(pieces, args, {...this.options,
+    this.options.piped = true;
+    return makeCommand(pieces, args, {...this.options, piped: false,
       input: this.then(output => output[stream])});
   }
 }
@@ -130,7 +141,7 @@ ProcessOutput.prototype.text = function(encoding = 'utf8') {
   return this.toString();
 };
 globalThis.ash = createShell({quote, prefix: '', postfix: '', quiet: false,
-  verbose: false, nothrow: false, cwd: null, env: null, input: ''});
+  verbose: false, nothrow: false, cwd: null, env: null, input: '', piped: false});
 globalThis.quote = quote;
 globalThis.ProcessOutput = ProcessOutput;
 globalThis.ProcessPromise = ProcessPromise;

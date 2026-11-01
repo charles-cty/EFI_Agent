@@ -62,5 +62,9 @@ var overflowZx = false;
 try { await ash({input:'x'.repeat(524289)})`cat`; } catch (error) { overflowZx = true; }
 checkZx(overflowZx, 'Input limit');
 checkZx((await ash({input:'x'.repeat(524288)})`wc -c`).stdout.trim() === '524288', 'Input limit inclusive');
+await ash`printf ZX_DEFAULT_STDOUT`;
+await ash`printf ZX_DEFAULT_STDERR >&2`;
+await ash({quiet: true})`printf ZX_QUIET_STDERR >&2`;
+await ash({verbose: true})`printf ZX_VERBOSE_STDOUT; printf ZX_VERBOSE_STDERR >&2`;
 print('ZX_PORT_VERIFIED');
 '''

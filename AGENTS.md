@@ -76,6 +76,13 @@ BusyBox arithmetic/truncate, ash templates and independently checked saved
 host bytes. This focused run does not repeat the full network/application
 combination or native hardware boot. Evidence is in docs/verification.md.
 
+The QuickJS ash adapter now follows zx's default output policy: command stderr
+is reported by default, `quiet` suppresses it, and `verbose` reports the command
+plus captured output on stderr. Output is emitted after bounded command capture
+completes. The QuickJS module, both standard boot trees and both standard images
+were refreshed. The live session integration suite passes the default, quiet and
+verbose cases; no VM run was repeated.
+
 The first BusyBox extension installed 78 command names, including 27 new
 file/text, comparison, arithmetic, checksum and compression applets.
 The full selection and deferred commands are in docs/busybox-applets.md.

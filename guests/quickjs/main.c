@@ -255,6 +255,22 @@ static JSValue print_error(JSContext *context, JSValueConst this_value,
     return JS_UNDEFINED;
 }
 
+static JSValue write_stderr(JSContext *context, JSValueConst this_value,
+    int argc, JSValueConst *argv)
+{
+    (void)this_value;
+    if (argc != 1)
+        return JS_ThrowTypeError(context, "Expected one string");
+    size_t size;
+    const char *text = JS_ToCStringLen(context, &size, argv[0]);
+    if (!text)
+        return JS_EXCEPTION;
+    fwrite(text, 1, size, stderr);
+    fflush(stderr);
+    JS_FreeCString(context, text);
+    return JS_UNDEFINED;
+}
+
 /* Cancel before closing pipes so no suspended child can retain its buffers. */
 static int discard_commands(JSContext *context, struct host *host)
 {
@@ -454,6 +470,7 @@ int main(int argc, char **argv)
     JSValue global = JS_GetGlobalObject(context);
     JS_SetPropertyStr(context, global, "__shell", JS_NewCFunction(context, start_command, "__shell", 1));
     JS_SetPropertyStr(context, global, "__utf8", JS_NewCFunction(context, utf8, "__utf8", 1));
+    JS_SetPropertyStr(context, global, "__write_stderr", JS_NewCFunction(context, write_stderr, "__write_stderr", 1));
     JS_SetPropertyStr(context, global, "print", JS_NewCFunction(context, print, "print", 1));
     JS_SetPropertyStr(context, global, "quit", JS_NewCFunction(context, quit, "quit", 1));
     JSValue console = JS_NewObject(context);

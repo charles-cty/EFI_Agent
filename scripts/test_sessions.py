@@ -105,6 +105,11 @@ def main():
         assert 'STALE_REQUEST_RESUMED' not in text
         assert 'SHELL_CANCEL_RESET_OK' in text and 'JS_CANCEL_RESET_OK' in text
         assert 'ZX_PORT_VERIFIED' in text and 'JS_EXPLICIT_RESET_OK' in text
+        assert 'ZX_DEFAULT_STDOUT' not in text and 'ZX_DEFAULT_STDOUT' not in errors
+        assert 'ZX_DEFAULT_STDERR' in errors
+        assert 'ZX_VERBOSE_STDOUT' in errors and 'ZX_VERBOSE_STDERR' in errors
+        assert '$ printf ZX_VERBOSE_STDOUT; printf ZX_VERBOSE_STDERR >&2' in errors
+        assert 'ZX_QUIET_STDERR' not in errors
         assert 'SHELL_SURVIVED_JS_RESET' in text
         assert 'ASH_BASH_COMPAT_VERIFIED' in text
         for index in range(repl_start - 7, repl_start):

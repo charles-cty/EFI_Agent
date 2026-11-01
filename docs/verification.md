@@ -1,5 +1,38 @@
 # Verification record
 
+## 2026-11-01: Match zx default command output policy
+
+Updated the QuickJS ash adapter to match the vendored zx defaults. Commands
+still capture stdout and stderr. Stderr is now reported by default, `quiet`
+suppresses command diagnostics, and `verbose` reports the command and captured
+output on stderr. A raw internal stderr writer preserves the captured bytes
+without adding a newline. Piped producers suppress verbose stdout while their
+stderr remains reportable, matching zx's piped-output rule. The adapter reports
+after bounded capture completes because live output callbacks are not exposed by
+the WASI ProcessPromise interface.
+
+The real WASM session suite passed with default stderr, quiet suppression,
+verbose command/output reporting, all existing zx checks, retained sessions,
+reset/cancel behavior and saved-byte checks. QuickJS was rebuilt with Windows
+WASI SDK 34. The updated module was installed into both standard boot trees and
+both standard disk images; each installed `quickjs.wasm` is 1,343,070 bytes.
+No VM run was repeated for this output-only change.
+
+Intermediate packaging issues were resolved without changing runtime data:
+
+- Packaging first rejected the installed old module with
+  `EFI Agent: Installation conflicts with workspace path: quickjs.wasm`, as
+  designed for same-path byte conflicts. The old files were backed up in the
+  Windows temporary directory, and a clean temporary package was generated.
+- A second attempt against the modified installed tree returned
+  `EFI Agent: Read guest namespace: NotFound`; the installed module was restored
+  from the backup and the package was generated into a separate temporary
+  staging directory before copying the verified module and images to the
+  standard artifact paths.
+- PowerShell environment variables for WASI SDK and Binaryen were empty in the
+  profile, so the build used the repository's Windows-local toolchain paths
+  explicitly. No network access was needed.
+
 ## 2026-11-01: 128 MiB workspace and sparse disk images
 
 Raised the logical workspace import/export limit to 128 MiB and the boot-tree

@@ -409,7 +409,9 @@ snapshotted before asynchronous execution. `.pipe\`command\`` starts its consume
 after collecting the producer's bounded stdout. Live streams, sync execution,
 signals, timeouts and Node context APIs remain unavailable. See
 [the complete WASI integration limits](../vendor/zx/PORT.md). Use print for
-results; bare expressions do not automatically print. Node.js APIs, file module
+results; bare expressions do not automatically print. Captured command stderr is
+reported by default, `quiet` suppresses it, and `verbose` reports the command and
+captured output on stderr after completion. Node.js APIs, file module
 loading and timers are unavailable. A pending top-level Promise with no event
 source fails explicitly and resets the session so a saved resolver cannot
 resume an earlier request. Unhandled rejections fail the request. Errors cancel
