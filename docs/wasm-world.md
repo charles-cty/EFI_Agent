@@ -308,7 +308,7 @@ text, shell absolute paths and JavaScript regular expressions. Application
 slash commands apply only in conversation input. Shell `exit` and JavaScript
 `quit()` end the affected interpreter and return to conversation input. Its
 variables and other process state are released; files remain. Esc or Ctrl+C
-cancels running code and shows
+cancels running code in line mode and shows
 an explicit interpreter-reset notice, retaining terminal input mode. Either
 key clears the editor when the terminal is idle.
 Ash syntax and builtin errors report a status and preserve the direct session.
@@ -322,7 +322,24 @@ or full queue reports an error. Completion discards unread input and restores
 finite empty stdin for model tools. Source uses the separate control channel.
 Submit complete code, including all lines of a compound statement or
 here-document, in one request with Ctrl+J or multiline paste. The interface
-does not supply a PTY, job control, raw input or full-screen terminal emulation.
+also supports raw-terminal commands through the shared controlling terminal.
+
+vi, less and more receive individual keys and use a bounded VT screen instead
+of line scrollback. The screen supports cursor movement, erase, scrolling,
+scroll regions, insert/delete operations and basic text attributes. /dev/tty
+provides keyboard input independently of a pager's redirected stdin. Terminal
+dimensions follow the viewport up to 300 columns and 120 rows; vi and less
+poll for changes. Space, q, Esc, arrows and PageUp/PageDown reach the running
+application. Ctrl+C leaves vi insert mode. Ctrl+Q cancels raw-terminal commands
+and restores line input. Normal exit also restores line mode. ed continues to
+use line input and accepts pipes. Redirected pagers copy bytes; vi requires a
+controlling terminal. Model tools have no controlling terminal.
+
+The terminal implements a limited termios interface for canonical input, echo
+and output LF-to-CRLF conversion. Unsupported attributes report errors. The
+runtime has no host PTY, job control or guest signal handlers. vi remains
+byte-oriented, with its upstream multibyte editing option disabled. Raw screen
+contents are separate from line scrollback and its text-selection interface.
 
 Manual source, stdin and output remain local to the terminal UI. They do not
 create model-history records or consume its capacity. A later model tool can

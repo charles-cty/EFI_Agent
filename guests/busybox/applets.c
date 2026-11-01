@@ -80,11 +80,38 @@ int bunzip2_main(int argc, char **argv);
 int unxz_main(int argc, char **argv);
 int unlzma_main(int argc, char **argv);
 
+int ed_main(int argc, char **argv);
+int ar_main(int argc, char **argv);
+int cpio_main(int argc, char **argv);
+int lzop_main(int argc, char **argv);
+
+int ps_main(int argc, char **argv);
+int pgrep_main(int argc, char **argv);
+int kill_main(int argc, char **argv);
+
+int more_main(int argc, char **argv);
+int less_main(int argc, char **argv);
+int vi_main(int argc, char **argv);
+
 int efi_busybox_applet(int argc, char **argv)
 {
     const char *name = bb_basename(argv[0]);
     applet_name = name;
     xfunc_error_retval = EXIT_FAILURE;
+    if (strcmp(name, "more") == 0) return more_main(argc, argv);
+    if (strcmp(name, "less") == 0) return less_main(argc, argv);
+    if (strcmp(name, "vi") == 0) return vi_main(argc, argv);
+
+    if (strcmp(name, "ps") == 0) return ps_main(argc, argv);
+    if (strcmp(name, "pgrep") == 0) return pgrep_main(argc, argv);
+    if (strcmp(name, "pkill") == 0) return pgrep_main(argc, argv);
+    if (strcmp(name, "kill") == 0) return kill_main(argc, argv);
+
+    if (strcmp(name, "ed") == 0) return ed_main(argc, argv);
+    if (strcmp(name, "ar") == 0) return ar_main(argc, argv);
+    if (strcmp(name, "cpio") == 0) return cpio_main(argc, argv);
+    if (strcmp(name, "lzop") == 0) return lzop_main(argc, argv);
+
     if (strcmp(name, "cat") == 0) return cat_main(argc, argv);
     if (strcmp(name, "echo") == 0) return echo_main(argc, argv);
     if (strcmp(name, "xargs") == 0) return xargs_main(argc, argv);

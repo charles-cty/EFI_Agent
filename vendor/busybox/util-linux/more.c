@@ -104,7 +104,9 @@ int more_main(int argc UNUSED_PARAM, char **argv)
 
 	/* Turn on unbuffered input; turn off echoing */
 	set_termios_to_raw(G.tty_fileno, &G.initial_settings, 0);
+#ifndef __wasi__
 	bb_signals(BB_FATAL_SIGS, gotsig);
+#endif
 
 	do {
 		struct stat st;

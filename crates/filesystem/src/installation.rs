@@ -10,6 +10,17 @@ pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 pub const MAX_MODULES: usize = 128;
 pub const MAX_COMMANDS: usize = 512;
 pub const ASH_APPLETS: &[&str] = &[
+    "more",
+    "less",
+    "vi",
+    "ps",
+    "pgrep",
+    "pkill",
+    "kill",
+    "ed",
+    "ar",
+    "cpio",
+    "lzop",
     "dd",
     "mktemp",
     "readlink",

@@ -1,5 +1,105 @@
 # Verification record
 
+## 2026-11-01: Process, archive and interactive BusyBox applets
+
+The second extension adds ed, ar, cpio, lzop, ps, pgrep, kill, pkill, vi, less
+and more. The maintained image installs 89 command names and compiles 186
+distinct sources. busybox-applets.md records the supported options and limits.
+Process queries use actual guest /proc records. Positive-PID signals 0, INT,
+KILL and TERM implement existence checks or default termination. Children of
+a terminated process survive and are adopted by PID 0. Signal handlers,
+process groups and CPU/resource accounting remain unavailable.
+
+Direct sessions now share a controlling terminal with their children. The
+terminal supplies raw keys, dimensions, limited termios attributes and
+/dev/tty. Nonblocking pipes preserve partial transfers, EOF and EPIPE.
+Regular-file NONBLOCK changes preserve append state and descriptor rights.
+The UI uses a bounded VT screen for raw applications. vi and less poll for
+window-size changes. Normal exit, termination and cancellation restore line
+mode. Manual terminal input and output remain outside model history.
+
+Validation completed on native Windows:
+
+- WASI SDK 34 and Binaryen 133 built the maintained BusyBox image. The full
+  host Rust run passed 266 checks. The final WASM run passed 142 checks after
+  adding detached-terminal and named-file flag cases. A separate real-BusyBox
+  integration passed file and pipe paging, first-page mode ordering and exit
+  restoration. Formatting, host all-target Clippy and UEFI Clippy passed with
+  warnings denied. Release EFI, launcher and native runner builds passed.
+- Signal cases cover errors before effects, unrelated roots, child adoption,
+  self-termination and immediate parent wait/reap. Descriptor cases cover
+  empty/full pipes, partial writes, duplicate flags, EOF/EPIPE and detached
+  /dev/tty. A structured 600-operation comparison against the independent
+  vt100 parser checks the VT screen, including fragmented escapes; a separate
+  case checks scroll regions, status rows and resizing.
+- scripts/test_busybox_tools.py passed through real WASM and unchanged
+  CPython. Independent host ar/newc readers, archive fixtures and liblzo2
+  verified guest-produced bytes, compression, links and permissions. Checks
+  also cover ed saves, redirected pagers, real child process records, regex
+  matching, filters, exit status and preservation of an unrelated child.
+  The extra-applet suite, all 142 text cases, gzip, tar and session regressions
+  passed. The final tools/extra/text repeats used the Release runner.
+- Both standard trees and disk images were refreshed. Independent directory
+  journal and FAT readers checked all 1,150 runtime files, 89 command names,
+  EFI entries and ten notices against current build inputs. Native CONFIG.JSON
+  bytes were preserved. Earlier packages remain in Windows temporary storage.
+- scripts/test_vm_busybox_terminal.ps1 passed actual Windows WHPX at 256 MiB
+  with artifacts/esp. It checked vi save/discard and Ctrl+C, ed save, more/less
+  Space/q, less resize and PageDown, piped pager keyboard input, Ctrl+Q
+  cancellation, kill status 143, ps, interpreter exit and normal VM shutdown.
+  After shutdown, independent host reads verified exact vi and ed file bytes.
+
+Evidence is in %TEMP%\efi-agent\applet-extension: host-tests.log,
+wasm-final-tests.log, pager-final.log, tools-final.log, extra-final.log,
+text-final.log, the earlier compression/tar/session regression logs, Clippy
+and Release logs, package-check-final.log and vm-final.log. The successful VM
+captures and private workspace are in
+%TEMP%\efi-agent\terminal-72a8197c108c4d6ba14598183c4e90a5.
+The two earlier terminal runs retain their failure captures. Verification
+files stay outside artifacts. The user's VM and C:\Temp\work were untouched.
+Native hardware boot and the complete network/application workload remain
+outside this focused run.
+
+Intermediate issues and resolutions:
+
+- Compilation exposed missing helper declarations, an archive filter source,
+  disabled cpio passthrough code that still referenced fork, and globals that
+  needed per-instance storage. Added the required helpers/source and guarded
+  the disabled path. Removed duplicate helpers and macro definitions; restored
+  an accidental lzop source edit. vi shell escapes use the existing process
+  adapter. Several searches used assumed source paths; rg --files identified
+  the actual files.
+- ed used open(file, 0), while WASI O_RDONLY is nonzero. The port now uses
+  O_RDONLY. The first ar/cpio adapter obtained its extraction anchor before
+  opening the archive, rejecting a valid ../oracle.ar input. Extraction now
+  obtains that anchor after opening the archive. Independent checks passed.
+- The process fixture expected comm ash, while the actual argv[0] was sh.
+  The fixture now checks the actual invocation. The host ar reader now accepts
+  upstream's unpadded final odd-sized member while checking padding between
+  members. Debug CPython runs exceeded the runner's 60-second deadline; the
+  Release runner passed the same cases.
+- Real less first failed with ENOTSUP because it changes NONBLOCK on its input
+  file as well as /dev/tty. Named-file flag changes now support that operation
+  without changing append behavior. Paging then exposed setup_common_bufsiz
+  clearing unread input on every call. Static per-instance storage now keeps
+  its bytes across repeated setup. The next VM run exposed less drawing its
+  first page before switching to raw mode. It now switches before drawing;
+  the regression checks that ordering, and the final VM run passed.
+- This original PowerShell command failed because -p was an ambiguous script
+  parameter: `pwsh.exe -WorkingDirectory 'C:\My\Projects\EFI_Agent' -File
+  'C:\Users\Administrator\AppData\Local\Temp\2\efi-agent\applet-extension\cargo.ps1'
+  check --locked -p efi-agent-wasm --tests`. CommandWithArgs and an explicit
+  CargoArguments array fixed argument binding. Repeated Visual Studio setup
+  in the temporary wrapper caused input-line-too-long and syntax messages;
+  the wrapper now initializes the toolchain only when VSCMD_VER is unset.
+  `cargo.exe check --offline --workspace --all-targets` included UEFI in a host
+  check and failed with duplicate panic_impl. Explicit host packages and a
+  separate UEFI target check passed.
+- WSL Git submodule scans were slow; native Git with ignored submodule status
+  completed the relevant checks. The existing UEFI Shell symlink status was
+  left unchanged. Upstream C string-pointer warnings and QEMU interrupt-vector
+  and GLib manifest warnings were nonfatal. No warning suppression was added.
+
 ## 2026-11-01: Rename the JavaScript command template to ash
 
 The public QuickJS command template is now ash, with configured templates

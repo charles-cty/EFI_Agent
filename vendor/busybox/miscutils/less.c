@@ -239,6 +239,7 @@ struct globals {
 	struct termios term_orig, term_less;
 	char kbd_input[KEYCODE_BUFFER_SIZE];
 };
+static struct globals *ptr_to_globals;
 #define G (*ptr_to_globals)
 #define cur_fline           (G.cur_fline         )
 #define kbd_fd              (G.kbd_fd            )
@@ -340,7 +341,7 @@ static NOINLINE void less_exit(void)
 }
 
 #if (ENABLE_FEATURE_LESS_DASHCMD && ENABLE_FEATURE_LESS_LINENUMS) \
- || ENABLE_FEATURE_LESS_WINCH
+ || ENABLE_FEATURE_LESS_WINCH || defined(__wasi__)
 static void re_wrap(void)
 {
 	int w = width;
@@ -1104,6 +1105,26 @@ static int64_t getch_nowait(void)
 	pfd[1].fd = kbd_fd;
 	pfd[1].events = POLLIN;
  again:
+#ifdef __wasi__
+	/* This runtime exposes dimensions without asynchronous SIGWINCH. */
+	{
+		unsigned columns, rows;
+		get_terminal_width_height(kbd_fd, &columns, &rows);
+		if (columns < 20)
+			columns = 20;
+		if (rows < 3)
+			rows = 3;
+		rows -= 2;
+		if (columns != width || rows != max_displayed_line) {
+			width = columns;
+			max_displayed_line = rows;
+			free(buffer);
+			buffer = xmalloc((max_displayed_line + 1) * sizeof(char *));
+			re_wrap();
+			buffer_fill_and_print();
+		}
+	}
+#endif
 	tcsetattr(kbd_fd, TCSANOW, &term_less);
 	/* NB: select/poll returns whenever read will not block. Therefore:
 	 * if eof is reached, select/poll will return immediately
@@ -1133,7 +1154,12 @@ static int64_t getch_nowait(void)
 			if (r) break;
 		}
 #else
+#ifdef __wasi__
+		if (safe_poll(pfd + rd, 2 - rd, 100) == 0)
+			goto again;
+#else
 		safe_poll(pfd + rd, 2 - rd, -1);
+#endif
 #endif
 	}
 
@@ -1151,7 +1177,9 @@ static int64_t getch_nowait(void)
 		/* EOF/error (ssh session got killed etc) */
 		less_exit();
 	}
+#ifndef __wasi__
 	set_tty_cooked();
+#endif
 	return key64;
 }
 
@@ -1794,11 +1822,13 @@ static void keypress_process(int keypress)
 		number_process(keypress);
 }
 
+#ifndef __wasi__
 static void sig_catcher(int sig)
 {
 	restore_tty();
 	kill_myself_with_sig(sig); /* does not return */
 }
+#endif
 
 #if ENABLE_FEATURE_LESS_WINCH
 static void sigwinch_handler(int sig UNUSED_PARAM)
@@ -1904,12 +1934,18 @@ int less_main(int argc, char **argv)
 	max_displayed_line -= 2;
 
 	/* We want to restore term_orig on exit */
+#ifndef __wasi__
 	bb_signals(BB_FATAL_SIGS, sig_catcher);
+#endif
 #if ENABLE_FEATURE_LESS_WINCH
 	signal(SIGWINCH, sigwinch_handler);
 #endif
 
 	buffer = xmalloc((max_displayed_line+1) * sizeof(char *));
+#ifdef __wasi__
+	/* Enter the terminal view before drawing the first page. */
+	tcsetattr(kbd_fd, TCSANOW, &term_less);
+#endif
 	reinitialize();
 	while (1) {
 		int64_t keypress;

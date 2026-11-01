@@ -463,6 +463,7 @@ int cpio_main(int argc UNUSED_PARAM, char **argv)
 	if ((opt & (OPT_FILE|OPT_CREATE)) == OPT_FILE) { /* -F without -o */
 		xmove_fd(xopen(cpio_filename, O_RDONLY), STDIN_FILENO);
 	}
+#if ENABLE_FEATURE_CPIO_P
 	if (opt & OPT_PASSTHROUGH) {
 		pid_t pid;
 		struct fd_pair pp;
@@ -511,6 +512,7 @@ int cpio_main(int argc UNUSED_PARAM, char **argv)
 		opt |= OPT_EXTRACT;
 		goto skip;
 	}
+#endif
 	/* -o */
 	if (opt & OPT_CREATE) {
 		if (cpio_fmt[0] != 'n') /* we _require_ "-H newc" */
@@ -564,11 +566,19 @@ int cpio_main(int argc UNUSED_PARAM, char **argv)
 	}
 
 	/* see get_header_cpio */
+#ifdef __wasi__
+	if ((opt & OPT_EXTRACT) && !(opt & OPT_2STDOUT))
+		efi_archive_begin();
+#endif
 	archive_handle->cpio__blocks = (off_t)-1;
 	while (get_header_cpio(archive_handle) == EXIT_SUCCESS)
 		continue;
 
 	create_links_from_list(archive_handle->link_placeholders);
+#ifdef __wasi__
+	if ((opt & OPT_EXTRACT) && !(opt & OPT_2STDOUT))
+		efi_archive_end();
+#endif
 
 	if (archive_handle->cpio__blocks != (off_t)-1
 	 && !(opt & OPT_QUIET)

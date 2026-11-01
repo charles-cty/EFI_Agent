@@ -464,6 +464,7 @@ struct globals {
 # endif
 #endif /* ENABLE_FEATURE_VI_UNDO */
 };
+static struct globals *ptr_to_globals;
 #define G (*ptr_to_globals)
 #define text           (G.text          )
 #define text_size      (G.text_size     )
@@ -1130,6 +1131,11 @@ static int readit(void) // read (maybe cursor) key from stdin
 	// Note: read_key sets errno to 0 on success.
  again:
 	c = safe_read_key(STDIN_FILENO, readbuffer, /*timeout:*/ -1);
+#ifdef __wasi__
+	/* Raw keyboard input delivers Ctrl+C without asynchronous signals. */
+	if (c == 3)
+		c = 27;
+#endif
 	if (c == -1) { // EOF/error
 		if (errno == EAGAIN) // paranoia
 			goto again;

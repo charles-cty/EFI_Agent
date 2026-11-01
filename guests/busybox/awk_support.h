@@ -7,6 +7,7 @@
 #define ALIGN4 __attribute__((aligned(4)))
 #define TRUE 1
 #define FALSE 0
+#undef SET_PTR_TO_GLOBALS
 #define SET_PTR_TO_GLOBALS(value) (ptr_to_globals = (void *)(value))
 #define popen efi_bb_popen
 #define pclose efi_bb_pclose

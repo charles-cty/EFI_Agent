@@ -89,7 +89,7 @@ enum {
 #define OPT_SID		(opt & (1 << OPTBIT_S))
 #define OPT_PPID	(opt & (1 << OPTBIT_P))
 
-static void act(unsigned pid, char *cmd, int signo)
+static int act(unsigned pid, char *cmd, int signo)
 {
 	if (pgrep) {
 		if (option_mask32 & ((1 << OPTBIT_L)|(1 << OPTBIT_A))) /* -l or -a */
@@ -97,17 +97,22 @@ static void act(unsigned pid, char *cmd, int signo)
 		else
 			printf("%u\n", pid);
 	} else {
-		kill(pid, signo);
+		if (kill(pid, signo) != 0) {
+			bb_perror_msg("can't kill pid %u", pid);
+			return 1;
+		}
 		if (option_mask32 & (1 << OPTBIT_E)) {
 			printf("%s killed (pid %u)\n", cmd, pid);
 		}
 	}
+	return 0;
 }
 
 int pgrep_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
 int pgrep_main(int argc UNUSED_PARAM, char **argv)
 {
 	unsigned pid;
+	int errors = 0;
 	int signo;
 	unsigned opt;
 	int scan_mask;
@@ -140,6 +145,10 @@ int pgrep_main(int argc UNUSED_PARAM, char **argv)
 	sid2match = -1;
 	opt = getopt32(argv, "vlafxones:+P:+", &sid2match, &ppid2match);
 	argv += optind;
+#ifdef __wasi__
+	if (sid2match >= 0)
+		bb_simple_error_msg_and_die("process sessions are unavailable");
+#endif
 
 	if (pkill && OPT_LIST) { /* -l: print the whole signal list */
 		print_signames();
@@ -238,16 +247,16 @@ int pgrep_main(int argc UNUSED_PARAM, char **argv)
 			}
 			if (cmdlen >= 0)
 				cmd[cmdlen] = '\0';
-			act(proc->pid, cmd, signo);
+			errors |= act(proc->pid, cmd, signo);
 			if (OPT_FIRST)
 				break;
 		}
 	}
 
 	if (cmd_last) {
-		act(matched_pid, cmd_last, signo);
+		errors |= act(matched_pid, cmd_last, signo);
 		if (ENABLE_FEATURE_CLEAN_UP)
 			free(cmd_last);
 	}
-	return matched_pid == 0; /* return 1 if no processes listed/signaled */
+	return errors || matched_pid == 0; /* return 1 if no processes listed/signaled */
 }

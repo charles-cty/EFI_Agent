@@ -14,6 +14,22 @@ completion. Verification of a staging package does not verify those paths.
 
 # Current state
 
+The second BusyBox extension installs 11 more commands, for 89 command names:
+ed, ar, cpio, lzop, ps, pgrep, kill, pkill, vi, less and more. Process queries
+read actual guest /proc records. Positive-PID signals 0/INT/KILL/TERM check or
+terminate one process; children survive and are adopted. Signal handlers,
+process groups and resource accounting remain unavailable. The shared terminal
+supports raw keys, /dev/tty, nonblocking pipes, a bounded VT screen and window
+dimensions. vi and less poll for size changes. Ctrl+C leaves vi insert mode;
+Ctrl+Q cancels raw-terminal commands. Model tools retain captured output and
+have no controlling terminal. Command details are in docs/busybox-applets.md.
+Native Windows builds, Rust checks, Clippy, real WASM integration and actual
+256 MiB WHPX terminal acceptance pass. The VM run covers editor saves/discard,
+paging, pipe input, resizing, cancellation and process commands, with exact
+exported host file bytes. Both standard trees and images match the current
+1,150 runtime files, 89 names, EFI entries and ten notices. Native configuration
+bytes are preserved. Evidence and intermediate fixes are in docs/verification.md.
+
 QuickJS exposes the zx-style shell template as ash. The public dollar global
 is absent. Model instructions, tool descriptions and maintained examples use
 ash. Real session/REPL checks cover quoting, configured templates, output
@@ -25,7 +41,7 @@ BusyBox arithmetic/truncate, ash templates and independently checked saved
 host bytes. This focused run does not repeat the full network/application
 combination or native hardware boot. Evidence is in docs/verification.md.
 
-The shared BusyBox image now installs 78 command names, including 27 new
+The first BusyBox extension installed 78 command names, including 27 new
 file/text, comparison, arithmetic, checksum and compression applets.
 The full selection and deferred commands are in docs/busybox-applets.md.
 The new integration suite and the existing text, gzip and mutation suites
@@ -57,7 +73,7 @@ values through its upstream value printer. Direct input now has a separate
 terminal view with continuous ordered stdout/stderr, no tool-result wrappers,
 per-language command history and live line input. Enter sends stdin to running
 commands; Ctrl+D sends EOF. Manual source, stdin and output stay outside model
-history. Ctrl+J inserts a newline; Esc/Ctrl+C cancels execution or clears idle
+history. Ctrl+J inserts a newline; Esc/Ctrl+C cancels cooked execution or clears idle
 input. Cancellation shows a reset notice and keeps terminal mode. Interpreter
 exit returns to conversation. The other interpreter and independent roots
 survive. Model tools retain finite empty stdin. /clear clears local terminal
@@ -91,7 +107,7 @@ Historical artifact references below can refer to outputs moved or removed by cl
 BusyBox 1.37.0 is maintained as complete source under vendor/busybox, with a
 separate pristine upstream import commit. The former build-time source
 rewrites are applied directly to the maintained source. The fixed feature
-header and 165-source compilation list are under guests/busybox. The musl
+header and 186-source compilation list are under guests/busybox. The musl
 dependency consists of its timezone rules file and license under
 vendor/musl-timezone. The native Python build drivers serve both Windows and
 Linux entry points; packaging prepares every shipped application and refreshes

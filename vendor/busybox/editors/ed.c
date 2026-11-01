@@ -53,6 +53,7 @@ struct globals {
 	smallint dirty;
 	int marks[26];
 };
+static struct globals *ptr_to_globals;
 #define G (*ptr_to_globals)
 #define curLine            (G.curLine           )
 #define bufBase            (G.bufBase           )
@@ -396,7 +397,7 @@ static int readLines(const char *file, int num)
 		return FALSE;
 	}
 
-	fd = open(file, 0);
+	fd = open(file, O_RDONLY);
 	if (fd < 0) {
 		bb_simple_perror_msg(file);
 		return FALSE;

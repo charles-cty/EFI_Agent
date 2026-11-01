@@ -110,6 +110,11 @@
 
 #include "libbb.h"
 #include "common_bufsiz.h"
+#ifdef __wasi__
+/* Select the column interface so unavailable counters need no invented data. */
+# undef ENABLE_DESKTOP
+# define ENABLE_DESKTOP 1
+#endif
 #ifdef __linux__
 # include <sys/sysinfo.h>
 #endif
@@ -383,7 +388,9 @@ static const ps_out_t out_spec[] ALIGN_PTR = {
 	{ MAX_WIDTH          , "args"  ,"COMMAND",func_args  ,PSSCAN_COMM    },
 	{ 5                  , "pid"   ,"PID"    ,func_pid   ,PSSCAN_PID     },
 	{ 5                  , "ppid"  ,"PPID"   ,func_ppid  ,PSSCAN_PPID    },
+#ifndef __wasi__
 	{ 5                  , "pgid"  ,"PGID"   ,func_pgid  ,PSSCAN_PGID    },
+#endif
 #if ENABLE_FEATURE_PS_TIME
 	{ sizeof("ELAPSED")-1, "etime" ,"ELAPSED",func_etime ,PSSCAN_START_TIME },
 #endif
@@ -396,12 +403,16 @@ static const ps_out_t out_spec[] ALIGN_PTR = {
 #if ENABLE_FEATURE_PS_TIME
 	{ 5                  , "time"  ,"TIME"   ,func_time  ,PSSCAN_STIME | PSSCAN_UTIME },
 #endif
+#ifndef __wasi__
 	{ 6                  , "tty"   ,"TT"     ,func_tty   ,PSSCAN_TTY     },
 	{ 4                  , "vsz"   ,"VSZ"    ,func_vsz   ,PSSCAN_VSZ     },
 /* Not mandated, but useful: */
 	{ 5                  , "sid"   ,"SID"    ,func_sid   ,PSSCAN_SID     },
+#endif
 	{ 4                  , "stat"  ,"STAT"   ,func_state ,PSSCAN_STATE   },
+#ifndef __wasi__
 	{ 4                  , "rss"   ,"RSS"    ,func_rss   ,PSSCAN_RSS     },
+#endif
 #if ENABLE_SELINUX
 	{ 35                 , "label" ,"LABEL"  ,func_label ,PSSCAN_CONTEXT },
 #endif

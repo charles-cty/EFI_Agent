@@ -369,11 +369,29 @@ unsigned bb_clk_tck(void)
 
 const char *get_signame(int number)
 {
-    return number == 0 ? "EXIT" : "UNSUPPORTED";
+    switch (number) {
+    case 0: return "EXIT";
+    case SIGINT: return "INT";
+    case SIGKILL: return "KILL";
+    case SIGTERM: return "TERM";
+    default: return "UNSUPPORTED";
+    }
 }
 int get_signum(const char *name)
 {
-    return strcmp(name, "EXIT") == 0 || strcmp(name, "0") == 0 ? 0 : -1;
+    if (strncmp(name, "SIG", 3) == 0)
+        name += 3;
+    if (strcmp(name, "EXIT") == 0) return 0;
+    if (strcmp(name, "INT") == 0) return SIGINT;
+    if (strcmp(name, "KILL") == 0) return SIGKILL;
+    if (strcmp(name, "TERM") == 0) return SIGTERM;
+    char *end;
+    long value = strtol(name, &end, 10);
+    return *name && !*end && value >= 0 && value < NSIG ? value : -1;
+}
+void print_signames(void)
+{
+    puts("0 EXIT 2 INT 9 KILL 15 TERM");
 }
 void (*signal(int number, void (*handler)(int)))(int)
 {

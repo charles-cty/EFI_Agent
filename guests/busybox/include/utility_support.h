@@ -5,6 +5,7 @@
 #include <getopt.h>
 #include <sys/time.h>
 #include <sys/statfs.h>
+#include <arpa/inet.h>
 
 #define ALIGN4 __attribute__((aligned(4)))
 #define PACKED __attribute__((packed))
@@ -18,12 +19,18 @@
 #define Optional_argument "\2"
 #define TRUE 1
 #define FALSE 0
+int read_line_input(void *state, const char *prompt, char *buffer, int size);
 #define SKIP 2
 #define exit_SUCCESS() exit(EXIT_SUCCESS)
 #define MAXINT(T) (T)(((T)-1) > 0 ? (T)-1 : (T)~((T)1 << (sizeof(T)*8-1)))
 #define MIN(left, right) ((left) < (right) ? (left) : (right))
 #define MAX(left, right) ((left) > (right) ? (left) : (right))
+#undef SET_PTR_TO_GLOBALS
 #define SET_PTR_TO_GLOBALS(value) (ptr_to_globals = (void *)(value))
+struct bb_uidgid_t { uid_t uid; gid_t gid; };
+void parse_chown_usergroup_or_die(struct bb_uidgid_t *ids, const char *text);
+char xread_char(int fd);
+void fputc_printable(int character, FILE *stream);
 int gunzip_main(int argc, char **argv);
 extern int efi_archive_root_fd;
 void efi_archive_begin(void);

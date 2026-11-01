@@ -295,7 +295,15 @@ int ar_main(int argc UNUSED_PARAM, char **argv)
 		return write_ar_archive(archive_handle);
 #endif
 
+#ifdef __wasi__
+	if (opt & CMD_EXTRACT)
+		efi_archive_begin();
+#endif
 	unpack_ar_archive(archive_handle);
+#ifdef __wasi__
+	if (opt & CMD_EXTRACT)
+		efi_archive_end();
+#endif
 
 	return EXIT_SUCCESS;
 }

@@ -22,17 +22,20 @@ DIR *warn_opendir(const char *path)
 
 int FAST_FUNC get_terminal_width(int fd)
 {
+    uint32_t state[3];
+    if (efi_process_terminal_get(fd, state) == 0)
+        return state[1];
     const char *columns = getenv("COLUMNS");
     int width = columns ? atoi(columns) : 80;
 
-    (void)fd;
     return width > 1 && width < 30000 ? width : 80;
 }
 
 
 void setup_common_bufsiz(void)
 {
-    memset(bb_common_bufsiz1, 0, sizeof(bb_common_bufsiz1));
+    /* Static storage starts zeroed in each WASM instance. Repeated setup
+     * must retain buffered input, as required by less between page reads. */
 }
 
 unsigned string_array_len(char **array)
