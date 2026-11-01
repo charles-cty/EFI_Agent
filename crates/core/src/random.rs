@@ -67,6 +67,7 @@ impl Generator {
 }
 
 #[cfg(target_arch = "x86_64")]
+#[allow(unused_unsafe)]
 fn rdrand() -> Result<Option<u64>, Error> {
     // SAFETY: CPUID is available on x86-64. Its feature bit gates RDRAND.
     if unsafe { core::arch::x86_64::__cpuid(1) }.ecx & (1 << 30) == 0 {

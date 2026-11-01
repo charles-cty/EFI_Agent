@@ -26,6 +26,7 @@ pub struct App {
     pub quit: bool,
     pub selection_view: crate::serial::SelectionView,
     pub transcript_generation: u64,
+    pub history_limit: usize,
     disclosure_hits: Vec<(Rect, usize)>,
     focused: Option<usize>,
     disclosure_anchor: Option<(usize, u16)>,
@@ -46,6 +47,7 @@ impl Default for App {
             quit: false,
             selection_view: crate::serial::SelectionView::default(),
             transcript_generation: 0,
+            history_limit: crate::budget::Limits::default().ui_history_bytes,
             disclosure_hits: Vec::new(),
             focused: None,
             disclosure_anchor: None,
@@ -55,6 +57,71 @@ impl Default for App {
 }
 
 impl App {
+    fn cap_message_content(&mut self, index: usize) {
+        let maximum = self.history_limit.min(256 * 1024);
+        let Some(message) = self.messages.get_mut(index) else {
+            return;
+        };
+        if message.content.len() <= maximum {
+            return;
+        }
+        let marker = "\n[UI content truncated to fit visible-history budget]\n";
+        let keep = maximum.saturating_sub(marker.len());
+        let mut end = keep;
+        while end > 0 && !message.content.is_char_boundary(end) {
+            end -= 1;
+        }
+        message.content.truncate(end);
+        message.content.push_str(marker);
+    }
+
+    /// Call only at a boundary with no active streaming or tool-row index.
+    pub fn prune_history(&mut self) {
+        for message in &mut self.messages {
+            for text in [&mut message.role, &mut message.title] {
+                if text.len() > self.history_limit / 8 {
+                    let mut end = self.history_limit / 8;
+                    while !text.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    *text = String::from(&text[..end]);
+                }
+            }
+        }
+        let cost = |message: &Message| {
+            core::mem::size_of::<Message>()
+                + message.role.len()
+                + message.title.len()
+                + message.content.len()
+        };
+        let mut total: usize = self.messages.iter().map(cost).sum();
+        if total <= self.history_limit {
+            return;
+        }
+        let marker = "[Earlier UI history omitted]\n";
+        let mut removed = 0;
+        while removed + 1 < self.messages.len() && total + marker.len() > self.history_limit {
+            total -= cost(&self.messages[removed]);
+            removed += 1;
+        }
+        self.messages.drain(..removed);
+        if let Some(message) = self.messages.first_mut() {
+            let overhead = total - message.content.len();
+            let keep = self.history_limit.saturating_sub(overhead + marker.len());
+            let mut start = message.content.len().saturating_sub(keep);
+            while !message.content.is_char_boundary(start) {
+                start += 1;
+            }
+            message.content = format!("{marker}{}", &message.content[start..]);
+        }
+        self.messages.shrink_to_fit();
+        self.transcript_generation += 1;
+        self.disclosure_hits.clear();
+        self.focused = None;
+        self.disclosure_anchor = None;
+        self.scroll = 0;
+    }
+
     /// Keep editing responsive during execution and defer only submission.
     pub fn request_key(&mut self, deferred: &mut VecDeque<Key>, key: Key) -> bool {
         if let crate::repl::Mode::Repl(language) = self.input_mode {
@@ -256,6 +323,7 @@ impl App {
             collapsible: false,
             expanded: true,
         });
+        self.cap_message_content(self.messages.len() - 1);
     }
 
     pub fn detail(&mut self, role: &str, title: String, content: String) {
@@ -290,6 +358,7 @@ impl App {
         message.title = format!("Tool: {name} ({})", if failed { "failed" } else { "done" });
         message.content.push_str("\n\nResult:\n");
         message.content.push_str(result);
+        self.cap_message_content(index);
     }
 
     fn toggle(&mut self, index: usize) {
@@ -689,6 +758,42 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn history_budget_keeps_recent_utf8_and_invalidates_row_indices() {
+        let mut app = App {
+            history_limit: 4096,
+            ..App::default()
+        };
+        for _ in 0..100 {
+            app.detail("tool_result", "Tool".into(), "中😀".repeat(100));
+        }
+        let generation = app.transcript_generation;
+        app.prune_history();
+        assert!(app.transcript_generation > generation);
+        let bytes: usize = app
+            .messages
+            .iter()
+            .map(|m| {
+                core::mem::size_of::<Message>() + m.role.len() + m.title.len() + m.content.len()
+            })
+            .sum();
+        assert!(bytes <= 4096);
+        assert!(
+            app.messages[0]
+                .content
+                .starts_with("[Earlier UI history omitted]")
+        );
+        let index = app.start_tool("shell", "echo state");
+        app.finish_tool(index, "shell", "kept", false);
+        assert!(app.messages[index].content.ends_with("kept"));
+        app.messages.clear();
+        app.message("assistant", "中😀".repeat(10000));
+        app.prune_history();
+        assert!(app.messages[0].content.len() < 4096);
+        let before = app.transcript_generation;
+        app.prune_history();
+        assert_eq!(app.transcript_generation, before);
+    }
 
     #[test]
     fn repl_keys_clear_input_and_keep_the_application_running() {

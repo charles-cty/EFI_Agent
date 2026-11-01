@@ -8,6 +8,7 @@ use alloc::{
 };
 use efi_agent_core::{
     agent::{self, Environment},
+    budget::{Limits, Purpose},
     config::AgentConfig,
     http::{Body, Url},
     model::{self, Read},
@@ -18,7 +19,9 @@ use serde_json::Value;
 pub struct Runtime {
     pub config: AgentConfig,
     attempts: u64,
+    summary_attempts: u64,
     last_usage: Option<Value>,
+    last_summary_usage: Option<Value>,
     totals: [u64; 5],
     reports: [u64; 5],
 }
@@ -46,7 +49,9 @@ impl Runtime {
         Ok(Self {
             config,
             attempts: 0,
+            summary_attempts: 0,
             last_usage: None,
+            last_summary_usage: None,
             totals: [0; 5],
             reports: [0; 5],
         })
@@ -62,6 +67,10 @@ impl Runtime {
                     self.config.reasoning_effort,
                     self.attempts
                 );
+                status.push_str(&format!("Task requests: {}; summary requests: {}\nToken subtotals include both purposes. Last token fields below refer to task requests.\n", self.attempts - self.summary_attempts, self.summary_attempts));
+                if let Some(usage) = &self.last_summary_usage {
+                    status.push_str(&format!("Last summary usage (provider): {usage}\n"));
+                }
                 for (index, (label, path)) in USAGE_FIELDS.iter().enumerate() {
                     let last = self
                         .last_usage
@@ -108,30 +117,19 @@ impl Runtime {
     fn complete(
         &mut self,
         messages: &[ChatMessage],
+        purpose: Purpose,
         progress: &mut dyn FnMut(&str),
         poll: &mut dyn FnMut() -> bool,
     ) -> Result<ChatMessage, String> {
         let api = model::api_format(Some(&self.config.api_format))?;
-        let body = if api == model::ApiFormat::Responses {
-            efi_agent_core::responses::request(
-                &self.config.model,
-                messages,
-                &self.config.reasoning_effort,
-            )?
-        } else {
-            let mut messages = serde_json::to_value(messages).map_err(|e| e.to_string())?;
-            for message in messages.as_array_mut().ok_or("Invalid message list")? {
-                message
-                    .as_object_mut()
-                    .ok_or("Invalid message")?
-                    .remove("response_items");
-            }
-            serde_json::json!({"model":self.config.model,"messages":messages,"stream":true,"reasoning_effort":self.config.reasoning_effort,"stream_options":{"include_usage":true},"tools":agent::tool_definitions(),"tool_choice":"auto"})
-        };
-        let body = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
-        if body.len() > efi_agent_core::protocol::MAX_MESSAGE_BYTES {
-            return Err("Provider request exceeds limit".into());
-        }
+        let body = efi_agent_core::request::build(
+            api,
+            &self.config.model,
+            messages,
+            &self.config.reasoning_effort,
+            purpose,
+        )?;
+        let body = efi_agent_core::request::encode(&body, &self.config.limits)?;
         let url = Url::parse(&self.config.api_base)?;
         let address = dns::resolve(
             &url.host,
@@ -155,7 +153,12 @@ impl Runtime {
             .map(|path| files::read_bytes(path))
             .transpose()?;
         self.attempts += 1;
-        self.last_usage = None;
+        if purpose == Purpose::Summary {
+            self.summary_attempts += 1;
+            self.last_summary_usage = None;
+        } else {
+            self.last_usage = None;
+        }
         let endpoint = format!(
             "API TCP {}.{}.{}.{}:{}",
             address[0], address[1], address[2], address[3], url.port,
@@ -175,7 +178,7 @@ impl Runtime {
         socket
             .send(&body)
             .map_err(|error| format!("{endpoint} request send failed: {error}"))?;
-        let mut response = Body::new(socket)
+        let mut response = Body::with_limit(socket, self.config.limits.response_wire_bytes)
             .map_err(|error| format!("{endpoint} response read failed: {error}"))?;
         if !(200..300).contains(&response.status) {
             let mut detail = Vec::new();
@@ -189,8 +192,18 @@ impl Runtime {
                 }
                 detail.extend_from_slice(&bytes[..count]);
             }
-            let detail = serde_json::from_slice::<Value>(&detail)
-                .ok()
+            let error = serde_json::from_slice::<Value>(&detail).ok();
+            if error.as_ref().is_some_and(|value| {
+                matches!(
+                    value["error"]["code"].as_str(),
+                    Some("context_length_exceeded" | "max_context_length")
+                ) || value["error"]["type"].as_str() == Some("context_length_exceeded")
+            }) {
+                return Err(
+                    "ModelContextExceeded: provider rejected the context token length".into(),
+                );
+            }
+            let detail = error
                 .and_then(|v| v["error"]["message"].as_str().map(String::from))
                 .unwrap_or_else(|| "Provider request failed".into());
             let detail: String = detail
@@ -217,14 +230,16 @@ impl Runtime {
                     Ok(())
                 },
                 &mut |v| usage = Some(v.clone()),
+                &self.config.limits,
             ),
-            model::ApiFormat::Responses => efi_agent_core::responses::read_stream(
+            model::ApiFormat::Responses => efi_agent_core::responses::read_stream_with_limits(
                 response,
                 &mut |text| {
                     progress(text);
                     Ok(())
                 },
                 &mut |v| usage = Some(v.clone()),
+                &self.config.limits,
             ),
         };
         if let Some(value) = &usage {
@@ -235,7 +250,11 @@ impl Runtime {
                 }
             }
         }
-        self.last_usage = usage;
+        if purpose == Purpose::Summary {
+            self.last_summary_usage = usage;
+        } else {
+            self.last_usage = usage;
+        }
         result.map_err(|error| format!("{endpoint} response stream failed: {error}"))
     }
 }
@@ -255,12 +274,35 @@ impl Interactive<'_> {
     }
 }
 impl Environment for Interactive<'_> {
+    fn limits(&self) -> Limits {
+        self.runtime.config.limits.clone()
+    }
+    fn request_bytes(&self, messages: &[ChatMessage], purpose: Purpose) -> Result<usize, String> {
+        let config = &self.runtime.config;
+        efi_agent_core::request::bytes(
+            model::api_format(Some(&config.api_format))?,
+            &config.model,
+            messages,
+            &config.reasoning_effort,
+            purpose,
+        )
+    }
+    fn result_reserve(&self, operation: &Operation) -> usize {
+        match operation {
+            // A background root can grow a file between admission and execution.
+            Operation::Read { path } => 6 * agent::MAX_FILE_BYTES + 32768 + 6 * path.len(),
+            Operation::Write { path, .. } | Operation::Edit { path, .. } => 32768 + 6 * path.len(),
+            Operation::Shell { .. } | Operation::Js { .. } => 6 * 2 * 65536 + 8192,
+            _ => 32768,
+        }
+    }
     fn cancelled(&self) -> bool {
         self.cancelled
     }
     fn complete(
         &mut self,
         messages: &[ChatMessage],
+        purpose: Purpose,
         progress: &mut dyn FnMut(&str),
     ) -> Result<ChatMessage, String> {
         if self.check() {
@@ -268,7 +310,7 @@ impl Environment for Interactive<'_> {
         }
         let cancelled = &mut self.cancelled;
         let poll = &mut self.poll;
-        self.runtime.complete(messages, progress, &mut || {
+        self.runtime.complete(messages, purpose, progress, &mut || {
             *cancelled |= poll();
             *cancelled
         })

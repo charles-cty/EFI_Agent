@@ -1,14 +1,11 @@
-use alloc::{
-    format,
-    string::{String, ToString},
-    vec::Vec,
-};
+use crate::budget::{self, Limits};
+use alloc::{format, string::String, vec::Vec};
 // Responses API adapter. Only a completed response can authorize tool calls.
 use crate::model::{Read, SseReader};
 use crate::reasoning_stream::{ReasoningStream, retain_unindexed};
 use crate::{
     agent,
-    protocol::{ChatMessage, FunctionCall, MAX_MESSAGE_BYTES, ToolCall},
+    protocol::{ChatMessage, FunctionCall, ToolCall},
 };
 use serde_json::{Value, json};
 
@@ -59,7 +56,7 @@ fn text_parts(parts: &Value, kinds: &[&str], field: &str) -> String {
         .join("\n")
 }
 
-fn completed(response: &Value) -> Result<ChatMessage, String> {
+fn completed(response: &Value, limits: &Limits) -> Result<ChatMessage, String> {
     if response["status"].as_str() != Some("completed") {
         return Err("Provider response was not completed".into());
     }
@@ -134,12 +131,12 @@ fn completed(response: &Value) -> Result<ChatMessage, String> {
         message.reasoning_summary = Some(summaries.join("\n"));
     }
     message.response_items = output.clone();
-    if serde_json::to_vec(&message)
-        .map_err(|e| e.to_string())?
-        .len()
-        > MAX_MESSAGE_BYTES - 2048
-    {
-        return Err("Provider message exceeds limit".into());
+    if message.canonical_bytes()? > limits.response_message_bytes {
+        return Err(budget::exceeded(
+            "ResponseMessageBudgetExceeded",
+            message.canonical_bytes()?,
+            limits.response_message_bytes,
+        ));
     }
     Ok(message)
 }
@@ -166,11 +163,20 @@ pub fn read_stream(
     progress: &mut dyn FnMut(&str) -> Result<(), String>,
     report_usage: &mut dyn FnMut(&Value),
 ) -> Result<ChatMessage, String> {
-    let mut reader = SseReader::new(reader);
+    read_stream_with_limits(reader, progress, report_usage, &Limits::default())
+}
+
+pub fn read_stream_with_limits(
+    reader: impl Read,
+    progress: &mut dyn FnMut(&str) -> Result<(), String>,
+    report_usage: &mut dyn FnMut(&Value),
+    limits: &Limits,
+) -> Result<ChatMessage, String> {
+    let mut reader = SseReader::with_limits(reader, limits);
     let mut streamed_bytes = 0;
     let mut summaries = String::new();
     let mut reasoning = String::new();
-    let mut state = ReasoningStream::default();
+    let mut state = ReasoningStream::with_limit(limits.response_message_bytes);
     loop {
         let data = reader.next_data()?;
         let event: Value =
@@ -184,8 +190,12 @@ pub fn read_stream(
                     .as_str()
                     .ok_or("Response reasoning delta is not text")?;
                 streamed_bytes += text.len();
-                if streamed_bytes > MAX_MESSAGE_BYTES - 2048 {
-                    return Err("Provider message exceeds limit".into());
+                if streamed_bytes > limits.response_message_bytes {
+                    return Err(budget::exceeded(
+                        "ResponseMessageBudgetExceeded",
+                        streamed_bytes,
+                        limits.response_message_bytes,
+                    ));
                 }
                 let summary = event["type"] == "response.reasoning_summary_text.delta";
                 if !state.text(&event, summary)? {
@@ -201,8 +211,12 @@ pub fn read_stream(
                     .as_str()
                     .ok_or("Response text delta is not text")?;
                 streamed_bytes += text.len();
-                if streamed_bytes > MAX_MESSAGE_BYTES - 2048 {
-                    return Err("Provider message exceeds limit".into());
+                if streamed_bytes > limits.response_message_bytes {
+                    return Err(budget::exceeded(
+                        "ResponseMessageBudgetExceeded",
+                        streamed_bytes,
+                        limits.response_message_bytes,
+                    ));
                 }
                 progress(text)?;
             }
@@ -220,14 +234,7 @@ pub fn read_stream(
                 let mut response = state.finish(response)?;
                 retain_unindexed(&mut response, &summaries, true)?;
                 retain_unindexed(&mut response, &reasoning, false)?;
-                let message = completed(&response)?;
-                if serde_json::to_vec(&message)
-                    .map_err(|e| e.to_string())?
-                    .len()
-                    > MAX_MESSAGE_BYTES - 2048
-                {
-                    return Err("Provider message exceeds limit".into());
-                }
+                let message = completed(&response, limits)?;
                 return Ok(message);
             }
             Some("error") => return Err("Provider reported a Responses streaming error".into()),
@@ -240,6 +247,32 @@ pub fn read_stream(
 mod tests {
     use super::*;
     use alloc::vec;
+    #[test]
+    fn completed_output_does_not_double_charge_delta_and_opaque_state() {
+        let output = json!([{"type":"reasoning","id":"r","summary":[],"encrypted_content":"q".repeat(6000),"signature":null},
+            {"type":"message","role":"assistant","content":[{"type":"output_text","text":"中\n".repeat(700)}]}]);
+        let size = serde_json::to_vec(&output).unwrap().len();
+        let events = [
+            json!({"type":"response.output_item.done","output_index":0,"item":output[0]}),
+            json!({"type":"response.output_text.delta","delta":"中\n".repeat(700)}),
+            json!({"type":"response.completed","response":{"status":"completed","output":output}}),
+        ];
+        let wire: String = events
+            .iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect();
+        for delta in [-1isize, 0, 1] {
+            let limits = Limits {
+                response_message_bytes: size.checked_add_signed(delta).unwrap(),
+                ..Limits::default()
+            };
+            assert_eq!(
+                read_stream_with_limits(wire.as_bytes(), &mut |_| Ok(()), &mut |_| {}, &limits)
+                    .is_ok(),
+                delta >= 0
+            );
+        }
+    }
     fn streamed(events: &[Value]) -> Result<ChatMessage, String> {
         let wire: String = events
             .iter()
@@ -375,7 +408,7 @@ mod tests {
 
     #[test]
     fn responses_preserve_reasoning_and_call_ids_across_tool_rounds() {
-        let message = completed(&response()).unwrap();
+        let message = completed(&response(), &Limits::default()).unwrap();
         assert_eq!(message.reasoning_summary.as_deref(), Some("Summary 中"));
         assert_eq!(
             message.reasoning_content.as_deref(),

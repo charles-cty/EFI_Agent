@@ -10,6 +10,9 @@ pub struct WasmOutput {
     stdout: String,
     stderr: String,
     status: String,
+    output_limit: usize,
+    stdout_truncated: bool,
+    stderr_truncated: bool,
 }
 
 impl WasmOutput {
@@ -18,11 +21,14 @@ impl WasmOutput {
         Self {
             index: app.messages.len() - 1,
             generation: app.transcript_generation,
-            command,
+            command: command.chars().take(4096).collect(),
             pid,
             stdout: String::new(),
             stderr: String::new(),
             status: String::new(),
+            output_limit: (app.history_limit / 128).clamp(1024, 64 * 1024),
+            stdout_truncated: false,
+            stderr_truncated: false,
         }
     }
 
@@ -35,12 +41,24 @@ impl WasmOutput {
         if self.generation != app.transcript_generation {
             self.stdout.clear();
             self.stderr.clear();
+            self.stdout_truncated = false;
+            self.stderr_truncated = false;
             app.detail("wasm", String::new(), String::new());
             self.index = app.messages.len() - 1;
             self.generation = app.transcript_generation;
         }
-        self.stdout.push_str(stdout);
-        self.stderr.push_str(stderr);
+        Self::append_stream(
+            &mut self.stdout,
+            stdout,
+            self.output_limit,
+            &mut self.stdout_truncated,
+        );
+        Self::append_stream(
+            &mut self.stderr,
+            stderr,
+            self.output_limit,
+            &mut self.stderr_truncated,
+        );
         let message = &mut app.messages[self.index];
         let mut label: String = self.command.chars().take(48).collect();
         if label.len() < self.command.len() {
@@ -52,14 +70,34 @@ impl WasmOutput {
             message.content.push_str("\n\nStandard output:\n");
             message.content.push_str(&self.stdout);
         }
+        if self.stdout_truncated {
+            message
+                .content
+                .push_str("\n[Output prefix retained; later stdout omitted]");
+        }
         if !self.stderr.is_empty() {
             message.content.push_str("\n\nStandard error:\n");
             message.content.push_str(&self.stderr);
+        }
+        if self.stderr_truncated {
+            message
+                .content
+                .push_str("\n[Output prefix retained; later stderr omitted]");
         }
         message
             .content
             .push_str(&format!("\n\nPID {}: {status}", self.pid));
         true
+    }
+
+    fn append_stream(target: &mut String, chunk: &str, limit: usize, truncated: &mut bool) {
+        let available = limit.saturating_sub(target.len());
+        let mut end = chunk.len().min(available);
+        while !chunk.is_char_boundary(end) {
+            end -= 1;
+        }
+        target.push_str(&chunk[..end]);
+        *truncated |= end < chunk.len();
     }
 
     pub fn status(&self) -> &str {
@@ -116,5 +154,25 @@ mod tests {
         assert!(!app.messages[1].expanded);
         assert!(app.messages[1].content.contains("new"));
         assert!(!app.messages[1].content.contains("old"));
+    }
+
+    #[test]
+    fn active_process_disclosures_bound_each_stream_and_command_copy() {
+        let mut app = App::default();
+        app.history_limit = 4096;
+        let mut output = WasmOutput::new(&mut app, 9, "x".repeat(100_000));
+        output.update(
+            &mut app,
+            &"中".repeat(100_000),
+            &"\u{0001}".repeat(100_000),
+            "Running",
+        );
+        assert!(output.command.len() <= 4096);
+        assert!(output.stdout.len() <= 64 * 1024);
+        assert!(output.stderr.len() <= 64 * 1024);
+        assert!(output.stdout_truncated && output.stderr_truncated);
+        assert!(app.messages[0].content.len() < 256 * 1024);
+        assert!(app.messages[0].content.contains("later stdout omitted"));
+        assert!(app.messages[0].content.contains("later stderr omitted"));
     }
 }

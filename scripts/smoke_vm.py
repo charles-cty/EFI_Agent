@@ -112,6 +112,8 @@ class DNSService(socketserver.ThreadingTCPServer):
 
 
 class Provider(BaseHTTPRequestHandler):
+    context_budgets = None
+    body_errors = []
     protocol_version = "HTTP/1.1"
     requests = []
     errors = []
@@ -147,12 +149,21 @@ class Provider(BaseHTTPRequestHandler):
             self.send_error(500)
 
     def respond(self):
-        request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        declared = int(self.headers["Content-Length"])
+        raw = self.rfile.read(declared)
+        try:
+            request = json.loads(raw)
+        except json.JSONDecodeError as error:
+            Provider.body_errors.append({"declared": declared, "received": len(raw), "error": str(error),
+                                         "tail_hex": raw[-32:].hex(), "prefix_hex": raw[:32].hex()})
+            raise
         Provider.requests.append(request)
         assert self.headers["Authorization"] == "Bearer smoke-key"
         assert request["model"] == "smoke-model" and request["stream"] is True
         responses = self.path == "/v1/responses"
         assert self.path in ("/v1/chat/completions", "/v1/responses")
+        if Provider.context_budgets is not None:
+            return Provider.context_budgets.respond(self, request, responses)
         if responses:
             assert request["store"] is False
             assert request["include"] == ["reasoning.encrypted_content"]
@@ -326,6 +337,7 @@ def run(services):
     parser.add_argument("--executable-freshness", action="store_true", help="Verify live and cached executable images across source mutation")
     parser.add_argument("--installation", action="store_true", help="Verify manifest-installed commands and libraries")
     parser.add_argument("--sessions", action="store_true", help="Verify consecutive live shell/JavaScript tool state and clear")
+    parser.add_argument("--context-budgets", action="store_true", help="Verify 512 KiB model tools, compaction, cancellation, context retry and admission")
     parser.add_argument("--repl", action="store_true", help="Verify direct shared-interpreter input, model handoff and cancellation")
     parser.add_argument("--code-timeout", type=float, default=480, help="Maximum seconds for the complete code-tool sequence")
     parser.add_argument("--code-cancel-only", action="store_true", help="Run only code cancellation/isolation checks; requires --code-workspace")
@@ -352,6 +364,11 @@ def run(services):
     parser.add_argument("--process-files", action="store_true", help="Verify process metadata, descriptor links, pipe lifetime and saved bytes")
     parser.add_argument("--cwd", action="store_true", help="Verify retained cwd identity through rename/removal and standard Python/ash APIs")
     args = parser.parse_args()
+    if args.context_budgets:
+        if not args.code_workspace:
+            parser.error('--context-budgets requires --code-workspace')
+        from wasm_context_budget_fixture import ContextBudgets
+        Provider.context_budgets = ContextBudgets()
     if args.code_cancel_only and not args.code_workspace:
         parser.error("--code-cancel-only requires --code-workspace")
     if args.filesystem_tools:
@@ -597,6 +614,7 @@ def run(services):
     args.output.mkdir(parents=True, exist_ok=True)
     Provider.requests.clear()
     Provider.errors.clear()
+    Provider.body_errors.clear()
     Provider.stream_started.clear()
     Provider.stream_release.clear()
     with tempfile.TemporaryDirectory(prefix="efi-direct-") as temporary:
@@ -620,6 +638,11 @@ def run(services):
         (tree / "EFI/AGENT/CA.DER").write_bytes((temporary / "ca.der").read_bytes())
         host = "wrong.test" if args.tls_failure == "hostname" else "provider.test"
         config = {"api_base": f"https://{host}:{provider.server_port}/v1", "api_key": "smoke-key", "model": "smoke-model", "api_format": args.api_format, "dns_address": [10, 0, 2, 2], "dns_port": dns.server_address[1], "workspace": "\\work"}
+        if args.context_budgets:
+            # Keep the 512 KiB read request below the trigger after the one
+            # large write argument has been compacted; this isolates one
+            # automatic compaction from later state probes.
+            config["limits"] = {"compact_at_bytes": 3_500_000}
         if args.http:
             config["api_base"] = f"http://10.0.2.2:{provider.server_port}/v1"
         if args.tls_failure != "untrusted":
@@ -696,6 +719,16 @@ def run(services):
                 connection.sendall(text.encode() + b"\r")
 
             wait("What would you like to build?")
+            if args.context_budgets:
+                Provider.context_budgets.exercise(send, wait, connection, args.code_timeout)
+                send('/exit')
+                qemu.wait(timeout=15)
+                assert qemu.returncode == 0
+                with image.open('rb') as disk:
+                    fs = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
+                    Provider.context_budgets.verify(FatWorkspace(fs))
+                print(f'PASS {args.api_format} context budgets, 512 KiB tools, atomic compaction/cancellation, retained interpreters, retry without repeated effects and independently saved FAT bytes', flush=True)
+                return
             if args.repl:
                 exercise_repl(send, wait, connection, Provider, args.code_timeout)
                 send('/exit')
@@ -1014,6 +1047,9 @@ def run(services):
                 print("PASS actual FAT file bytes and no truncated tool execution", flush=True)
         finally:
             Provider.stream_release.set()
+            if Provider.context_budgets is not None:
+                Provider.context_budgets.summary_release.set()
+                (args.output / 'context-report.json').write_text(json.dumps(Provider.context_budgets.report(), indent=2), encoding='utf-8')
             if qemu.poll() is None:
                 qemu.terminate()
             _, errors = qemu.communicate(timeout=15)

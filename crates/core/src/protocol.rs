@@ -1,9 +1,6 @@
 use alloc::{string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
 
-/// Provider event and assembled message byte limit.
-pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
-
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Operation {
@@ -43,6 +40,9 @@ pub struct Message {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChatMessage {
+    /// Local identity only; never sent to a provider.
+    #[serde(skip)]
+    pub checkpoint: bool,
     pub role: String,
     pub content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -63,8 +63,36 @@ pub struct ChatMessage {
 }
 
 impl ChatMessage {
+    pub fn canonical_bytes(&self) -> Result<usize, String> {
+        if !self.response_items.is_empty() {
+            return Ok(2
+                + self
+                    .response_items
+                    .iter()
+                    .map(crate::budget::json_bytes)
+                    .sum::<usize>()
+                + self.response_items.len().saturating_sub(1));
+        }
+        serde_json::to_value(self)
+            .map(|value| crate::budget::json_bytes(&value))
+            .map_err(|error| alloc::string::ToString::to_string(&error))
+    }
+
+    /// Keep the authoritative Responses items after display and dispatch.
+    pub fn retain_canonical(&mut self) {
+        if !self.response_items.is_empty() {
+            self.content = None;
+            self.reasoning_content = None;
+            self.reasoning = None;
+            self.reasoning_summary = None;
+            self.reasoning_details.clear();
+            self.tool_calls.clear();
+        }
+    }
+
     pub fn text(role: &str, content: String) -> Self {
         Self {
+            checkpoint: false,
             role: role.into(),
             content: Some(content),
             reasoning_content: None,

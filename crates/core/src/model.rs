@@ -1,11 +1,7 @@
-use alloc::{
-    borrow::ToOwned,
-    format,
-    string::{String, ToString},
-    vec::Vec,
-};
+use crate::budget::{self, Limits};
+use alloc::{borrow::ToOwned, format, string::String, vec::Vec};
 // Bounded Chat Completions SSE reader. Tool calls execute only after completion.
-use crate::protocol::{ChatMessage, FunctionCall, MAX_MESSAGE_BYTES, ToolCall};
+use crate::protocol::{ChatMessage, FunctionCall, ToolCall};
 use serde_json::Value;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -56,15 +52,20 @@ pub struct SseReader<R: Read> {
     offset: usize,
     length: usize,
     wire_bytes: usize,
+    limits: Limits,
 }
 impl<R: Read> SseReader<R> {
     pub fn new(reader: R) -> Self {
+        Self::with_limits(reader, &Limits::default())
+    }
+    pub fn with_limits(reader: R, limits: &Limits) -> Self {
         Self {
             reader,
             buffer: [0; 4096],
             offset: 0,
             length: 0,
             wire_bytes: 0,
+            limits: limits.clone(),
         }
     }
     fn line(&mut self) -> Result<String, String> {
@@ -83,15 +84,23 @@ impl<R: Read> SseReader<R> {
             let byte = self.buffer[self.offset];
             self.offset += 1;
             self.wire_bytes += 1;
-            if self.wire_bytes > 8 * MAX_MESSAGE_BYTES {
-                return Err("Provider stream exceeds wire limit".into());
+            if self.wire_bytes > self.limits.response_wire_bytes {
+                return Err(budget::exceeded(
+                    "ResponseWireBudgetExceeded",
+                    self.wire_bytes,
+                    self.limits.response_wire_bytes,
+                ));
             }
             if byte == b'\n' {
                 break;
             }
             line.push(byte);
-            if line.len() > MAX_MESSAGE_BYTES {
-                return Err("Provider event exceeds limit".into());
+            if line.len() > self.limits.event_bytes + 7 {
+                return Err(budget::exceeded(
+                    "EventBudgetExceeded",
+                    self.limits.event_bytes + 1,
+                    self.limits.event_bytes,
+                ));
             }
         }
         if line.last() == Some(&b'\r') {
@@ -112,8 +121,12 @@ impl<R: Read> SseReader<R> {
                     data.push('\n');
                 }
                 data.push_str(value.strip_prefix(' ').unwrap_or(value));
-                if data.len() > MAX_MESSAGE_BYTES {
-                    return Err("Provider event exceeds limit".into());
+                if data.len() > self.limits.event_bytes {
+                    return Err(budget::exceeded(
+                        "EventBudgetExceeded",
+                        self.limits.event_bytes + 1,
+                        self.limits.event_bytes,
+                    ));
                 }
             }
         }
@@ -130,19 +143,25 @@ pub fn reasoning_effort(value: Option<&str>) -> Result<&str, String> {
     Ok(effort)
 }
 
-fn append_fragment(target: &mut String, value: &Value, bytes: &mut usize) -> Result<(), String> {
+fn append_fragment(
+    limit: usize,
+    target: &mut String,
+    value: &Value,
+    bytes: &mut usize,
+) -> Result<(), String> {
     if value.is_null() {
         return Ok(());
     }
     let fragment = value.as_str().ok_or("Provider delta field is not text")?;
     // JSON escaping is additive across string fragments. Count each fragment
     // once instead of serializing the growing message on every token.
-    *bytes += serde_json::to_vec(fragment)
-        .map_err(|e| e.to_string())?
-        .len()
-        - 2;
-    if *bytes > MAX_MESSAGE_BYTES - 2048 {
-        return Err("Provider message exceeds limit".into());
+    *bytes += budget::string_bytes(fragment) - 2;
+    if *bytes > limit {
+        return Err(budget::exceeded(
+            "ResponseMessageBudgetExceeded",
+            *bytes,
+            limit,
+        ));
     }
     target.push_str(fragment);
     Ok(())
@@ -168,6 +187,7 @@ fn merge_metadata(target: &mut Value, source: &Value) -> Result<(), String> {
 }
 
 fn retain_extensions(
+    limit: usize,
     target: &mut serde_json::Map<String, Value>,
     source: &Value,
     known: &[&str],
@@ -180,14 +200,20 @@ fn retain_extensions(
         .iter()
         .filter(|(name, _)| !known.contains(&name.as_str()))
     {
-        *bytes += name.len() + serde_json::to_vec(value).map_err(|e| e.to_string())?.len();
-        if *bytes > MAX_MESSAGE_BYTES - 2048 {
-            return Err("Provider message exceeds limit".into());
-        }
+        let before = target.get(name).map_or(0, budget::json_bytes);
         if let Some(previous) = target.get_mut(name) {
             merge_metadata(previous, value)?;
         } else {
             target.insert(name.clone(), value.clone());
+            *bytes += budget::string_bytes(name) + 2;
+        }
+        *bytes += budget::json_bytes(&target[name]) - before;
+        if *bytes > limit {
+            return Err(budget::exceeded(
+                "ResponseMessageBudgetExceeded",
+                *bytes,
+                limit,
+            ));
         }
     }
     Ok(())
@@ -198,15 +224,17 @@ pub fn read_stream(
     reader: impl Read,
     progress: &mut dyn FnMut(&str) -> Result<(), String>,
 ) -> Result<ChatMessage, String> {
-    read_stream_with_usage(reader, progress, &mut |_| {})
+    read_stream_with_usage(reader, progress, &mut |_| {}, &Limits::default())
 }
 
 pub fn read_stream_with_usage(
     reader: impl Read,
     progress: &mut dyn FnMut(&str) -> Result<(), String>,
     usage: &mut dyn FnMut(&Value),
+    limits: &Limits,
 ) -> Result<ChatMessage, String> {
-    let mut reader = SseReader::new(reader);
+    let limit = limits.response_message_bytes;
+    let mut reader = SseReader::with_limits(reader, limits);
     let mut message = ChatMessage::text("assistant", String::new());
     let mut finished = false;
     let mut message_bytes = 0;
@@ -219,12 +247,12 @@ pub fn read_stream_with_usage(
             if message.content.as_deref() == Some("") && !message.tool_calls.is_empty() {
                 message.content = None;
             }
-            if serde_json::to_vec(&message)
-                .map_err(|e| e.to_string())?
-                .len()
-                > MAX_MESSAGE_BYTES - 2048
-            {
-                return Err("Provider message exceeds limit".into());
+            if message.canonical_bytes()? > limit {
+                return Err(budget::exceeded(
+                    "ResponseMessageBudgetExceeded",
+                    message.canonical_bytes()?,
+                    limit,
+                ));
             }
             return Ok(message);
         }
@@ -254,12 +282,14 @@ pub fn read_stream_with_usage(
             }
             let text = delta["content"].as_str().unwrap_or_default();
             append_fragment(
+                limit,
                 message.content.get_or_insert_default(),
                 &delta["content"],
                 &mut message_bytes,
             )?;
             if !delta["reasoning_content"].is_null() {
                 append_fragment(
+                    limit,
                     message.reasoning_content.get_or_insert_default(),
                     &delta["reasoning_content"],
                     &mut message_bytes,
@@ -271,6 +301,7 @@ pub fn read_stream_with_usage(
             ] {
                 if delta[field].is_string() {
                     append_fragment(
+                        limit,
                         target.get_or_insert_default(),
                         &delta[field],
                         &mut message_bytes,
@@ -297,10 +328,13 @@ pub fn read_stream_with_usage(
                             if !value.is_string() {
                                 if !value.is_null() || !target.contains_key(name) {
                                     target.insert(name.clone(), value.clone());
-                                    message_bytes +=
-                                        serde_json::to_vec(value).map_err(|e| e.to_string())?.len();
-                                    if message_bytes > MAX_MESSAGE_BYTES - 2048 {
-                                        return Err("Provider message exceeds limit".into());
+                                    message_bytes += budget::json_bytes(value);
+                                    if message_bytes > limit {
+                                        return Err(budget::exceeded(
+                                            "ResponseMessageBudgetExceeded",
+                                            message_bytes,
+                                            limit,
+                                        ));
                                     }
                                 }
                                 continue;
@@ -315,15 +349,24 @@ pub fn read_stream_with_usage(
                                 .and_then(Value::as_str)
                                 .unwrap_or_default()
                                 .to_owned();
-                            append_fragment(&mut text, value, &mut message_bytes)?;
+                            append_fragment(limit, &mut text, value, &mut message_bytes)?;
                             target.insert(name.clone(), Value::String(text));
                         } else {
-                            message_bytes +=
-                                serde_json::to_vec(value).map_err(|e| e.to_string())?.len();
-                            if message_bytes > MAX_MESSAGE_BYTES - 2048 {
-                                return Err("Provider message exceeds limit".into());
+                            let before = target.get(name).map_or(0, budget::json_bytes);
+                            if let Some(previous) = target.get_mut(name) {
+                                merge_metadata(previous, value)?;
+                            } else {
+                                target.insert(name.clone(), value.clone());
+                                message_bytes += budget::string_bytes(name) + 2;
                             }
-                            target.insert(name.clone(), value.clone());
+                            message_bytes += budget::json_bytes(&target[name]) - before;
+                            if message_bytes > limit {
+                                return Err(budget::exceeded(
+                                    "ResponseMessageBudgetExceeded",
+                                    message_bytes,
+                                    limit,
+                                ));
+                            }
                         }
                     }
                 }
@@ -351,12 +394,14 @@ pub fn read_stream_with_usage(
                     }
                     let target = &mut message.tool_calls[index as usize];
                     retain_extensions(
+                        limit,
                         &mut target.extensions,
                         call,
                         &["index", "id", "type", "function"],
                         &mut message_bytes,
                     )?;
                     retain_extensions(
+                        limit,
                         &mut target.function.extensions,
                         &call["function"],
                         &["name", "arguments"],
@@ -371,7 +416,7 @@ pub fn read_stream_with_usage(
                             &call["function"]["arguments"],
                         ),
                     ] {
-                        append_fragment(field, source, &mut message_bytes)?;
+                        append_fragment(limit, field, source, &mut message_bytes)?;
                     }
                 }
             }
@@ -389,6 +434,7 @@ pub fn read_stream_with_usage(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
     #[test]
     fn tool_extensions_and_null_reasoning_survive_stream_and_serialization() {
         let details = serde_json::json!({"index":0,"type":"reasoning.encrypted","text":null,"summary":null,"data":"OPAQUE_419","extension":{"nested":[null,"中"]}});
@@ -419,6 +465,74 @@ mod tests {
         assert_eq!(next["tool_calls"][0]["function"]["signature"], Value::Null);
         assert_eq!(next["tool_calls"][0]["function"]["arguments"], "{}");
         assert!(next["tool_calls"][0].get("index").is_none());
+    }
+
+    #[test]
+    fn sse_payload_boundaries_include_crlf_and_multiline_framing() {
+        for ending in ["\n", "\r\n"] {
+            for length in [4095, 4096, 4097] {
+                let limits = Limits {
+                    event_bytes: 4096,
+                    ..Limits::default()
+                };
+                let wire = format!("data: {}{ending}{ending}", "x".repeat(length));
+                let result = SseReader::with_limits(wire.as_bytes(), &limits).next_data();
+                assert_eq!(
+                    result.is_ok(),
+                    length <= 4096,
+                    "length={length}, ending={ending:?}"
+                );
+            }
+            let wire = format!(
+                "data: {}{ending}data: {}{ending}{ending}",
+                "a".repeat(2000),
+                "b".repeat(2095)
+            );
+            assert_eq!(
+                SseReader::with_limits(
+                    wire.as_bytes(),
+                    &Limits {
+                        event_bytes: 4096,
+                        ..Limits::default()
+                    }
+                )
+                .next_data()
+                .unwrap()
+                .len(),
+                4096
+            );
+        }
+    }
+
+    #[test]
+    fn completed_message_boundary_and_repeated_opaque_fields_count_retained_growth() {
+        let signature = "opaque".repeat(500);
+        let fragment = serde_json::json!({"tool_calls":[{"index":0,"signature":signature}]});
+        let mut wire = event(
+            serde_json::json!({"content":"中\n", "tool_calls":[{"index":0,"id":"one","type":"function","function":{"name":"read","arguments":"{}"}}]}),
+            Value::Null,
+        );
+        for _ in 0..8 {
+            wire.push_str(&event(fragment.clone(), Value::Null));
+        }
+        wire.push_str(&event(
+            serde_json::json!({}),
+            serde_json::json!("tool_calls"),
+        ));
+        wire.push_str("data: [DONE]\n\n");
+        let expected = read_stream(wire.as_bytes(), &mut |_| Ok(())).unwrap();
+        let size = serde_json::to_vec(&expected).unwrap().len();
+        for delta in [-1isize, 0, 1] {
+            let limits = Limits {
+                response_message_bytes: size.checked_add_signed(delta).unwrap(),
+                ..Limits::default()
+            };
+            assert_eq!(
+                read_stream_with_usage(wire.as_bytes(), &mut |_| Ok(()), &mut |_| {}, &limits)
+                    .is_ok(),
+                delta >= 0
+            );
+        }
     }
 
     #[test]
@@ -573,8 +687,11 @@ mod tests {
             ),
             "data: {\"error\":{\"message\":\"failed\"}}\n\n".into(),
             event(serde_json::json!({"tool_calls":[{"index":8}]}), Value::Null),
-            format!("data: {}\n\n", "x".repeat(MAX_MESSAGE_BYTES + 1)),
-            ": heartbeat\n".repeat(MAX_MESSAGE_BYTES),
+            format!(
+                "data: {}\n\n",
+                "x".repeat(Limits::default().event_bytes + 1)
+            ),
+            ": heartbeat\n".repeat(Limits::default().event_bytes),
         ];
         for wire in cases {
             assert!(read_stream(wire.as_bytes(), &mut |_| Ok(())).is_err());

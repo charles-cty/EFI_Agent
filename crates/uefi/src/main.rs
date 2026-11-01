@@ -162,9 +162,14 @@ fn submit(
         app.capabilities.clone()
     } else if command == "/help" {
         String::from(
-            "/help  Show commands\n/enter [shell|js]  Open the local terminal (default: shell)\n/caps  Probe network and CPU random generator capabilities\n/wasm  Manage WASM programs and processes\n/effort [value]  Show or set reasoning effort (provider validates values)\n/status  Show actual API, history, token and cache data\n/clear  Start a new conversation and reset both interpreters\n/quit, /exit  Exit application\nTerminal: All text goes to the interpreter. Enter runs code or sends stdin; Ctrl+J inserts a newline; Up/Down recalls commands; Ctrl+D sends EOF. Esc/Ctrl+C cancels execution or clears idle input. Cancellation resets the affected interpreter. Shell exit and JavaScript quit() return to conversation. Terminal input and output stay outside model history.\nSend a prompt to run the coding agent (read, write, edit, shell, js, reset_js tools).",
+            "/help  Show commands\n/enter [shell|js]  Open the local terminal (default: shell)\n/caps  Probe network and CPU random generator capabilities\n/wasm  Manage WASM programs and processes\n/effort [value]  Show or set reasoning effort (provider validates values)\n/status  Show actual API, history, token and cache data\n/compact  Summarize earlier exchanges and preserve interpreter state\n/clear  Start a new conversation and reset both interpreters\n/quit, /exit  Exit application\nTerminal: All text goes to the interpreter. Enter runs code or sends stdin; Ctrl+J inserts a newline; Up/Down recalls commands; Ctrl+D sends EOF. Esc/Ctrl+C cancels execution or clears idle input. Cancellation resets the affected interpreter. Shell exit and JavaScript quit() return to conversation. Terminal input and output stay outside model history.\nSend a prompt to run the coding agent (read, write, edit, shell, js, reset_js tools).",
         )
     } else if command == "/status" {
+        if let Some(runtime) = runtime_state.as_ref() {
+            agent
+                .configure_limits(runtime.config.limits.clone())
+                .expect("Validated configuration");
+        }
         let history = agent.history_status().unwrap_or_else(|error| error);
         let provider = runtime_state.as_mut().map_or_else(
             || String::from("API: unavailable (model environment not configured)"),
@@ -187,7 +192,7 @@ fn submit(
         } else {
             String::from("Reasoning effort unavailable: model environment not configured")
         }
-    } else if command.starts_with('/') {
+    } else if command.starts_with('/') && command != "/compact" {
         String::from("Unknown command. Use /help.")
     } else if let Some(runtime_state) = runtime_state.as_mut() {
         app.status = String::from("Requesting model");
@@ -244,12 +249,16 @@ fn submit(
             };
             let mut streaming_row = None;
             let mut tool_row = None;
-            agent.turn(text, &mut environment, |event| {
+            let mut observe = |event: Event<'_>| {
                 let mut ui = ui.borrow_mut();
                 let (app, refresh, _) = &mut *ui;
                 match event {
+                    Event::Notice(text) => {
+                        app.status = String::from(text);
+                    }
                     Event::ModelStarted => {
                         streaming_row = None;
+                        app.prune_history();
                         app.status = String::from("Waiting for model");
                     }
                     Event::AssistantDelta(content) => {
@@ -275,6 +284,8 @@ fn submit(
                         text.into(),
                     ),
                     Event::ToolStarted { name, arguments } => {
+                        streaming_row = None;
+                        app.prune_history();
                         app.status = alloc::format!("Running {name}");
                         tool_row = Some(app.start_tool(name, arguments));
                     }
@@ -297,12 +308,21 @@ fn submit(
                     *render_error.borrow_mut() = Some(error);
                     cancelled.set(true);
                 }
-            })
+            };
+            if command == "/compact" {
+                agent.compact(&mut environment, &mut observe).map(|notice| {
+                    let mut ui = ui.borrow_mut();
+                    ui.0.message("system", notice);
+                })
+            } else {
+                agent.turn(text, &mut environment, observe)
+            }
         };
         if let Err(error) = result {
             app.message("error", error);
         }
         app.status = String::from("Ready");
+        app.prune_history();
         if let Some(error) = render_error.into_inner() {
             return Err(error);
         }
@@ -348,6 +368,7 @@ fn run(driver_report: &str) -> Result<(), terminal::Error> {
     };
     if let Some(runtime) = &runtime_state {
         app.workspace = runtime.config.workspace.clone();
+        app.history_limit = runtime.config.limits.ui_history_bytes;
     }
     let mut wasm = wasm::Runtime::new(
         runtime_state

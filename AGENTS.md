@@ -14,6 +14,42 @@ completion. Verification of a staging package does not verify those paths.
 
 # Current state
 
+Configurable model-context budgets replace the fixed 640 KiB history limit.
+Defaults are 4 MiB request, 3 MiB automatic compaction, 2 MiB target, 8 MiB
+canonical history, 4 MiB response message/event, 32 MiB response wire, 64 KiB
+summaries and 8 MiB visible UI history. `limits` and `EFI_AGENT_LIMITS` are
+validated. `/compact` preserves interpreter state and protected opaque groups;
+compaction is atomic, tool admission reserves complete result groups, and a
+provider context error permits one compact-and-retry without replaying effects.
+Tool definitions now state file, text, capture and session behavior. UI pruning
+runs at safe model/tool boundaries; plaintext TCP sends use 16 KiB fragments.
+Core tests (85 plus context memory), 260 selected host tests, formatting,
+host/UEFI Clippy and Windows Release builds pass. Both API formats pass the
+256 MiB WHPX context acceptance, and the retained-session regression passes.
+After the final UI pruning correction, core checks and Release builds pass;
+both standard trees/images are refreshed and native config bytes are preserved.
+Full networking and hardware boot were not repeated. Details and intermediate
+issues are in docs/context-budgets.md and docs/verification.md.
+
+The 2026-11-01 runtime capability audit is in docs/runtime-capability-audit.md.
+It checks the reported write, command, session, Python, VFS, proc/dev, stdin,
+tty and capture restrictions against source, native WASM, and actual 256 MiB
+Windows WHPX model tools. All 246 selected Rust checks, 17 CPython cases and
+nine other native integration suites pass. Saved FAT bytes independently
+confirm an 8 MiB single guest Python write and nested model-write parent
+creation. The LLM write tool retains its 512 KiB UTF-8 content limit and
+overwrites the target on each call; its boundary was checked in source.
+The audit also records read/shell return formats, text and capture limits,
+session cleanup, and the separate serialized-history budget from source.
+Both standard trees match all 1,151 prepared runtime files; the Python binary and
+537 upstream library files match their archive. Current limitations include
+Python sockets/threads/multiprocessing, missing python3, unsupported ash <<<,
+and Python named-timezone lookup needing /share/zoneinfo explicitly. New files
+under a purely virtual /bin still report ENOENT. Runtime/packages and the
+installed C:\Temp\work were not changed. Evidence and intermediate issues are
+in docs/verification.md. Full application networking and hardware boot were
+not repeated.
+
 A source-only inventory of project-defined interfaces is in
 docs/custom-interfaces.md. It covers guest CLIs and language adapters, all 25
 custom process/network WASM imports, 27 private control operations, retained

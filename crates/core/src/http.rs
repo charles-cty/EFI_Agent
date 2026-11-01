@@ -67,11 +67,15 @@ pub struct Body<R: Read> {
     chunk_end: bool,
     done: bool,
     bytes: usize,
+    wire_limit: usize,
     pub status: u16,
     pub content_type: String,
 }
 impl<R: Read> Body<R> {
     pub fn new(source: R) -> Result<Self, String> {
+        Self::with_limit(source, crate::budget::Limits::default().response_wire_bytes)
+    }
+    pub fn with_limit(source: R, wire_limit: usize) -> Result<Self, String> {
         let mut body = Self {
             source,
             buffer: [0; 4096],
@@ -82,6 +86,7 @@ impl<R: Read> Body<R> {
             chunk_end: false,
             done: false,
             bytes: 0,
+            wire_limit,
             status: 0,
             content_type: String::new(),
         };
@@ -143,6 +148,16 @@ impl<R: Read> Body<R> {
         } else {
             body.remaining = length;
         }
+        if body
+            .remaining
+            .is_some_and(|length| length > body.wire_limit)
+        {
+            return Err(crate::budget::exceeded(
+                "ResponseWireBudgetExceeded",
+                body.remaining.unwrap(),
+                body.wire_limit,
+            ));
+        }
         Ok(body)
     }
     fn byte(&mut self) -> Result<Option<u8>, String> {
@@ -193,8 +208,12 @@ impl<R: Read> Read for Body<R> {
             let size = self.line(1024)?;
             let size = size.split(';').next().unwrap_or_default();
             let count = usize::from_str_radix(size, 16).map_err(|_| "Invalid HTTP chunk size")?;
-            if count > 8 * crate::protocol::MAX_MESSAGE_BYTES {
-                return Err("HTTP chunk exceeds limit".into());
+            if count > self.wire_limit.saturating_sub(self.bytes) {
+                return Err(crate::budget::exceeded(
+                    "ResponseWireBudgetExceeded",
+                    self.bytes.saturating_add(count),
+                    self.wire_limit,
+                ));
             }
             self.remaining = Some(count);
             self.chunk_end = true;
@@ -235,8 +254,12 @@ impl<R: Read> Read for Body<R> {
             *remaining -= count;
         }
         self.bytes += count;
-        if self.bytes > 8 * crate::protocol::MAX_MESSAGE_BYTES {
-            return Err("Provider response exceeds wire limit".into());
+        if self.bytes > self.wire_limit {
+            return Err(crate::budget::exceeded(
+                "ResponseWireBudgetExceeded",
+                self.bytes,
+                self.wire_limit,
+            ));
         }
         Ok(count)
     }
@@ -246,6 +269,41 @@ impl<R: Read> Read for Body<R> {
 mod tests {
     use super::*;
     struct Fragmented<'a>(&'a [u8], usize);
+    #[test]
+    fn body_budget_is_inclusive_for_all_framings() {
+        for length in [4095, 4096, 4097] {
+            let payload = "a".repeat(length);
+            for framing in [
+                format!("Content-Length: {length}\r\n"),
+                "Transfer-Encoding: chunked\r\n".into(),
+                String::new(),
+            ] {
+                let body = if framing.starts_with("Transfer") {
+                    format!("{length:x}\r\n{payload}\r\n0\r\n\r\n")
+                } else {
+                    payload.clone()
+                };
+                let wire = format!("HTTP/1.1 200 OK\r\n{framing}\r\n{body}");
+                let result = (|| -> Result<usize, String> {
+                    let mut body = Body::with_limit(wire.as_bytes(), 4096)?;
+                    let mut buffer = [0; 701];
+                    let mut total = 0;
+                    loop {
+                        let count = body.read(&mut buffer)?;
+                        if count == 0 {
+                            break;
+                        }
+                        total += count;
+                    }
+                    Ok(total)
+                })();
+                assert_eq!(result.is_ok(), length <= 4096, "{framing} {length}");
+                if let Ok(count) = result {
+                    assert_eq!(count, length);
+                }
+            }
+        }
+    }
     impl Read for Fragmented<'_> {
         fn read(&mut self, out: &mut [u8]) -> Result<usize, String> {
             let count = out.len().min(self.0.len()).min(self.1);

@@ -284,6 +284,7 @@ Sources: [main.rs](../crates/uefi/src/main.rs),
 | `/help`, `/caps`, `/status` | Command help, detected capabilities, and actual runtime/API/history status. |
 | `/enter [shell\|js]` | Open direct interpreter input; default is shell. |
 | `/effort [value]` | Read or change the provider reasoning effort. |
+| `/compact` | Summarize completed older exchanges with tools disabled; preserve interpreter state and exact protected call groups. |
 | `/clear` | Clear conversation and reset both retained interpreters. |
 | `/quit`, `/exit` | Exit EFI Agent. |
 | `/wasm load PATH` | Infer a registry name from the filename, removing a case-insensitive `.wasm` suffix. |
@@ -303,6 +304,11 @@ and a rapid second Ctrl+C exit gesture.
 ### Model tools
 
 Source: [agent.rs](../crates/core/src/agent.rs).
+
+Byte budgets, complete tool return contracts and configuration fields are in
+[context-budgets.md](context-budgets.md). `limits` in firmware configuration and
+JSON `EFI_AGENT_LIMITS` at launch select the same validated fields. `/status`
+reports task/summary requests separately and does not convert bytes into tokens.
 
 | Tool | Arguments |
 | --- | --- |

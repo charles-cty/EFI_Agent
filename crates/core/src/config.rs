@@ -5,6 +5,8 @@ use serde::Deserialize;
 #[derive(Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentConfig {
+    #[serde(default)]
+    pub limits: crate::budget::Limits,
     pub api_base: String,
     pub api_key: String,
     pub model: String,
@@ -68,6 +70,7 @@ fn default_workspace() -> String {
 
 impl AgentConfig {
     pub fn validate(&self) -> Result<(), String> {
+        self.limits.validate()?;
         for (name, value) in &self.environment {
             if name.is_empty() || name.contains(['=', '\0']) || value.contains('\0') {
                 return Err("Guest environment requires non-empty names without '=' or NUL, and values without NUL".into());
@@ -283,6 +286,7 @@ mod tests {
     #[test]
     fn native_paths_are_rooted_and_traversal_is_rejected() {
         let config = AgentConfig {
+            limits: crate::budget::Limits::default(),
             api_base: "https://provider.example/v1".into(),
             api_key: "test".into(),
             model: "test".into(),

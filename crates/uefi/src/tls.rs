@@ -174,7 +174,13 @@ impl<'a> Socket<'a> {
     }
     pub fn send(&mut self, bytes: &[u8]) -> Result<(), String> {
         if self.tls.is_none() {
-            return self.tcp.send(bytes, self.poll);
+            // UEFI TCP4 transmit buffers and firmware implementations are not
+            // required to accept a multi-megabyte fragment. Match TLS's
+            // bounded record path for plaintext HTTP as well.
+            for chunk in bytes.chunks(16384) {
+                self.tcp.send(chunk, self.poll)?;
+            }
+            return Ok(());
         }
         for chunk in bytes.chunks(16384) {
             self.pump(Some(chunk))?;

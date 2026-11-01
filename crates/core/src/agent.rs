@@ -1,24 +1,48 @@
 //! Minimal coding loop. Model state is separate from UI and slash commands.
 use crate::protocol::{ChatMessage, Operation, ToolCall};
-use alloc::{
-    format,
-    string::{String, ToString},
-    vec,
-    vec::Vec,
+use crate::{
+    budget::{self, Limits, Purpose},
+    request,
 };
+use alloc::{format, string::String, vec, vec::Vec};
 use serde::Deserialize;
 
 pub const MAX_TOOL_ROUNDS: usize = 12;
 pub const MAX_FILE_BYTES: usize = 512 * 1024;
-pub const MAX_HISTORY_BYTES: usize = 640 * 1024;
+
+#[cfg(test)]
+#[path = "agent_budget_tests.rs"]
+mod budget_tests;
 
 pub trait Environment {
     fn complete(
         &mut self,
         messages: &[ChatMessage],
+        purpose: Purpose,
         progress: &mut dyn FnMut(&str),
     ) -> Result<ChatMessage, String>;
     fn execute(&mut self, operation: Operation) -> Result<String, String>;
+    fn limits(&self) -> Limits {
+        Limits::default()
+    }
+    fn request_bytes(&self, messages: &[ChatMessage], purpose: Purpose) -> Result<usize, String> {
+        request::bytes(
+            crate::model::ApiFormat::ChatCompletions,
+            "",
+            messages,
+            "medium",
+            purpose,
+        )
+    }
+    /// Maximum escaped result bytes, including framing, before any effects.
+    fn result_reserve(&self, operation: &Operation) -> usize {
+        match operation {
+            Operation::Read { path } => 6 * MAX_FILE_BYTES + 32768 + 6 * path.len(),
+            Operation::Write { path, .. } | Operation::Edit { path, .. } => 32768 + 6 * path.len(),
+            Operation::Shell { .. } | Operation::Js { .. } => 6 * 2 * 65536 + 8192,
+            _ => 32 * 1024,
+        }
+    }
     /// Sticky for one turn. A cancelled environment must not execute more tools.
     fn cancelled(&self) -> bool {
         false
@@ -26,6 +50,7 @@ pub trait Environment {
 }
 
 pub enum Event<'a> {
+    Notice(&'a str),
     ModelStarted,
     AssistantDelta(&'a str),
     Assistant(&'a str),
@@ -46,15 +71,25 @@ pub enum Event<'a> {
 
 pub struct Agent {
     messages: Vec<ChatMessage>,
+    limits: Limits,
+    last_request_bytes: usize,
+    compactions: usize,
+    summary_requests: usize,
+    last_compaction: Option<(usize, usize)>,
 }
 
 impl Default for Agent {
     fn default() -> Self {
         Self {
+            limits: Limits::default(),
+            last_request_bytes: 0,
+            compactions: 0,
+            summary_requests: 0,
+            last_compaction: None,
             messages: vec![ChatMessage::text(
                 "system",
                 String::from(
-                    "You are a coding assistant with an Alpine Linux-style environment: BusyBox ash provides POSIX shell syntax, as on Alpine Linux. Use shell for commands and js for JavaScript code. Run Python through shell using python scripts or quoted heredocs. These tools execute real WASM programs in UEFI and load their interpreters automatically. The shell and js tools each retain one live interpreter per conversation. Shell variables, environment and cwd persist; JavaScript global bindings persist. Files are shared. JavaScript provides print, console.log, console.error, quit and an asynchronous ash command template with top-level await. Node.js APIs are unavailable. The shell tool has finite empty stdin. JavaScript commands can receive explicit text input. reset_js resets only JavaScript and releases its interpreter memory. Clear resets both sessions. Exit, trap or cancellation resets the affected session and reports it. Unfinished child processes are stopped after each call. Use POSIX ash syntax; BusyBox Bash extensions include ANSI-C quoting, function, [[ ]], string replacement/slicing, source, pipefail, &>, BASH_XTRACEFD and wait -n. Full Bash arrays, &>>, process substitution, a Linux kernel, apk, and arbitrary Linux binaries are unavailable. BusyBox applets available through ash include ls, cat, cp, mv, rm, mkdir, find, head, grep, sed, awk, date, sleep, yes, env, and which. The guest provides virtual /bin, /dev, /proc, and /tmp; /dev/null discards output. External commands use PATH, executable WASM files, and executable scripts with absolute shebang interpreters. Installed commands are available in /bin. Python supports standard subprocess APIs, including shell=True. Use read, write, and edit to inspect and change the configured workspace. Read files before editing. edit requires one exact match. Tool errors are real; do not claim an operation succeeded if it failed.",
+                    "You are a coding assistant with an Alpine Linux-style environment: BusyBox ash provides POSIX shell syntax, as on Alpine Linux. Use shell for commands and js for JavaScript code. Run Python through shell using python scripts or quoted heredocs. These tools execute real WASM programs in UEFI and load their interpreters automatically. The shell and js tools each retain one live interpreter per conversation. Shell variables, environment and cwd persist; JavaScript global bindings persist. Files are shared. JavaScript provides print, console.log, console.error, quit and an asynchronous ash command template with top-level await. Node.js APIs are unavailable. The shell tool has finite empty stdin. JavaScript commands can receive explicit text input. reset_js resets only JavaScript and releases its interpreter memory. Clear resets both sessions. Exit, trap or cancellation resets the affected session and reports it. Unfinished child processes are stopped after each call. Use POSIX ash syntax; BusyBox Bash extensions include ANSI-C quoting, function, [[ ]], string replacement/slicing, source, pipefail, &>, BASH_XTRACEFD and wait -n. Full Bash arrays, &>>, process substitution, a Linux kernel, apk, and arbitrary Linux binaries are unavailable. BusyBox applets available through ash include ls, cat, cp, mv, rm, mkdir, find, head, grep, sed, awk, date, sleep, yes, env, and which. The guest provides virtual /bin, /dev, /proc, and /tmp; /dev/null discards output. External commands use PATH, executable WASM files, and executable scripts with absolute shebang interpreters. Installed commands are available in /bin. Python supports standard subprocess APIs, including shell=True. Use read, write, and edit to inspect and change the configured workspace. Read files before editing. edit requires one exact match. Tool errors are real; do not claim an operation succeeded if it failed. File tool paths use the shared guest root, independent of shell cwd. Automatic context compaction summarizes earlier completed exchanges without resetting interpreters or re-running tools. Use /compact for manual compaction and /status for configured byte budgets and provider-reported token usage. Byte budgets are not token counts.",
                 ),
             )],
         }
@@ -62,14 +97,116 @@ impl Default for Agent {
 }
 
 impl Agent {
+    pub fn configure_limits(&mut self, limits: Limits) -> Result<(), String> {
+        limits.validate()?;
+        self.limits = limits;
+        Ok(())
+    }
     pub fn history_status(&self) -> Result<String, String> {
-        let bytes = serde_json::to_vec(&self.messages)
-            .map_err(|e| e.to_string())?
-            .len();
+        let bytes = request::history_bytes(&self.messages)?;
         Ok(format!(
-            "History: {} messages, {bytes}/{MAX_HISTORY_BYTES} JSON bytes\nCurrent history tokens / model context window: unavailable (no tokenizer or provider limit)",
-            self.messages.len()
+            "History: {} messages, {bytes}/{} canonical JSON bytes\nLast measured task request: {}/{} bytes\nCompaction trigger/target: {}/{} bytes\nCompactions: {}; summary requests: {}; last before/after: {:?}\nResponse message/event/wire limits: {}/{}/{} bytes\nUI history limit: {} bytes\nCurrent history tokens: unavailable (no exact tokenizer)\nConfigured model context window: {}",
+            self.messages.len(),
+            self.limits.history_bytes,
+            self.last_request_bytes,
+            self.limits.request_bytes,
+            self.limits.compact_at_bytes,
+            self.limits.compact_target_bytes,
+            self.compactions,
+            self.summary_requests,
+            self.last_compaction,
+            self.limits.response_message_bytes,
+            self.limits.event_bytes,
+            self.limits.response_wire_bytes,
+            self.limits.ui_history_bytes,
+            self.limits
+                .context_window_tokens
+                .map_or_else(|| "unavailable".into(), |value| format!("{value} tokens"))
         ))
+    }
+
+    pub fn compact<E: Environment>(
+        &mut self,
+        environment: &mut E,
+        mut observe: impl FnMut(Event<'_>),
+    ) -> Result<String, String> {
+        self.limits = environment.limits();
+        self.limits.validate()?;
+        let before = environment.request_bytes(&self.messages, Purpose::Task)?;
+        let candidate =
+            crate::history::compact(&self.messages, environment, &self.limits, &mut |text| {
+                observe(Event::Notice(text))
+            })?;
+        let Some(candidate) = candidate else {
+            return Ok(
+                "No earlier completed exchanges can be compacted. Interpreter state is preserved."
+                    .into(),
+            );
+        };
+        let after = environment.request_bytes(&candidate.messages, Purpose::Task)?;
+        if after >= before {
+            return Err(
+                "CompactionFailed: summary did not reduce request size; history is unchanged"
+                    .into(),
+            );
+        }
+        let retained = request::history_bytes(&candidate.messages)?;
+        if after > self.limits.request_bytes || retained > self.limits.history_bytes {
+            return Err(format!(
+                "CurrentTurnBudgetExceeded: compacted request {after}/{} bytes, history {retained}/{} bytes; history and interpreters are preserved",
+                self.limits.request_bytes, self.limits.history_bytes
+            ));
+        }
+        self.messages = candidate.messages;
+        self.compactions += 1;
+        self.summary_requests += candidate.requests;
+        self.last_compaction = Some((before, after));
+        self.last_request_bytes = after;
+        Ok(format!(
+            "Conversation compacted: {before} -> {after} request bytes. Interpreter state is preserved."
+        ))
+    }
+
+    fn prepare<E: Environment>(
+        &mut self,
+        environment: &mut E,
+        observe: &mut impl FnMut(Event<'_>),
+    ) -> Result<(), String> {
+        self.limits = environment.limits();
+        self.limits.validate()?;
+        self.last_request_bytes = environment.request_bytes(&self.messages, Purpose::Task)?;
+        let mut retained = request::history_bytes(&self.messages)?;
+        if self.last_request_bytes >= self.limits.compact_at_bytes
+            || retained > self.limits.history_bytes
+        {
+            if let Err(error) = self.compact(environment, &mut *observe) {
+                if self.last_request_bytes > self.limits.request_bytes
+                    || retained > self.limits.history_bytes
+                {
+                    return Err(error);
+                }
+                observe(Event::Notice(
+                    "Automatic compaction was not committed; the request still fits configured hard limits.",
+                ));
+            }
+            self.last_request_bytes = environment.request_bytes(&self.messages, Purpose::Task)?;
+            retained = request::history_bytes(&self.messages)?;
+        }
+        if self.last_request_bytes > self.limits.request_bytes {
+            return Err(budget::exceeded(
+                "RequestBudgetExceeded",
+                self.last_request_bytes,
+                self.limits.request_bytes,
+            ));
+        }
+        if retained > self.limits.history_bytes {
+            return Err(budget::exceeded(
+                "HistoryBudgetExceeded",
+                retained,
+                self.limits.history_bytes,
+            ));
+        }
+        Ok(())
     }
 
     pub fn clear(&mut self) {
@@ -82,25 +219,86 @@ impl Agent {
         environment: &mut E,
         mut observe: impl FnMut(Event<'_>),
     ) -> Result<(), String> {
-        self.messages.push(ChatMessage::text("user", prompt));
-        for round in 0..=MAX_TOOL_ROUNDS {
-            if serde_json::to_vec(&self.messages)
-                .map_err(|e| e.to_string())?
-                .len()
-                > MAX_HISTORY_BYTES
-            {
-                return Err(String::from(
-                    "Conversation exceeds the context limit. Use /clear to start a new conversation.",
+        self.limits = environment.limits();
+        self.limits.validate()?;
+        let mut retained = request::history_bytes(&self.messages)?;
+        let mut request_bytes = environment.request_bytes(&self.messages, Purpose::Task)?;
+        if request_bytes >= self.limits.compact_at_bytes || retained > self.limits.history_bytes {
+            if let Err(error) = self.compact(environment, &mut observe) {
+                if request_bytes > self.limits.request_bytes || retained > self.limits.history_bytes
+                {
+                    return Err(error);
+                }
+                observe(Event::Notice(
+                    "Automatic compaction was not committed; the request still fits configured hard limits.",
                 ));
+            }
+            retained = request::history_bytes(&self.messages)?;
+            request_bytes = environment.request_bytes(&self.messages, Purpose::Task)?;
+        }
+        let user_message_bytes = budget::text_message_bytes("user", &prompt);
+        let projected_history = retained
+            .saturating_add(usize::from(!self.messages.is_empty()))
+            .saturating_add(user_message_bytes);
+        let projected_request = request_bytes
+            .saturating_add(usize::from(!self.messages.is_empty()))
+            .saturating_add(user_message_bytes);
+        if projected_history > self.limits.history_bytes {
+            return Err(budget::exceeded(
+                "HistoryBudgetExceeded",
+                projected_history,
+                self.limits.history_bytes,
+            ));
+        }
+        if projected_request > self.limits.request_bytes {
+            return Err(budget::exceeded(
+                "RequestBudgetExceeded",
+                projected_request,
+                self.limits.request_bytes,
+            ));
+        }
+        self.messages.push(ChatMessage::text("user", prompt));
+        let mut context_retried = false;
+        for round in 0..=MAX_TOOL_ROUNDS {
+            if let Err(error) = self.prepare(environment, &mut observe) {
+                if round == 0
+                    && self
+                        .messages
+                        .last()
+                        .is_some_and(|message| message.role == "user")
+                {
+                    self.messages.pop();
+                }
+                return Err(error);
             }
             observe(Event::ModelStarted);
             let mut streamed = false;
-            let reply = environment.complete(&self.messages, &mut |delta| {
-                if !delta.is_empty() {
-                    streamed = true;
-                    observe(Event::AssistantDelta(delta));
+            let response =
+                environment.complete(&self.messages, Purpose::Task, &mut |delta: &str| {
+                    if !delta.is_empty() {
+                        streamed = true;
+                        observe(Event::AssistantDelta(delta));
+                    }
+                });
+            let mut reply = match response {
+                Err(error) if error.starts_with("ModelContextExceeded:") && !context_retried => {
+                    context_retried = true;
+                    let before = self.compactions;
+                    self.compact(environment, &mut observe)?;
+                    if self.compactions == before {
+                        return Err(error);
+                    }
+                    observe(Event::ModelStarted);
+                    streamed = false;
+                    environment.complete(&self.messages, Purpose::Task, &mut |delta| {
+                        if !delta.is_empty() {
+                            streamed = true;
+                            observe(Event::AssistantDelta(delta));
+                        }
+                    })?
                 }
-            })?;
+                response => response?,
+            };
             if environment.cancelled() {
                 return Err(String::from("Request cancelled"));
             }
@@ -142,17 +340,49 @@ impl Agent {
                 observe(Event::Assistant(content));
             }
             if reply.tool_calls.is_empty() {
+                reply.retain_canonical();
                 self.messages.push(reply);
                 return Ok(());
             }
-            let calls = reply.tool_calls.clone();
+            let calls = core::mem::take(&mut reply.tool_calls);
+            reply.retain_canonical();
+            // Chat Completions needs the call fields in its retained message.
+            if reply.response_items.is_empty() {
+                reply.tool_calls = calls.clone();
+            }
             self.messages.push(reply);
+            let reserve = calls.iter().fold(0usize, |sum, call| {
+                sum.saturating_add(operation(call).map_or(32 * 1024, |operation| {
+                    environment.result_reserve(&operation)
+                }))
+            });
+            // Always pair every accepted call, including admission and compaction failures.
+            let admission = (|| -> Result<bool, String> {
+                let projected = environment
+                    .request_bytes(&self.messages, Purpose::Task)?
+                    .saturating_add(reserve);
+                if projected > self.limits.request_bytes {
+                    self.compact(environment, &mut observe)?;
+                }
+                Ok(environment
+                    .request_bytes(&self.messages, Purpose::Task)?
+                    .saturating_add(reserve)
+                    > self.limits.request_bytes
+                    || request::history_bytes(&self.messages)?.saturating_add(reserve)
+                        > self.limits.history_bytes)
+            })();
+            let rejected = !matches!(admission, Ok(false));
             for call in &calls {
                 observe(Event::ToolStarted {
                     name: &call.function.name,
                     arguments: &call.function.arguments,
                 });
-                let result = if environment.cancelled() {
+                let result = if rejected {
+                    Err(format!(
+                        "ToolResultBudgetExceeded: result group cannot fit request/history limits {}/{} bytes; operation was not executed. Request fewer or smaller results",
+                        self.limits.request_bytes, self.limits.history_bytes
+                    ))
+                } else if environment.cancelled() {
                     Err(String::from(
                         "Request cancelled; operation was not executed",
                     ))
@@ -177,6 +407,7 @@ impl Agent {
                 message.tool_call_id = Some(call.id.clone());
                 self.messages.push(message);
             }
+            admission?;
             if environment.cancelled() {
                 return Err(String::from("Request cancelled"));
             }
@@ -295,7 +526,10 @@ fn operation(call: &ToolCall) -> Result<Operation, String> {
                 new_text: args.new_text,
             })
         }
-        _ => Err(format!("Unknown tool: {}", call.function.name)),
+        _ => Err(format!(
+            "Unknown tool: {}",
+            call.function.name.chars().take(128).collect::<String>()
+        )),
     }
 }
 
@@ -323,12 +557,132 @@ pub fn edit_text(mut text: String, old: &str, new: &str) -> Result<String, Strin
 
 pub fn tool_definitions() -> serde_json::Value {
     serde_json::json!([
-        {"type":"function","function":{"name":"read","description":"Read a UTF-8 file or list a directory in the workspace.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}},
-        {"type":"function","function":{"name":"write","description":"Create or overwrite a UTF-8 file in the workspace (512 KiB limit). Create missing parent directories.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":false}}},
-        {"type":"function","function":{"name":"edit","description":"Replace one exact occurrence of old_text with new_text. Fails if missing or ambiguous.","parameters":{"type":"object","properties":{"path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"}},"required":["path","old_text","new_text"],"additionalProperties":false}}},
-        {"type":"function","function":{"name":"shell","description":"Run a command in an Alpine Linux-style BusyBox ash shell with ASH_BASH_COMPAT enabled (POSIX syntax plus BusyBox Bash extensions). ash.wasm loads automatically once. Runs in the shared workspace with finite empty stdin. Shell state, environment and cwd persist across calls in this conversation. Clear resets both interpreter sessions. Common BusyBox applets include ls, cat, cp, mv, rm, mkdir, head, grep, sed, awk, date, sleep, yes, env, and which; /bin, /dev, /proc, and /tmp are virtual guest directories. External commands use PATH, executable WASM files, and scripts with absolute shebang interpreters. Installed commands are in /bin; apk and Linux executables are unavailable. Returns exit status, stdout and stderr; each stream is limited to 64 KiB with explicit truncation. Esc cancels the process tree and resets this session. Exit or trap also resets this session with an explicit notice.","parameters":{"type":"object","properties":{"command":{"type":"string","description":"Shell script evaluated in the retained ash session; supports quotes, newlines, pipes and redirections."}},"required":["command"],"additionalProperties":false}}},
-        {"type":"function","function":{"name":"js","description":"Run JavaScript in a retained QuickJS context in the shared workspace. quickjs.wasm and BusyBox ash load automatically on first use. Global let/const/var bindings and functions persist across calls; redeclaring a global let/const is a syntax error. Use print or console.log for results and console.error for diagnostics. Top-level await and the ash command template are supported: const r = await ash`echo hello`; print(r.stdout). Interpolated values are quoted as shell words; arrays expand to separate words. The WASI zx port uses vendored zx@8.8.5-lite quoting, interpolation and ProcessOutput. Promise and ProcessOutput interpolation are supported. A nonzero command rejects with a ProcessOutput Error (exitCode, stdout, stderr, stdall, ok; text/json/lines/buffer). Use .nothrow() to inspect failures. ash({cwd, env, input, quiet, verbose, nothrow, prefix, postfix}) creates a configured command template; env overlays the child environment. .pipe`command` feeds bounded completed stdout into the next command. input accepts text up to 512 KiB. Commands capture up to 512 KiB per stream. Streaming pipes, synchronous execution, signals, timeouts and Node APIs are unavailable. reset_js resets only JavaScript and releases interpreter memory; shell state and files remain. Each command starts a fresh ash child, separate from the shell tool session. Node.js APIs, module imports and timers are unavailable. Ordinary exceptions preserve state. A top-level Promise with no event source resets this session. Python remains available through shell. Clear resets both sessions. quit(status) ends this session. Returns exit status, stdout and stderr; each stream is limited to 64 KiB with explicit truncation. Esc cancels the process tree and resets this session. Exit or trap also resets this session with an explicit notice.","parameters":{"type":"object","properties":{"code":{"type":"string","description":"JavaScript source evaluated in the retained global context; supports multiple lines and top-level await."}},"required":["code"],"additionalProperties":false}}},
-        {"type":"function","function":{"name":"reset_js","description":"Stop and release the retained JavaScript interpreter and its child processes. All JavaScript bindings and command settings are discarded. Shell state, files and independent background processes are preserved. Does not start another interpreter; the next js call starts it. Safe to call before js has run.","parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false}}}
+        {
+            "type": "function",
+            "function": {
+                "name": "read",
+                "description": "Read a complete UTF-8 file, or list sorted directory entry names (one per line; no metadata). File content and directory listings are limited to 512 KiB UTF-8; larger or non-UTF-8 content returns an error with no partial data. No offsets or pagination; use shell commands for selected ranges.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Path in the shared guest root, independent of shell cwd. Use / separators; a leading / is optional. Parent components (..) are rejected."
+                        }
+                    },
+                    "required": [
+                        "path"
+                    ],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "write",
+                "description": "Create or overwrite a UTF-8 file, creating missing parent directories. Content is limited to 512 KiB UTF-8. Overwrite truncates existing content; there is no append mode. A failed write can leave created directories or a truncated/partly written file. Re-read after a failure.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Path in the shared guest root, independent of shell cwd. Use / separators; a leading / is optional. Parent components (..) are rejected."
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Complete replacement file content; at most 512 KiB UTF-8."
+                        }
+                    },
+                    "required": [
+                        "path",
+                        "content"
+                    ],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "edit",
+                "description": "Replace exactly one occurrence of old_text with new_text. old_text must be nonempty; missing or multiple matches (including overlaps) return an error before writing. The original and edited file must each fit 512 KiB UTF-8. Saving has the same possible partial effects as write.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Path in the shared guest root, independent of shell cwd. Use / separators; a leading / is optional. Parent components (..) are rejected."
+                        },
+                        "old_text": {
+                            "type": "string"
+                        },
+                        "new_text": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "path",
+                        "old_text",
+                        "new_text"
+                    ],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shell",
+                "description": "Run BusyBox ash with ASH_BASH_COMPAT in the shared guest filesystem. Shell variables, environment and cwd persist between calls. Stdin is finite empty input; heredocs and pipelines can supply data. Commands use PATH, executable WASM and absolute-interpreter shebangs. /bin, /dev, /proc and /tmp are virtual; Linux executables and apk are unavailable. Returns plain text with exit status and separate stdout/stderr sections; nonzero exit is a normal result. Each stream retains its first 64 KiB, decodes invalid UTF-8 with replacement, and has an explicit truncation notice. Cross-stream order is unavailable; truncation does not stop execution. Model tools have no controlling terminal. Remaining children are stopped when the call finishes. Exit, trap or Esc cancellation resets this shell with a notice; /clear resets both interpreters, /compact preserves them.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string",
+                            "description": "Shell source, at most 60 KiB UTF-8 and no NUL; supports quotes, newlines, pipes and redirections."
+                        }
+                    },
+                    "required": [
+                        "command"
+                    ],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "js",
+                "description": "Run JavaScript in retained QuickJS. Global bindings/functions persist; redeclaring global let/const fails. Use print, console.log/error and top-level await. await ash`command` runs a fresh ash child, separate from the shell tool. Interpolation quotes shell words; arrays expand to words. ProcessOutput exposes exitCode/stdout/stderr/stdall/ok and text/json/lines/buffer. Nonzero exit rejects; .nothrow() returns it. ash({cwd,env,input,quiet,verbose,nothrow,prefix,postfix}) configures commands; env overlays child values. .pipe`command` feeds completed stdout. Input and inner command capture are limited to 512 KiB per stream. The tool result separately retains only the first 64 KiB of each stdout/stderr stream, with lossy UTF-8 decoding and explicit truncation; cross-stream order is unavailable and truncation does not stop execution. Stdin is finite empty input; no controlling terminal. Remaining children are stopped after the call. Node APIs, module imports, timers, streaming pipes, signals and timeouts are unavailable. Ordinary exceptions preserve state; quit, trap, cancellation or a top-level Promise without an event source resets it with a notice. reset_js releases only this interpreter; /clear resets both, /compact preserves them.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "code": {
+                            "type": "string",
+                            "description": "JavaScript source in the retained global context, at most 60 KiB UTF-8 and no NUL."
+                        }
+                    },
+                    "required": [
+                        "code"
+                    ],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "reset_js",
+                "description": "Stop and release the retained JavaScript interpreter and its children. Discards JavaScript bindings and settings; preserves shell state, files and independent roots. The next js call starts a fresh interpreter. Safe before the first js call.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": false
+                }
+            }
+        }
     ])
 }
 
@@ -344,6 +698,7 @@ mod tests {
             fn complete(
                 &mut self,
                 messages: &[ChatMessage],
+                _purpose: Purpose,
                 _: &mut dyn FnMut(&str),
             ) -> Result<ChatMessage, String> {
                 assert_eq!(messages.len(), 2);
@@ -479,6 +834,7 @@ mod tests {
         fn complete(
             &mut self,
             messages: &[ChatMessage],
+            _purpose: Purpose,
             _progress: &mut dyn FnMut(&str),
         ) -> Result<ChatMessage, String> {
             self.calls += 1;
@@ -517,6 +873,7 @@ mod tests {
         fn complete(
             &mut self,
             messages: &[ChatMessage],
+            _purpose: Purpose,
             _progress: &mut dyn FnMut(&str),
         ) -> Result<ChatMessage, String> {
             if self.completions > 0 {
@@ -568,6 +925,7 @@ mod tests {
             fn complete(
                 &mut self,
                 _messages: &[ChatMessage],
+                _purpose: Purpose,
                 progress: &mut dyn FnMut(&str),
             ) -> Result<ChatMessage, String> {
                 progress("left 中");
@@ -613,12 +971,16 @@ mod tests {
             completions: usize,
         }
         impl Environment for CancelAfterRead {
+            fn result_reserve(&self, _: &Operation) -> usize {
+                1024
+            }
             fn cancelled(&self) -> bool {
                 self.cancelled
             }
             fn complete(
                 &mut self,
                 messages: &[ChatMessage],
+                _purpose: Purpose,
                 _progress: &mut dyn FnMut(&str),
             ) -> Result<ChatMessage, String> {
                 self.completions += 1;

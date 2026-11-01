@@ -1,5 +1,323 @@
 # Verification record
 
+## 2026-11-01: Finalize safe UI pruning and delivered binaries
+
+Removed the two unconditional `App::prune_history` calls from the serial and
+console WASM polling loops. History pruning now occurs at model/tool event
+boundaries and once after a completed turn, so background WASM output cannot
+shift message indices while a response is being rendered. Added the
+cross-target `unused_unsafe` allowance around the x86-64 CPUID intrinsic; the
+UEFI target still requires the unsafe call while the Linux host compiler marks
+it unnecessary.
+
+Validation passes after this correction:
+
+- `cargo fmt --all`.
+- `cargo test --locked -p efi-agent-core`: 85 tests plus the context-memory
+  test passed.
+- `cargo check --locked -p efi-agent-uefi --target x86_64-unknown-uefi`.
+- Host workspace Clippy with `--all-targets --workspace --exclude
+  efi-agent-uefi -- -D warnings`.
+- UEFI Clippy with `-p efi-agent-uefi --target x86_64-unknown-uefi -- -D
+  warnings`.
+- Windows-native Release UEFI and launcher builds, catalog generation and
+  package refresh. The delivered UEFI hash is
+  `f6cffad74e716de902c61695a8252a456f352ac3624f8e1ed78153e50bb89c65` in
+  both ESP trees and the release target. Native `CONFIG.JSON` was restored
+  byte-for-byte to 279 bytes before repacking the native image.
+
+The first Windows full-build attempt stopped before compilation because the
+active `WASI_SDK_PATH` and `BINARYEN_PATH` resolved to the project directory,
+so the guest BusyBox compiler could not find `clang` (`WinError 2`). The final
+refresh reused the already prepared guest package and rebuilt only the UEFI,
+launcher and package outputs. A packaging attempt without build-only API
+settings also stopped at configuration validation; the documented placeholders
+were supplied for packaging and no provider request was made. Reusing an
+existing image path initially returned Windows `os error 80`; deleting the
+old image before the final `pack` command completed successfully.
+
+Running UEFI Clippy with `--all-targets` is not a valid check for this `no_std`
+UEFI binary: Cargo tries to link a host-style test target and Rust reports a
+duplicate `panic_impl` lang item. The normal UEFI target Clippy invocation above
+is the applicable check.
+
+## 2026-11-01: Configurable model budgets and atomic compaction
+
+Implemented the coordinated byte-budget design in `docs/context-budgets.md`.
+The fixed 640 KiB history limit is removed. `limits` in `CONFIG.JSON` and
+`EFI_AGENT_LIMITS` select validated request, compaction, history, parser, wire,
+summary, UI and optional provider-token-window settings. Defaults are 4 MiB
+complete requests, 3 MiB automatic compaction, 2 MiB target, 8 MiB canonical
+history, 4 MiB completed messages/events, 32 MiB response wire bytes, 64 KiB
+summaries and 8 MiB visible history. Byte values are not token estimates.
+
+`/compact` uses the configured provider with tools disabled, preserves shell and
+JavaScript state, protects the current user request and newest assistant/tool
+group, retains opaque Responses items exactly, validates tool-call/result pairing,
+and commits candidates atomically. A provider context-length error permits one
+compact-and-retry without replaying completed effects. Tool admission reserves a
+whole result group and emits ID-correlated unexecuted results when it cannot fit.
+The UI prunes only at safe boundaries and bounds active background disclosures.
+
+The core suite has 85 unit tests plus the context-memory integration test. It
+passes independent JSON-byte oracles with structured UTF-8/control/numeric data,
+exact request/event/message/wire boundaries, both API formats, opaque state and
+signature retention, 512 KiB model read/write, atomic failure/cancellation,
+one-shot context retry, no-effect admission rejection and UI/background-row
+generation recovery. The allocator probe reports, for Chat Completions and
+Responses, approximately 8.27 MiB retained history, 7.68 MiB after compaction,
+and 7.7 KiB after clear; measured peaks are 16.99 and 17.11 MiB.
+
+Native MSVC checks pass: workspace tests (260 selected tests, with two ignored
+WASM-image checks), host and UEFI Clippy with `-D warnings`, core tests (85 plus
+memory), UEFI and launcher checks, and release UEFI/launcher builds. The
+release UEFI binary is copied into both standard ESP trees. Native config bytes
+were saved and compared byte-for-byte (279 bytes).
+
+Both standard trees and both standard disk images were then regenerated in a
+host-temporary staging directory and delivered to `artifacts/esp`,
+`artifacts/native-esp`, `artifacts/efi-agent-vm.img` and
+`artifacts/efi-agent-native.img`. The native image was repacked after restoring
+the saved configuration; its 279-byte `CONFIG.JSON` matches byte-for-byte.
+
+The first WHPX context-budget probe exposed a real transport issue: plaintext
+UEFI TCP sent a multi-megabyte body as one TCP4 fragment. `tls::Socket::send`
+now sends plaintext in 16 KiB fragments, matching the TLS path. The follow-up
+WHPX run received complete 3.68 MiB and 3.15 MiB JSON requests with no server
+body truncation (`request_body_errors: []`). It then reached the retained shell
+tool after the 512 KiB read. The local fixture timed out while its shell-state
+probe was running, before the final marker and FAT export; this run is recorded
+as a diagnostic failure, not a passing firmware acceptance result. The fixture
+was simplified to isolate shell state from filesystem command substitution.
+At that point, a fresh WHPX run remained required for complete end-to-end
+acceptance; the passing reruns are recorded below.
+
+The simplified fixture subsequently passes at 256 MiB WHPX for both Chat
+Completions and Responses (`whpx-chat-context-final` and
+`whpx-responses-context-final`). Each run receives complete requests up to about
+3.70 MiB with no body parse errors, performs automatic and manual compaction,
+summary failure/cancellation recovery, one provider context retry, and whole
+tool-group admission rejection. `context-report.json` records 11 summary
+requests, one context error, no pending call IDs, one saved 524288-byte payload
+with SHA-256
+`33a150bceb13c1a992231e65b4fad16815212fc06cdb408996d32eeb2cef9ebb`, exactly
+one effect and one retry effect, and absent rejected paths. The saved FAT bytes
+are independently checked.
+
+The unchanged 256 MiB WHPX retained-session regression was rerun with the
+delivered ESP after the budget changes. Chat Completions shell/JavaScript state,
+reset/cancel isolation and saved FAT bytes pass (`whpx-sessions-final`).
+
+The attempted combined `cargo build --locked --release -p efi-agent-uefi -p
+efi-agent --target x86_64-unknown-uefi` also failed when the native launcher
+caused `getrandom 0.4.3` to select no supported target backend. Building the
+UEFI and launcher packages separately succeeds; the failure is retained in the
+host-temporary evidence log. The standard guest rebuild emitted existing
+BusyBox compiler warnings only.
+
+An initial direct package attempt reused existing Windows image paths and hit
+file-exists / missing-file errors (`os error 80` and `os error 2`). Packaging
+was rerun in a Windows temporary staging directory, then copied into the
+standard artifact paths; the native image was packed once more after restoring
+the saved configuration. An early WHPX run also exposed the UI rendering cost
+of displaying a 512 KiB read result and timed out while a shell probe was
+running. The UI now bounds individual visible rows and background disclosures;
+the final smaller-read fixture passes both API formats.
+
+## 2026-11-01: Runtime restrictions and Python/VFS capability audit
+
+Audited implementation c619bbe and added `docs/runtime-capability-audit.md`.
+The report covers timezone and Python library provenance, the Python startup
+adapters, VFS/link/permission behavior, proc/dev, and each restriction in the
+reported list. Runtime source, standard package data, native WASM execution,
+and actual firmware model tools supplied separate evidence.
+
+Correction for item 6: the initial table verdict interpreted `write` as a
+guest Python file-write call. The item refers to the LLM `write` tool. Source
+inspection confirms its limit is 524288 UTF-8 bytes of decoded content,
+inclusive, with `File exceeds 512 KiB` for larger content. Both the tool
+argument parser and filesystem text writer enforce the limit. Each call
+creates or truncates the target, with append disabled, so repeated calls to
+the same path do not assemble a larger file. The 8 MiB tests below concern
+guest Python calls. This documentation correction uses source inspection;
+no new runtime test of the LLM tool's size boundary was run.
+
+The follow-up source review records model `read` and `shell` return behavior
+in the audit. It covers whole-read UTF-8/size validation, directory listing
+format, root-relative paths independent of shell cwd, shell exit-code handling,
+output prefix capture,
+lossy UTF-8 decoding, stream ordering, retained state, child cleanup, the
+60 KiB command-source limit, and the 640 KiB serialized-history limit.
+These added details were checked against `text.rs`, the core agent, firmware
+`ToolOutput`/`run_code`, and session framing. No runtime source or package was
+changed and no additional native or firmware suite was run for this review.
+Combined source reads exceeded the tool output budget; narrower reads
+recovered the required sections. A lookup of the nonexistent
+`crates/wasm/src/filesystem/mount.rs` was replaced with inspection of the
+existing `crates/wasm/src/filesystem.rs` implementation.
+
+Evidence directory on Windows:
+`C:\Users\ADMINI~1\AppData\Local\Temp\2\efi-capability-audit-20261101-152124`.
+Temporary scripts, workspaces, logs, and service fixtures stay in that host
+temporary directory. No runtime source, standard tree/image, native config,
+or installed user workspace was changed. The native runner was rebuilt.
+
+### Native and package checks
+
+- Initialized the native MSVC environment with vswhere and
+  `Launch-VsDevShell.ps1`, then reset the location to the Windows project.
+  `cargo.exe test --locked -p efi-agent-core -p efi-agent-filesystem
+  -p efi-agent-wasm` passes 244 tests. The two default-ignored cases require
+  a built ash image. With `EFI_AGENT_ASH` set to the standard delivered ash,
+  `cargo.exe test --locked -p efi-agent-wasm --test applet_terminal
+  --test filesystem_statistics -- --ignored` passes both. Total: 246 passing
+  Rust checks, including a real controlling-terminal pager and independent
+  large filesystem-statistics counts. Logs: `host-tests.log` and
+  `ignored-checks.log`.
+- `cargo.exe build --locked --release -p efi-agent-wasm --example run_guest`
+  passes. Log: `runner-build.log`.
+- `run_audit.py`, run by Windows `uv.exe`, passes `test_cpython.py` (17 cases),
+  `test_sessions.py`, `test_busybox_ln.py`, `test_busybox_df.py`,
+  `test_busybox_mutations.py`, `test_process_files.py`,
+  `test_character_devices.py`, `test_temporary_mount.py`,
+  `test_mount_paths.py`, and `test_mount_layout.py`. The harness uses
+  `--runner target/release/examples/run_guest.exe` and the appropriate
+  `--ash`, `--python`, and `--quickjs` files from `artifacts/esp/work`.
+  Each suite has stdout/stderr logs; `suite-results.json` records exit codes.
+- Both `artifacts/esp/work` and `artifacts/native-esp/work` match every one
+  of the 1,151 declared prepared runtime files. The catalog declares 89
+  BusyBox names and 95 total command aliases. The interpreter and all 537
+  upstream library files match `python-3.14.7-wasi_sdk-24.zip` in the prepared
+  directory and both standard trees. `package-check.json` records scope.
+  These are standard-tree byte checks; disk images were not changed.
+- Read-only checks of `C:\Temp\work` match current `programs.json`,
+  ash/Python/QuickJS/jq binaries, and all three Python startup adapters.
+  No application was launched against this installed user workspace.
+
+### Boundary and API probes
+
+`guest_probe.py` records 30 observations. `probe_driver.py` runs this source
+through the real guest interpreter and independently reads the committed
+namespace after exit. Results are in `capability-probe.json`,
+`probe.stdout.log`, and `probe.stderr.log`.
+
+All single calls to `os.write`, unbuffered FileIO.write, and buffered write
+succeed at 524287, 524288, 524289, 525312, and 8388608 bytes. Reads and sizes
+match, and the independent host namespace reader confirms every byte of the
+saved 8 MiB asymmetric repeating payload. The model write limit remains a
+separate 512 KiB UTF-8 content bound.
+
+The probe confirms WASI errno constants and actual EACCES comparison, normal
+temporary-file cleanup, measured statvfs/disk_usage, empty model stdin,
+70001-byte explicit input, heredocs, false captured-stream isatty, normal-exit
+output flushing, current command resolution, Python paths, dynamic proc
+records, and the device inventory. It also records the expected unsupported
+socket/thread/multiprocessing calls and the absent `/proc/meminfo`.
+
+Three qualifications are confirmed:
+
+- Standard `python3` is absent. A symlink in `/tmp` runs the installed Python.
+- `<<<` returns status 2 with `syntax error: unexpected redirection`.
+  Quoted heredocs pass.
+- Python's default ZoneInfo paths omit `/share/zoneinfo`, so the named lookup
+  fails until that path is selected. BusyBox `TZ=Asia/Shanghai date -d @0`
+  returns the correct 1970-01-01 08:00:00 +0800 CST from the shipped database.
+
+The new-file `/bin` diagnostic remains reproducible: open/touch beneath a
+purely virtual bin reports ENOENT. Installed commands are read-only views,
+while ordinary children of a pre-existing backing bin directory are merged.
+The source and mount-layout tests establish that distinction.
+
+### Actual firmware verification
+
+`uv.exe run --no-project <evidence>\vm_audit.py` passes on native Windows
+QEMU/WHPX at 256 MiB, using the standard EFI and delivered ash/Python/QuickJS
+and library inputs. The harness uses the existing `smoke_vm.py` local
+DNS/HTTPS/Responses provider and isolated temporary FAT disk. No API service
+or user credentials are needed.
+
+The actual model `write` tool creates `audit/deep/probe.py` with both parent
+directories absent. `read` on that directory returns `probe.py`. The model
+shell executes the complete probe. Consecutive shell calls retain environment
+and cwd; consecutive JS calls retain a global binding. The 64 KiB per-stream
+capture boundary and explicit truncation marker pass. Esc cancels/reaps the
+tool tree while preserving an independent background root.
+
+After firmware exit, an independent FAT reader compares the entire saved
+8 MiB Python-written payload and the model-written script with their expected bytes, and
+extracts `vm-capability-probe.json`. Native and firmware observations agree
+for all compared restrictions. PIDs, elapsed times, filesystem capacities,
+and sys.path's script directory follow their respective execution contexts.
+The root firmware statvfs reports a 512-byte fragment size; `/tmp` reports its
+32 MiB capacity. The model's stdin/stdout/stderr all report isatty false.
+
+The existing harness also passes DNS/verified HTTPS, Responses streaming,
+tool execution, usage, cancellation and subsequent-request checks. Logs and
+captures: `vm-audit.log`, `vm-provider-requests.json`, `vm/serial.bin`,
+`vm/screen.txt`, and `vm/qemu.log`.
+
+This focused run does not repeat the complete curl/WolfSSH/application network
+combination, native hardware boot, Linux builds, the direct-terminal firmware
+suite, or new workspace-capacity boundary acceptance. The native real-pager
+case supplies additional terminal evidence. The reported limits are tied to
+their source definitions; passing an 8 MiB Python write does not prove unlimited
+file size or unlimited workspace export.
+
+### Intermediate issues and corrections
+
+- The first native probe copied a standard tree with committed namespace
+  metadata, then added a physical `guest_probe.py` outside that metadata.
+  Guest Python correctly could not find the unregistered file. The temporary
+  driver was corrected to use `python -c` for native execution. Firmware uses
+  the actual model write tool to add the script to the shared namespace.
+  The initial logs are retained as `probe.initial.*.log`. The failed host
+  invocation was `uv.exe run --no-project $driverPath`; its guest argv ended
+  in `python guest_probe.py`. No production workaround was applied.
+- The first input probe assumed the reported `<<<` support. Its assertion
+  failed on the real syntax error. Separated the passing pipe/heredoc checks
+  from the unsupported here-string observation and reran successfully.
+  `probe.here-string.stdout.log` retains the result. The failed invocation
+  was again `uv.exe run --no-project $driverPath`; the guest command was
+  `python -c 'import sys; print(repr(sys.stdin.read()))' <<< 'here-string'`.
+- Initial source lookups used guessed paths that do not exist. Located the
+  real files with `rg --files` and resumed targeted reads. The failed command
+  segments were:
+
+  ```bash
+  rg -n 'write_bytes|create_dir|ensure_parent|create.*parent|Read:|Write:|FileSystem' crates/core/src/agent.rs crates/uefi/src/agent.rs crates/uefi/src/wasm_filesystem.rs crates/uefi/src/files.rs
+  sed -n '1,105p' crates/wasm/src/streams.rs
+  rg -n 'truncat|64 \* 1024|65536|Standard output|Standard error' crates/uefi/src/wasm crates/wasm/src/session.rs crates/wasm/examples/support/sessions.rs
+  sed -n '1,115p' scripts/wasm_file_tools_fixture.py
+  ```
+
+  The file-tool implementation is in `crates/filesystem/src/text.rs`; firmware
+  output formatting is in `crates/uefi/src/wasm.rs`.
+- `Get-ChildItem artifacts\esp-native -Name` used the wrong package name.
+  The standard native tree is `artifacts/native-esp`; subsequent checks used
+  that path.
+- Broad source/tool results reached output limits. Smaller symbol/range reads
+  supplied the remaining definitions. WSL Git status/diff also spent time
+  traversing nested submodules; final scoped checks use native Git and skip
+  unrelated submodule status. Original WSL commands started with
+  `git status --short && git log -5 --oneline` and
+  `git diff --check && git diff --stat`.
+- An optional process inventory query lost its intended WQL string quoting
+  across Bash/PowerShell and returned `Invalid query`. The original command
+  segment was
+  `Get-CimInstance Win32_Process -Filter "name=''qemu-system-x86_64.exe''"`.
+  Replaced it with a PowerShell process-name query. The VM harness had already
+  waited for its QEMU process to exit with status 0.
+
+The reported restrictions were treated as claims to test. The audit preserves
+real remaining limits rather than changing the runtime to fit the claims.
+Older verification command examples in AGENTS.md put task output under
+`artifacts/direct-smoke` and similar paths. The current artifact rule requires
+host temporary storage for task evidence; this run uses the Windows temporary
+directory. The older UI note that files are limited to 512 KiB describes the
+model file-tool bound. The current guest-file bound is separately defined as
+48 MiB, and the audit keeps those scopes explicit.
+No missing tool or network failure required an installation or proxy change.
+
 ## 2026-11-01: Match zx default command output policy
 
 Updated the QuickJS ash adapter to match the vendored zx defaults. Commands

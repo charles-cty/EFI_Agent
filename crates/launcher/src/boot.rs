@@ -30,6 +30,11 @@ fn shell_assets() -> Result<ShellAssets, Error> {
 
 pub fn configuration() -> Result<AgentConfig, Error> {
     let config = AgentConfig {
+        limits: std::env::var("EFI_AGENT_LIMITS")
+            .ok()
+            .map(|value| serde_json::from_str(&value))
+            .transpose()?
+            .unwrap_or_default(),
         api_base: std::env::var("EFI_AGENT_API_BASE").map_err(|_| "Set EFI_AGENT_API_BASE")?,
         api_key: std::env::var("EFI_AGENT_API_KEY").map_err(|_| "Set EFI_AGENT_API_KEY")?,
         model: std::env::var("EFI_AGENT_MODEL").map_err(|_| "Set EFI_AGENT_MODEL")?,

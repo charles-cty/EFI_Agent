@@ -4,6 +4,7 @@ extern crate alloc;
 
 pub mod agent;
 pub mod ansi;
+pub mod budget;
 pub mod completion;
 pub mod config;
 pub mod drivers;
@@ -12,6 +13,7 @@ pub mod input;
 pub mod protocol;
 pub mod random;
 pub mod repl;
+pub mod request;
 pub mod serial;
 pub mod terminal_screen;
 pub mod ui;
@@ -23,6 +25,7 @@ pub mod responses;
 
 #[cfg(test)]
 extern crate std;
+mod history;
 pub mod http;
 
 pub mod clock;

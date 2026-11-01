@@ -1,16 +1,19 @@
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{string::String, vec::Vec};
 // Retain Responses reasoning items by output index, without interpreting state.
-use crate::protocol::MAX_MESSAGE_BYTES;
+use crate::budget::{self, Limits};
 use alloc::collections::BTreeMap;
 use serde_json::{Value, json};
 
-#[derive(Default)]
 pub struct ReasoningStream {
     items: BTreeMap<usize, Value>,
     parts: BTreeMap<(usize, bool, usize), String>,
+    limit: usize,
+}
+
+impl Default for ReasoningStream {
+    fn default() -> Self {
+        Self::with_limit(Limits::default().response_message_bytes)
+    }
 }
 
 fn index(value: &Value, limit: usize) -> Result<usize, String> {
@@ -35,6 +38,14 @@ fn fill_missing(target: &mut Value, source: &Value) {
 }
 
 impl ReasoningStream {
+    pub fn with_limit(limit: usize) -> Self {
+        Self {
+            items: BTreeMap::new(),
+            parts: BTreeMap::new(),
+            limit,
+        }
+    }
+
     pub fn item(&mut self, event: &Value) -> Result<(), String> {
         let item = &event["item"];
         if item["type"] != "reasoning" {
@@ -50,6 +61,13 @@ impl ReasoningStream {
             }
             fill_missing(&mut item, previous);
         }
+        self.parts.retain(|(index, summary, part), _| {
+            *index != output_index
+                || item[if *summary { "summary" } else { "content" }]
+                    .get(*part)
+                    .and_then(|value| value.get("text"))
+                    .is_none()
+        });
         self.items.insert(output_index, item);
         self.check_size()
     }
@@ -99,17 +117,18 @@ impl ReasoningStream {
     }
 
     fn check_size(&self) -> Result<(), String> {
-        let item_bytes: usize = self
-            .items
+        let item_bytes: usize = self.items.values().map(budget::json_bytes).sum();
+        let part_bytes: usize = self
+            .parts
             .values()
-            .map(|item| serde_json::to_vec(item).map(|value| value.len()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?
-            .into_iter()
+            .map(|text| budget::string_bytes(text))
             .sum();
-        let part_bytes: usize = self.parts.values().map(String::len).sum();
-        if item_bytes + part_bytes > MAX_MESSAGE_BYTES - 2048 {
-            return Err("Provider reasoning state exceeds limit".into());
+        if item_bytes + part_bytes > self.limit {
+            return Err(budget::exceeded(
+                "ResponseMessageBudgetExceeded",
+                item_bytes + part_bytes,
+                self.limit,
+            ));
         }
         Ok(())
     }
