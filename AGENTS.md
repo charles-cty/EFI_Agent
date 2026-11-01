@@ -14,6 +14,15 @@ completion. Verification of a staging package does not verify those paths.
 
 # Current state
 
+A source-only inventory of project-defined interfaces is in
+docs/custom-interfaces.md. It covers guest CLIs and language adapters, all 25
+custom process/network WASM imports, 27 private control operations, retained
+session framing, Agent commands/tools, config, storage formats and build inputs.
+WolfSSH's entire client CLI is project-written; QuickJS uses a restricted
+replacement entry point. The earlier transparency audit now links to this
+inventory and includes the WolfSSH CLI in its scope notes. No runtime, package
+or user workspace was changed. No build, test suite or VM was run for the audit.
+
 The workspace limit is now 128 MiB and the full boot-tree limit is 160 MiB.
 Images reserve a 192 MiB FAT partition and have a 194 MiB logical size.
 Windows marks new images sparse before extending them; Linux retains the

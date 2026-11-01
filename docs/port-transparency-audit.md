@@ -46,8 +46,11 @@ Python options now determine shell use, decoding and nonzero-exit handling.
 
 The internal `efi_process`/`efi_net` WASM imports and ash task serialization are
 implementation details. Their names alone do not make an application interface
-nontransparent. Standard curl trust options and the SSH client's explicit trust
-input are also outside the interface defects above.
+nontransparent. Standard curl trust options belong to curl. The shipped WolfSSH
+client has a project-written CLI, including mandatory hexadecimal host-key and
+password-file inputs. The 2026-11-01
+[custom interface inventory](custom-interfaces.md) records that CLI and the other
+project-defined interfaces, including items outside this audit's original scope.
 
 Manifest installation and declared-asset packaging pass both actual 512 MiB
 Windows WHPX API flows, with independent saved FAT bytes and executable modes,

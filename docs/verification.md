@@ -33,6 +33,83 @@ Intermediate packaging issues were resolved without changing runtime data:
   profile, so the build used the repository's Windows-local toolchain paths
   explicitly. No network access was needed.
 
+## 2026-11-01: Source inventory of custom interfaces
+
+Added docs/custom-interfaces.md against implementation commit 0ee83cf. The
+inventory covers application CLI changes, JavaScript extensions, Python
+monkey patches, BusyBox private entry points, custom WASM imports, private
+RPC/session protocols, Agent commands/tools, config, package metadata, serial
+frames and build entry points. It separates upstream names and limitations
+from project-defined additions. The WolfSSH table includes its entire CLI,
+including mandatory host-key and password-file inputs. Updated the older
+transparency audit's scope note to include this CLI and link the inventory.
+
+Reviewed first-party source under crates, guests and scripts. Compared maintained
+BusyBox and QuickJS changes with pristine import commits 4e5840a and 83713b0.
+The vendor comparison identifies two project ash option names, --efi-session
+and --efi-task. curl and jq retain their upstream executable entry points; no
+project-defined runtime CLI options were found for them. Private C helper names
+and standard Python APIs replaced by startup adapters are listed separately.
+Generated assets, cached dependencies and individual verification-fixture
+arguments are not counted as independent production interface definitions.
+
+Static review checked all 66 unique relative references in the new inventory.
+Header extraction confirms 19 efi_process and six efi_net imports, and all 25
+names appear in the inventory. Reviewed the private control dispatch for all
+opcodes 1 through 27. A final source read corrected opcode 18's description:
+it returns a stream of directory-entry names, not a directory descriptor.
+git diff --check and an explicit whitespace check of the new file pass.
+This task changed documentation only. No build, application test suite, VM,
+package generation or user-workspace operation was performed.
+
+Intermediate issues, all resolved during source inspection:
+
+- An rg search put file filters after --. rg treated them as filenames. Moved
+  all -g options before --. Original command:
+
+  ```powershell
+  rg.exe -n -- '--efi|--tool|--session|--repl|Usage:|usage:|strcmp\(argv|defineProperty|globalThis|JS_SetPropertyStr|JS_SetModuleExport|JS_NewCFunction|import_module|efi_process|efi_filesystem|efi_net|efi_terminal' guests crates/wasm/src -g '*.[ch]' -g '*.inc' -g '*.py' -g '*.js' -g '*.rs'
+  ```
+
+- A temporary Show-Lines reader indexed beyond a 1491-line file under strict
+  PowerShell settings. Bounded its end index by the actual line count and read
+  the commands skipped by that failure. Original invocation:
+
+  ```powershell
+  Show-Lines crates/wasm/src/abi.rs 1440 1500
+  ```
+
+- Native Windows rg does not expand wildcard path operands. Replaced those
+  operands with directory paths and rg -g filters. Original commands:
+
+  ```powershell
+  rg.exe -n '^param|^    \[(string|switch|int)|^    \[Validate|add_argument|Usage:' scripts/build_*.ps1 scripts/prepare_cpython.ps1 scripts/prepare_timezone.py
+  rg.exe -n -g '*.rs' -g '*.c' -g '*.h' -g '*.py' -g '*.sh' -g '*.ps1' 'EFI_AGENT_[A-Z_]+' crates guests scripts/build* scripts/run-vm* README.md
+  ```
+
+- One search included the nonexistent crates/src path. Removed it and repeated
+  the search across the actual crates, guests and scripts directories. Original
+  command:
+
+  ```powershell
+  rg.exe -n -g '*.rs' -g '*.c' -g '*.h' -g '*.py' -g '*.sh' -g '*.ps1' 'EFI_AGENT_[A-Z_]+' crates/src crates/launcher/src crates/core/src crates/uefi/src guests scripts -g '!test*' -g '!smoke*' -g '!wasm*'
+  ```
+
+- A no-match rg search returned its normal exit code 1. PowerShell's native
+  error preference stopped that command batch. The guest import declarations
+  use C headers rather than Rust import attributes. Inspected those headers and
+  the Rust host registration instead, then ran the skipped vendor comparison.
+  Original command:
+
+  ```powershell
+  rg.exe -n 'import_module|import_name' crates -g '*.rs'
+  ```
+
+- Several broad inspection results reached output limits. Narrow file ranges
+  and symbol searches supplied the relevant definitions. No tool installation
+  or network access was needed. The existing UEFI Shell submodule status was
+  left unchanged.
+
 ## 2026-11-01: 128 MiB workspace and sparse disk images
 
 Raised the logical workspace import/export limit to 128 MiB and the boot-tree
