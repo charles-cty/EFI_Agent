@@ -14,6 +14,11 @@
  */
 EFI_PROCESS_IMPORT("getpid") int32_t efi_process_getpid(void);
 EFI_PROCESS_IMPORT("getppid") int32_t efi_process_getppid(void);
+/* Positive PID only. Signal 0 checks existence; INT, KILL and TERM use default
+ * termination with status 128 + signal. Handlers and process groups are absent.
+ * Termination affects the selected process; its children are adopted by PID 0.
+ */
+EFI_PROCESS_IMPORT("kill") int32_t efi_process_kill(int32_t pid, int32_t signal);
 /* Exact registry name lookup: 1 present, 0 absent, or negative POSIX errno.
  * The UTF-8 bytes exclude a terminating NUL. Lookup creates no process.
  */

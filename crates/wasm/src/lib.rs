@@ -897,6 +897,35 @@ impl World {
                     return;
                 }
                 abi::Action::Yield => 0,
+                abi::Action::Signal { target, signal } => {
+                    if !(0..65).contains(&signal) {
+                        -22
+                    } else if target <= 0 || !matches!(signal, 0 | 2 | 9 | 15) {
+                        -95
+                    } else if !self.processes.contains_key(&(target as Pid)) {
+                        -3
+                    } else if signal == 0 {
+                        0
+                    } else {
+                        let target = target as Pid;
+                        // Set the status before waking a waiter, which can reap
+                        // the process as soon as termination becomes visible.
+                        let process = self.processes.get_mut(&target).expect("Target checked");
+                        if process.status.is_live() {
+                            process.execution = None;
+                            process.status = Status::Exited(128 + signal);
+                            self.ready.retain(|queued| *queued != target);
+                            if target == pid {
+                                // step finalizes this caller after handle returns.
+                                return;
+                            }
+                            self.adopt_children(target);
+                            self.wake_parent(target);
+                            self.wake_io();
+                        }
+                        0
+                    }
+                }
                 abi::Action::CancelChild(child) => {
                     if self
                         .processes
