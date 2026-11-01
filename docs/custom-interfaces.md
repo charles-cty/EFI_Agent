@@ -123,7 +123,8 @@ Sources: [ash entry point](../vendor/busybox/shell/ash.c),
 | Standard `kill`/`pkill` behavior | Supports positive-PID checks with signal 0 and default termination for INT/KILL/TERM. Children are adopted. User handlers, process groups, and other signals are unavailable. This is a restricted standard interface, not new option syntax. |
 | Terminal control | Project termios/ioctl adapters expose the controlling terminal during direct input. Ctrl+Q cancels a raw-terminal command. This key has project-specific cancellation meaning. |
 
-The shipped 89 BusyBox names use selected upstream applets. The source comparison
+The shipped 90 BusyBox names use selected upstream applets, with `bash` entering
+the same ash shell as `sh`. The source comparison
 found the two private ash options above, with no additional project-defined
 applet CLI option names. Bash compatibility, startup-banner suppression, and
 selected applet features are upstream configuration choices. They are not new
@@ -364,8 +365,8 @@ These are project launcher defaults, separate from guest application options.
 | Interface / path | Project-defined contract and source |
 | --- | --- |
 | `programs.json` | Version 1 manifest: `version`, `modules`; each module has `path`, `commands`, `libraries`. Limits: 64 KiB, 128 modules, 512 command names. [Schema](../crates/filesystem/src/installation.rs). |
-| Catalog command aliases | 89 BusyBox names, `python`, `curl`, `quickjs`, `qjs`, `wolfssh`, `jq`: 95 aliases across six modules. [Catalog generator](../crates/launcher/src/installation.rs). |
-| Automatic discovery | Top-level `.wasm` filenames can provide inferred command names; a `qjs` alias is added for `quickjs` when absent. Virtual `/bin` exposes installed commands. [Runtime discovery](../crates/wasm/src/installation.rs). |
+| Catalog command aliases | 90 BusyBox names, `python`, `python3`, `curl`, `quickjs`, `qjs`, `wolfssh`, `jq`: 97 aliases across six modules. [Catalog generator](../crates/launcher/src/installation.rs). |
+| Automatic discovery | Top-level `.wasm` filenames can provide inferred command names; `qjs` and `python3` aliases are added for `quickjs` and `python` when absent. Virtual `/bin` exposes installed commands. [Runtime discovery](../crates/wasm/src/installation.rs). |
 | `.efi-agent-fs/` | Private filesystem journal: `format`, `objects`, and alternating `state0`/`state1` records preserve metadata and inode/link state on FAT. [Journal](../crates/filesystem/src/namespace/journal.rs). |
 | `.efi-agent-workspace.json` | Host export metadata: `format`, `version`, `entries`; cached entries contain observed host data, guest attributes, and optional link data. [Host workspace](../crates/launcher/src/workspace.rs). |
 | `.efi-process`, `.efi-session` | Reserved runtime endpoint names; not ordinary persistent user files. |

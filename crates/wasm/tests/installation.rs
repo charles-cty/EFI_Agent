@@ -88,6 +88,151 @@ fn manifest_aliases_reload_remove_and_respect_explicit_registrations() {
 }
 
 #[test]
+fn interpreter_symlinks_follow_installed_targets_and_refresh() {
+    let (mut world, fs) = fixture();
+    for name in ["python3", "bash"] {
+        assert!(!world.has_program(name));
+        assert_eq!(
+            world
+                .filesystem()
+                .unwrap()
+                .read_link(&format!("bin/{name}")),
+            Err(FileError::NotFound)
+        );
+    }
+    write(
+        fs.as_ref(),
+        "programs.json",
+        manifest(r#""python","ash""#).as_bytes(),
+    );
+    world.discover_programs().unwrap();
+    let root = world.filesystem().unwrap();
+    for (name, target) in [("python3", "python"), ("bash", "ash"), ("sh", "ash")] {
+        let path = format!("bin/{name}");
+        assert_eq!(root.read_link(&path).unwrap(), "/images/shared");
+        assert_eq!(
+            root.symlink_metadata(&path).unwrap().kind,
+            efi_agent_wasm::filesystem::EntryType::Symlink
+        );
+        assert_eq!(root.metadata(&path).unwrap().mode, 0o555);
+        assert_eq!(
+            root.metadata(&path).unwrap().inode,
+            root.metadata(&format!("bin/{target}")).unwrap().inode
+        );
+        let mut file = root
+            .open(
+                &path,
+                OpenOptions {
+                    read: true,
+                    write: false,
+                    create: false,
+                    exclusive: false,
+                    truncate: false,
+                    append: false,
+                },
+            )
+            .unwrap();
+        let mut header = [0; 8];
+        assert_eq!(file.read(&mut header).unwrap(), 8);
+        assert_eq!(&header, b"\0asm\x01\0\0\0");
+        assert!(world.has_program(name));
+        finish(&mut world, name, 23);
+        finish(&mut world, &format!("/bin/{name}"), 23);
+    }
+    write(fs.as_ref(), "images/shared", &command(31));
+    for name in ["python3", "bash"] {
+        finish(&mut world, name, 31);
+    }
+    write(
+        fs.as_ref(),
+        "programs.json",
+        manifest(r#""unrelated""#).as_bytes(),
+    );
+    world.discover_programs().unwrap();
+    for name in ["python3", "bash"] {
+        assert!(!world.has_program(name));
+        assert_eq!(
+            root.read_link(&format!("bin/{name}")),
+            Err(FileError::NotFound)
+        );
+    }
+}
+
+#[test]
+fn interpreter_symlinks_preserve_explicit_commands() {
+    for (name, target) in [("python3", "python"), ("bash", "ash")] {
+        let (mut world, fs) = fixture();
+        write(
+            fs.as_ref(),
+            "programs.json",
+            manifest(&format!("\"{target}\"")).as_bytes(),
+        );
+        world.discover_programs().unwrap();
+        let root = world.filesystem().unwrap();
+        assert_eq!(
+            root.read_link(&format!("bin/{name}")).unwrap(),
+            "/images/shared"
+        );
+        finish(&mut world, name, 23);
+        world.register(name, &command(41)).unwrap();
+        finish(&mut world, name, 41);
+        finish(&mut world, target, 23);
+        assert_eq!(
+            root.read_link(&format!("bin/{name}")),
+            Err(FileError::Invalid)
+        );
+
+        // Manifest-owned commands also override the default link.
+        let (mut world, fs) = fixture();
+        write(
+            fs.as_ref(),
+            "programs.json",
+            manifest(&format!("\"{name}\"")).as_bytes(),
+        );
+        world.register(target, &command(7)).unwrap();
+        world.discover_programs().unwrap();
+        finish(&mut world, name, 23);
+        finish(&mut world, target, 7);
+        assert_eq!(
+            world
+                .filesystem()
+                .unwrap()
+                .read_link(&format!("bin/{name}"))
+                .unwrap(),
+            "/images/shared"
+        );
+    }
+}
+
+#[test]
+fn interpreter_symlink_collisions_preserve_workspace_entries() {
+    for (name, target) in [("python3", "python"), ("bash", "ash")] {
+        let (mut world, fs) = fixture();
+        fs.create_directory("bin").unwrap();
+        write(fs.as_ref(), &format!("bin/{name}"), b"user command");
+        write(
+            fs.as_ref(),
+            "programs.json",
+            manifest(&format!("\"{target}\"")).as_bytes(),
+        );
+        assert_eq!(
+            world.discover_programs().unwrap_err().kind,
+            FileError::Exists
+        );
+        assert!(!world.has_program(target));
+        assert!(!world.has_program(name));
+        assert_eq!(
+            efi_agent_wasm::filesystem::text::read(
+                world.filesystem().unwrap().as_ref(),
+                &format!("bin/{name}")
+            )
+            .unwrap(),
+            "user command"
+        );
+    }
+}
+
+#[test]
 fn invalid_installation_keeps_prior_bin_and_reports_the_failing_asset() {
     let (mut world, fs) = fixture();
     write(

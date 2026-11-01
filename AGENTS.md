@@ -14,6 +14,21 @@ completion. Verification of a staging package does not verify those paths.
 
 # Current state
 
+The standard command links now include python3 and bash. They use the existing
+virtual /bin installation mechanism: python/python3 point to /python.wasm,
+and ash/sh/bash point to /ash.wasm. BusyBox dispatches bash to ash; no separate
+Bash binary is included. Discovery also adds python3 for an existing python
+installation without replacing an explicit command. The catalog has 90 BusyBox
+names and 97 command names across six modules. All 214 selected host checks,
+host/UEFI Clippy, formatting, Windows Release builds, native installation and
+256 MiB Windows WHPX installation pass. Verification covers readlink, metadata,
+file contents, PATH, absolute paths and direct/env shebangs. Both standard trees
+and images match all 1,151 runtime files and 12 notices; native configuration
+bytes are preserved. Builds and delivery use the original project paths.
+The installed C:\Temp\work was not changed. Full network regression and hardware
+boot were not repeated. Evidence and intermediate issues are in
+docs/verification.md.
+
 Configurable model-context budgets replace the fixed 640 KiB history limit.
 Defaults are 4 MiB request, 3 MiB automatic compaction, 2 MiB target, 8 MiB
 canonical history, 4 MiB response message/event, 32 MiB response wire, 64 KiB

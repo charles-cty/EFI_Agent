@@ -39,6 +39,40 @@ result = subprocess.run(['wolfssh'], capture_output=True)
 assert result.returncode == 2 and b'Usage: wolfssh' in result.stderr, result
 result = subprocess.run(['python', '-c', 'print(sum(range(10)))'], capture_output=True)
 assert (result.returncode, result.stdout, result.stderr) == (0, b'45\n', b''), result
+for link, target in [('python3', 'python'), ('bash', 'ash')]:
+    path = '/bin/' + link
+    assert os.path.islink(path), path
+    module = '/python.wasm' if target == 'python' else '/ash.wasm'
+    assert os.readlink(path) == module, path
+    assert os.path.samefile(path, '/bin/' + target), path
+    assert os.stat(path).st_mode & 0o777 == 0o555, path
+    with open(path, 'rb') as source, open('/bin/' + target, 'rb') as original:
+        while True:
+            block = source.read(65536)
+            assert block == original.read(65536), path
+            if not block:
+                break
+    result = subprocess.run(['readlink', path], capture_output=True)
+    assert (result.returncode, result.stdout, result.stderr) == (
+        0, (module + '\n').encode(), b''), result
+for command in ['python3', '/bin/python3']:
+    result = subprocess.run([command, '-c', 'print(6 * 7)'], capture_output=True)
+    assert (result.returncode, result.stdout, result.stderr) == (0, b'42\n', b''), result
+for command in ['bash', '/bin/bash']:
+    result = subprocess.run([command, '-c', 'python3 -c "print(6 * 7)"'], capture_output=True)
+    assert (result.returncode, result.stdout, result.stderr) == (0, b'42\n', b''), result
+for name, interpreter, body in [
+        ('python3', '/bin/python3', 'print(6 * 7)'),
+        ('bash', '/bin/bash', 'printf "42\\n"'),
+        ('env-python3', '/bin/env python3', 'print(6 * 7)'),
+        ('env-bash', '/bin/env bash', 'printf "42\\n"')]:
+    path = '/tmp/installation-' + name
+    with open(path, 'w') as output:
+        output.write('#!' + interpreter + '\n' + body + '\n')
+    os.chmod(path, 0o755)
+    result = subprocess.run([path], capture_output=True)
+    assert (result.returncode, result.stdout, result.stderr) == (0, b'42\n', b''), result
+    os.unlink(path)
 assert os.path.samefile('/bin/ls', '/bin/cat')
 assert os.path.samefile('/bin/qjs', '/bin/quickjs')
 assert not os.path.exists('/bin/node') and not os.path.exists('/bin/git')

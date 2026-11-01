@@ -1,6 +1,9 @@
 # BusyBox applet selection
 
-The shared BusyBox 1.37.0 image installs 89 command names, including ash/sh.
+The shared BusyBox 1.37.0 image installs 90 command names, including ash/sh/bash.
+The virtual `/bin/bash`, `/bin/sh` and `/bin/ash` links all point to `/ash.wasm`.
+All three names run ash with its configured features. The Python catalog also
+publishes `/bin/python3` and `/bin/python` as links to `/python.wasm`.
 The first 2026-11-01 extension added these 27 upstream commands:
 
 | Purpose | Added commands |

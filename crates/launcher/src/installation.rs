@@ -192,7 +192,7 @@ pub fn catalog(args: Vec<String>) -> Result<(), Error> {
         version: 1,
         modules: vec![
             module("ash.wasm", ASH_APPLETS, &["share/zoneinfo"]),
-            module("python.wasm", &["python"], &["lib/python3.14"]),
+            module("python.wasm", &["python", "python3"], &["lib/python3.14"]),
             module("curl.wasm", &["curl"], &[]),
             module("quickjs.wasm", &["quickjs", "qjs"], &[]),
             module("wolfssh.wasm", &["wolfssh"], &[]),

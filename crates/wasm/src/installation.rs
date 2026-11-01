@@ -150,10 +150,12 @@ impl World {
             sources.insert(path.into());
             pending.insert(stem.into(), path.into());
         }
-        if !pending.contains_key("qjs")
-            && let Some(path) = pending.get("quickjs").cloned()
-        {
-            pending.insert("qjs".into(), path);
+        for (alias, target) in [("qjs", "quickjs"), ("python3", "python")] {
+            if !pending.contains_key(alias)
+                && let Some(path) = pending.get(target).cloned()
+            {
+                pending.insert(alias.into(), path);
+            }
         }
         if sources.len() > MAX_MODULES || pending.len() > MAX_COMMANDS {
             return Err(InstallError::new(

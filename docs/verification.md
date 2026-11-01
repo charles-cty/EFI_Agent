@@ -1,5 +1,81 @@
 # Verification record
 
+## 2026-11-01: Add python3 and bash command links
+
+Added `bash` to the existing BusyBox command names and `python3` to the Python
+catalog. Virtual `/bin/ash`, `/bin/sh` and `/bin/bash` all link to `/ash.wasm`;
+`/bin/python` and `/bin/python3` link to `/python.wasm`. BusyBox's existing entry
+point sends `bash` to `ash_main`. The Python binary and libraries are unchanged.
+The existing discovery alias step also adds `python3` when `python` is found
+without that alias, while preserving explicit commands. No new VFS link
+resolution path or manifest schema was added.
+
+Before implementation, the checks distinguished an absent interpreter from an
+available target, explicit aliases from generated aliases, and a workspace
+collision from a successful installation. Added runtime tests verify alias
+refresh after module replacement/removal, explicit-command precedence and
+unchanged user bytes after a rejected collision. The real installation fixture
+checks `islink`, exact `readlink` targets, `samefile`, executable permissions,
+chunked binary contents, PATH lookup, absolute paths, and both direct and
+`/bin/env` shebangs for `python3` and `bash`.
+
+All validation uses the original Windows project at `C:\My\Projects\EFI_Agent`.
+Logs and temporary verification files are in
+`C:\Users\ADMINI~1\AppData\Local\Temp\2\efi-interpreter-links-20261101-232101`.
+
+- `cargo.exe test --locked -p efi-agent-filesystem -p efi-agent-wasm -p
+  efi-agent` passes 212 checks, with two image-dependent checks initially ignored.
+  Setting `EFI_AGENT_ASH` to the rebuilt standard BusyBox and running
+  `--test applet_terminal --test filesystem_statistics -- --ignored` passes
+  both. Total: 214 passing selected host checks. Logs: `final-host-tests.log`
+  and `final-ignored-checks.log`.
+- Host workspace and UEFI Clippy pass with warnings denied. Formatting passes.
+  Logs: `final-host-clippy.log` and `final-uefi-clippy.log`.
+- Native Windows BusyBox, runner, UEFI Release and launcher Release builds pass.
+  Outputs remain under `artifacts/wasm-guests` and `target` in the project.
+- `uv.exe run scripts/test_installation.py --runner
+  target/release/examples/run_guest.exe --launcher target/release/efi-agent.exe
+  --prepared artifacts/wasm-guests` passes the real WASM installation fixture
+  and independent saved-byte checks. Log: `final-installation-integration.log`.
+- Actual Windows WHPX/OVMF at 256 MiB passes `scripts/smoke_vm.py
+  --installation --api-format chat_completions` with the delivered ESP and
+  launcher. It includes the updated fixture and independent FAT verification.
+  Evidence: `whpx-installation/serial.bin`, `screen.txt` and `qemu.log`.
+- Both standard ESP trees and disk images were refreshed, then independently
+  checked at `artifacts/esp`, `artifacts/native-esp`,
+  `artifacts/efi-agent-vm.img` and `artifacts/efi-agent-native.img`. Each matches
+  all 1,151 declared runtime files, 97 command names and 12 license notices.
+  EFI entries match their inputs, and native `CONFIG.JSON` retains all 279
+  original bytes. `delivered-package-check.json` records the checks. The
+  delivered UEFI SHA-256 is
+  `28eb33e420f5ed40f8b1a690ede89a766abfb5cc0c3a31019aa196208a2f7f37`;
+  the BusyBox SHA-256 is
+  `547ae4b76bf8f41c7a3f66f24c3d519ea4094f9639987bb0b55fca08013efebc`.
+
+Intermediate issues and resolutions:
+
+- The first fixture used two whole-file reads to compare the approximately
+  30 MiB Python image and raised `MemoryError`. The fixture now compares
+  64 KiB chunks; the native and firmware reruns pass.
+- `cargo.exe build --locked --release -p efi-agent` initially failed to replace
+  `target/release/efi-agent.exe` with Windows `os error 5` because a launcher
+  process still used it. Moved the previous executable into the evidence
+  directory without stopping that process, then rebuilt successfully at the
+  original path. The user subsequently closed the old process. The final
+  launcher and package outputs remain at the standard project paths.
+- BusyBox emitted its existing string-pointer arithmetic compiler warnings.
+  The build completed without changing upstream files.
+- An initial skill read used the wrong skills root; the PowerShell skill was
+  read from `/home/ubuntu/my-skills/powershell/SKILL.md`. Inspection also tried
+  nonexistent `guest_catalog.py`, singular `wasm_session_fixture.py`,
+  `check_assets.py` and `wasm_test_services.py` paths. Scoped file discovery
+  found the catalog in `crates/launcher/src/installation.rs` and the existing
+  plural session fixture. Independent package checks use a temporary script.
+
+The installed `C:\Temp\work` was not changed. No full network regression,
+Responses-specific firmware rerun or hardware boot was performed for these
+command aliases.
+
 ## 2026-11-01: Finalize safe UI pruning and delivered binaries
 
 Removed the two unconditional `App::prune_history` calls from the serial and

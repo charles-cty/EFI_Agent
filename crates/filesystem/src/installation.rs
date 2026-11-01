@@ -50,6 +50,7 @@ pub const ASH_APPLETS: &[&str] = &[
     "lzma",
     "ash",
     "sh",
+    "bash",
     "echo",
     "xargs",
     "gzip",
