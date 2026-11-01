@@ -14,6 +14,13 @@ completion. Verification of a staging package does not verify those paths.
 
 # Current state
 
+Interactive ash now starts without its BusyBox banner or surrounding blank
+lines. Native output and retained-session checks pass. Both standard trees
+and images contain the rebuilt ash. After VM exit, C:\Temp\work\ash.wasm was
+updated; all 1,150 other host files retain their bytes. Native configuration
+bytes are preserved. No VM run was repeated for this change. Evidence and
+intermediate issues are in docs/verification.md.
+
 The second BusyBox extension installs 11 more commands, for 89 command names:
 ed, ar, cpio, lzop, ps, pgrep, kill, pkill, vi, less and more. Process queries
 read actual guest /proc records. Positive-PID signals 0/INT/KILL/TERM check or

@@ -1,5 +1,113 @@
 # Verification record
 
+## 2026-11-01: Remove the ash startup banner
+
+Enabled FEATURE_SH_EXTRA_QUIET in guests/busybox/include/ash_config.h and
+updated both conditional macros. The guest omits the BusyBox startup banner
+and its surrounding blank lines. Command output, including intentional leading
+newlines, remains intact.
+
+Native Windows WASI SDK 34 and Binaryen 133 rebuilt ash.wasm successfully.
+Five native real-WASM checks passed: an old-image banner control, repeated ls
+in the new interactive shell, noninteractive ls, an interactive command with
+empty output, and an intentional leading newline with separate stderr.
+scripts/test_sessions.py also passed retained shell/JavaScript state, REPL
+values, errors, exit, EOF, clear, cancellation and independently saved bytes.
+
+Refreshed artifacts/esp, artifacts/native-esp, artifacts/efi-agent-vm.img and
+artifacts/efi-agent-native.img. Independent directory-journal and FAT readers
+verified all 1,150 runtime files, 89 BusyBox names, EFI entries and ten notices
+at those standard paths. Native configuration bytes were preserved. The old
+standard packages remain in Windows temporary storage.
+
+The user's VM was running during the build. After the user exited, a process
+check confirmed both launcher and QEMU had stopped. C:\Temp\work\ash.wasm
+matched the previous build, was backed up, and was replaced with the new
+module. Its bytes match the prepared module, with SHA256
+FC564A6AAA810FD8C67A8D47D1CEFE4E79DE4EA3DF8C914EE01E577922449951.
+All 1,150 other host workspace files retain their original bytes. This task
+did not start a VM or repeat the full application workload.
+
+Evidence is under %TEMP%\efi-agent\ash-no-banner-a9a3fd2823b5467496053581c144cc77:
+build.log, output-check.log, sessions.log, previous-package-check.log,
+package.log, package-check.log and installed-check.log. That directory also
+contains the previous prepared/installed ash modules, native configuration
+backup, packaging script and previous standard packages.
+
+Intermediate issues and resolutions:
+
+- The build reported eleven existing string-plus-int warning locations in
+  untouched BusyBox source files. Compilation and linking completed; the
+  locations remain in build.log.
+- The first output probe assumed the old startup banner would precede child
+  ls output. Native nonterminal stdio buffering placed its text after the
+  child output. The control now checks banner presence and listing contents;
+  the new-image checks still require exact command output. The corrected
+  check passed. The original host command was:
+  uv.exe run --no-project python -c $probe $taskDirectory | Tee-Object -FilePath (Join-Path $taskDirectory 'output-check.log')
+
+## 2026-11-01: Ash startup banner before the first terminal command
+
+The maintained BusyBox setinteractive function in vendor/busybox/shell/ash.c
+prints two leading newlines, bb_banner, built-in shell (ash), and two trailing
+newlines. Its per-instance did_banner flag limits this output to one banner.
+The fixed ash_config.h sets ENABLE_FEATURE_SH_EXTRA_QUIET to 0.
+
+The application enters its terminal view before starting the interpreter.
+crates/uefi/src/main.rs records the submitted command before run_repl;
+crates/uefi/src/wasm.rs creates a missing session when executing that request.
+The new interactive shell therefore emits its startup text after the first
+command is displayed and before that command's output. Later requests reuse
+the shell instance.
+
+A temporary native Windows check used the current Release run_guest.exe and
+ash.wasm. ash -c printed FIRST and SECOND with no banner. ash -i -c printed
+exactly one banner with the two leading newlines before those values. Both
+returned 0 with empty stderr. The temporary workspace was removed. This check
+used real WASM under native wasmi; no VM was started and no runtime source or
+standard package was changed.
+
+Intermediate issue: the first uv.exe run --no-project python -c $probe used
+printf 'FIRST\n'; set +i; set -i; printf 'SECOND\n'. This ash rejects set +i
+with illegal option +i and status 2. The final check selected -i at startup
+and compared interactive and noninteractive invocations; both checks passed.
+
+## 2026-11-01: Direct WASM execution from ash
+
+Source inspection and the existing native Windows Release run_guest.exe
+confirmed direct WASM file execution. executable.rs checks executable file
+permissions, reads the WASM header and dispatches the module. Bare command
+names use PATH; this check observed PATH=/bin and /bin/quickjs.
+
+An isolated Windows temporary workspace contained copies of the current
+artifacts/wasm-guests/ash.wasm and quickjs.wasm. Real ash/QuickJS results:
+
+- quickjs.wasm -e 'print(6 * 7)' returned 127 with command not found.
+- ./quickjs.wasm initially returned 126 with permission denied. After guest
+  chmod +x quickjs.wasm, the same invocation printed 42 and returned 0.
+- quickjs -e 'print(6 * 7)' printed 42 and returned 0.
+- PATH=.:/bin quickjs.wasm -e 'print(6 * 7)' printed 42 and returned 0 after
+  the execute permission was set.
+- quickjs --version returned 2 with Usage: quickjs -e SCRIPT. The maintained
+  guests/quickjs/main.c CLI accepts -e SCRIPT or its private session option.
+
+The inline host probe used uv.exe run --no-project python -c $probe and
+checked statuses, output values and diagnostics. Temporary files were removed
+at exit. Runtime source, standard packages and the user workspace were unchanged.
+This check used native wasmi with real WASM modules; no VM was started.
+
+Intermediate issues and resolutions:
+
+- This search used nonexistent paths and shell globs that Windows rg did not
+  expand: rg.exe -n 'resolve_executable|resolve_program|\.wasm|/bin|quickjs' crates/wasm/src/program* crates/wasm/src/world* guests/programs.json
+- A second search also assumed nonexistent paths:
+  rg.exe -n 'resolve_executable|resolve_program|find_program|executable_path|/bin|quickjs' crates/wasm/src/program.rs crates/wasm/src/world.rs
+  Subsequent searches used existing directories and the located executable.rs.
+- The first uv.exe run --no-project python -c $probe assertion expected a
+  copied WASM file to have execute permission. Its actual permission-denied
+  result exposed the extra requirement. The final probe checked both sides
+  of guest chmod +x and passed.
+
 ## 2026-11-01: Process, archive and interactive BusyBox applets
 
 The second extension adds ed, ar, cpio, lzop, ps, pgrep, kill, pkill, vi, less
