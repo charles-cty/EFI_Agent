@@ -22,6 +22,7 @@ pub struct Runtime {
     summary_attempts: u64,
     last_usage: Option<Value>,
     last_summary_usage: Option<Value>,
+    last_task_estimate: u64,
     totals: [u64; 5],
     reports: [u64; 5],
 }
@@ -52,6 +53,7 @@ impl Runtime {
             summary_attempts: 0,
             last_usage: None,
             last_summary_usage: None,
+            last_task_estimate: 0,
             totals: [0; 5],
             reports: [0; 5],
         })
@@ -129,6 +131,9 @@ impl Runtime {
             &self.config.reasoning_effort,
             purpose,
         )?;
+        if purpose == Purpose::Task {
+            self.last_task_estimate = efi_agent_core::budget::estimated_tokens(&body);
+        }
         let body = efi_agent_core::request::encode(&body, &self.config.limits)?;
         let url = Url::parse(&self.config.api_base)?;
         let address = dns::resolve(
@@ -163,8 +168,15 @@ impl Runtime {
             "API TCP {}.{}.{}.{}:{}",
             address[0], address[1], address[2], address[3], url.port,
         );
-        let mut socket = tls::Socket::connect(&url, address, ca, self.config.ipv4.as_ref(), poll)
-            .map_err(|error| format!("{endpoint} connection failed: {error}"))?;
+        let mut socket = tls::Socket::connect(
+            &url,
+            address,
+            ca,
+            self.config.ipv4.as_ref(),
+            core::time::Duration::from_secs(self.config.limits.provider_timeout_seconds),
+            poll,
+        )
+        .map_err(|error| format!("{endpoint} connection failed: {error}"))?;
         let header = format!(
             "POST {} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nAccept: text/event-stream\r\nAccept-Encoding: identity\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
             url.endpoint(api.endpoint()),
@@ -265,6 +277,7 @@ pub struct Interactive<'a> {
     pub execute_code:
         &'a mut dyn FnMut(efi_agent_wasm::session::SessionKind, &str) -> Result<String, String>,
     pub reset_js: &'a mut dyn FnMut() -> Result<String, String>,
+    pub task: &'a mut dyn FnMut(efi_agent_core::protocol::TaskRequest) -> Result<String, String>,
     pub filesystem: Rc<dyn efi_agent_filesystem::FileSystem>,
 }
 impl Interactive<'_> {
@@ -274,6 +287,33 @@ impl Interactive<'_> {
     }
 }
 impl Environment for Interactive<'_> {
+    fn retryable_error(&self, error: &str) -> bool {
+        [
+            "Provider HTTP 408:",
+            "Provider HTTP 429:",
+            "Provider HTTP 500:",
+            "Provider HTTP 502:",
+            "Provider HTTP 503:",
+            "Provider HTTP 504:",
+            "timed out",
+            "CONNECTION_RESET",
+            "NO_RESPONSE",
+            "TIMEOUT",
+            "UnexpectedEof",
+        ]
+        .iter()
+        .any(|marker| error.contains(marker))
+    }
+    fn pause_retry(&mut self, milliseconds: u64) -> Result<(), String> {
+        let deadline = crate::tcp::Deadline::new(core::time::Duration::from_millis(milliseconds))?;
+        while !deadline.expired() {
+            if self.check() {
+                return Err("Request cancelled".into());
+            }
+            crate::event_loop::idle(core::time::Duration::from_millis(10))?;
+        }
+        Ok(())
+    }
     fn limits(&self) -> Limits {
         self.runtime.config.limits.clone()
     }
@@ -289,12 +329,41 @@ impl Environment for Interactive<'_> {
     }
     fn result_reserve(&self, operation: &Operation) -> usize {
         match operation {
+            Operation::ReadRange { path, limit, .. } => 12 * limit + 32768 + 6 * path.len(),
             // A background root can grow a file between admission and execution.
             Operation::Read { path } => 6 * agent::MAX_FILE_BYTES + 32768 + 6 * path.len(),
             Operation::Write { path, .. } | Operation::Edit { path, .. } => 32768 + 6 * path.len(),
-            Operation::Shell { .. } | Operation::Js { .. } => 6 * 2 * 65536 + 8192,
+            Operation::Shell { .. } | Operation::Js { .. } | Operation::Task { .. } => {
+                6 * 2 * 65536 + 8192
+            }
             _ => 32768,
         }
+    }
+    fn request_tokens(&self, messages: &[ChatMessage]) -> Result<u64, String> {
+        let config = &self.runtime.config;
+        let estimate = efi_agent_core::budget::estimated_tokens(&efi_agent_core::request::build(
+            model::api_format(Some(&config.api_format))?,
+            &config.model,
+            messages,
+            &config.reasoning_effort,
+            Purpose::Task,
+        )?);
+        let actual = self
+            .runtime
+            .last_usage
+            .as_ref()
+            .and_then(|usage| usage["prompt_tokens"].as_u64());
+        Ok(match actual {
+            Some(actual)
+                if self.runtime.last_task_estimate > 0
+                    && actual > self.runtime.last_task_estimate =>
+            {
+                (u128::from(estimate) * u128::from(actual))
+                    .div_ceil(u128::from(self.runtime.last_task_estimate))
+                    .min(u128::from(u64::MAX)) as u64
+            }
+            _ => estimate,
+        })
     }
     fn cancelled(&self) -> bool {
         self.cancelled
@@ -322,6 +391,17 @@ impl Environment for Interactive<'_> {
         let filesystem = self.filesystem.as_ref();
         use efi_agent_filesystem::text;
         match operation {
+            Operation::Task { request } => (self.task)(request),
+            Operation::ReadRange {
+                path,
+                offset,
+                limit,
+                hex,
+            } => text::read_range(filesystem, &path, offset, limit, hex),
+            Operation::Append { path, content } => {
+                text::append(filesystem, &path, &content)?;
+                Ok("Content appended".into())
+            }
             Operation::Shell { command } => {
                 (self.execute_code)(efi_agent_wasm::session::SessionKind::Shell, &command)
             }
@@ -331,7 +411,7 @@ impl Environment for Interactive<'_> {
             Operation::ResetJs => (self.reset_js)(),
             Operation::Read { path } => text::read_or_list(filesystem, &path),
             Operation::Write { path, content } => {
-                text::write(filesystem, &path, &content)?;
+                text::save(filesystem, &path, &content)?;
                 Ok("File saved".into())
             }
             Operation::Edit {
@@ -339,9 +419,11 @@ impl Environment for Interactive<'_> {
                 old_text,
                 new_text,
             } => {
-                let text = text::read(filesystem, &path)?;
+                let text =
+                    String::from_utf8(text::read_bytes(filesystem, &path, 48 * 1024 * 1024)?)
+                        .map_err(|_| "Edit target is not UTF-8")?;
                 let edited = agent::edit_text(text, &old_text, &new_text)?;
-                text::write(filesystem, &path, &edited)?;
+                text::save(filesystem, &path, &edited)?;
                 Ok("File edited".into())
             }
             _ => Err("Control requests are not file tools".into()),

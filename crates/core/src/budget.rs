@@ -6,6 +6,11 @@ use serde_json::Value;
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Limits {
+    /// None permits tools until completion or cancellation.
+    pub max_tool_rounds: Option<usize>,
+    pub provider_retries: usize,
+    pub provider_timeout_seconds: u64,
+    pub response_token_reserve: u64,
     pub request_bytes: usize,
     pub compact_at_bytes: usize,
     pub compact_target_bytes: usize,
@@ -21,6 +26,10 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            max_tool_rounds: None,
+            provider_retries: 2,
+            provider_timeout_seconds: 120,
+            response_token_reserve: 8192,
             request_bytes: 4 * 1024 * 1024,
             compact_at_bytes: 3 * 1024 * 1024,
             compact_target_bytes: 2 * 1024 * 1024,
@@ -37,6 +46,15 @@ impl Default for Limits {
 
 impl Limits {
     pub fn validate(&self) -> Result<(), String> {
+        if self.max_tool_rounds == Some(0)
+            || self.provider_retries > 10
+            || self.provider_timeout_seconds == 0
+            || self
+                .context_window_tokens
+                .is_some_and(|window| self.response_token_reserve >= window)
+        {
+            return Err("Invalid execution limits: rounds must be positive or null, retries <= 10, timeout > 0, and response token reserve < context window".into());
+        }
         if !(4096 <= self.compact_target_bytes
             && self.compact_target_bytes < self.compact_at_bytes
             && self.compact_at_bytes < self.request_bytes
@@ -74,6 +92,25 @@ impl Limits {
 
 pub fn exceeded(name: &str, observed: usize, limit: usize) -> String {
     format!("{name}: {observed} bytes exceeds {limit} bytes")
+}
+
+/// Conservative scheduling estimate, not an exact provider tokenizer.
+pub fn estimated_tokens(value: &Value) -> u64 {
+    fn text_tokens(text: &str) -> u64 {
+        let ascii = text.bytes().filter(u8::is_ascii).count() as u64;
+        ascii.div_ceil(3) + text.chars().filter(|c| !c.is_ascii()).count() as u64 * 2
+    }
+    match value {
+        Value::String(text) => 2 + text_tokens(text),
+        Value::Array(items) => 2 + items.iter().map(estimated_tokens).sum::<u64>(),
+        Value::Object(items) => {
+            2 + items
+                .iter()
+                .map(|(key, value)| text_tokens(key) + estimated_tokens(value) + 2)
+                .sum::<u64>()
+        }
+        _ => 8,
+    }
 }
 
 /// Length of the compact UTF-8 JSON encoding, without allocating that encoding.

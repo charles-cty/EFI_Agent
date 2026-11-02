@@ -8,6 +8,7 @@ No relay or API credentials are needed. DNS uses an unprivileged local TCP port.
 import argparse
 from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import re
 import shutil
@@ -132,7 +133,7 @@ class Provider(BaseHTTPRequestHandler):
         ("js", {"code": "print('retained-interpreter', retained === 731);"}),
         ("shell", {"command": "python - <<'PY'\nprint('PYTHON_HEREDOC_OK')\nPY\n"}),
     ]
-    code_expected = ["shell-out", "session-ash", "retained-ash", "js child 中", "Exit code: 7", "code-error-419", "[Output truncated at 64 KiB]", "Tool error: Code must contain no NUL", "retained-interpreter true", "PYTHON_HEREDOC_OK"]
+    code_expected = ["shell-out", "session-ash", "retained-ash", "js child 中", "Exit code: 7", "code-error-419", "[Output preview omits", "Tool error: Code must contain no NUL", "retained-interpreter true", "PYTHON_HEREDOC_OK"]
     code_verified = "CODE_TOOLS_VERIFIED"
     filesystem_tools = False
 
@@ -191,7 +192,7 @@ class Provider(BaseHTTPRequestHandler):
                 assert previous["extra_content"] == {"signature": "SIGNED_419"}
         tools = request["tools"]
         names = {tool["name"] if responses else tool["function"]["name"] for tool in tools}
-        assert names == {"read", "write", "edit", "shell", "js", "reset_js"}, names
+        assert names == {"read", "write", "edit", "shell", "js", "task", "reset_js"}, names
         if prompt == "Quota error":
             body = b'{"error":{"message":"Insufficient quota"}}'
             self.send_response(402)
@@ -229,9 +230,9 @@ class Provider(BaseHTTPRequestHandler):
             if previous:
                 expected = Provider.code_expected[step - 1]
                 assert expected in result, (step, result)
-                if expected == "[Output truncated at 64 KiB]":
-                    assert result.count("[Output truncated at 64 KiB]") == 1
-                    assert "A" * 65535 in result and "B" * 65536 in result
+                if expected == "[Output preview omits":
+                    assert result.count("[Output preview omits") == 1
+                    assert "A" * 65535 in result and "B" * 32768 in result
                 if expected == "Tool error: Code must contain no NUL":
                     assert "forbidden\n" not in result
             if step < len(Provider.code_steps):
@@ -338,6 +339,8 @@ def run(services):
     parser.add_argument("--installation", action="store_true", help="Verify manifest-installed commands and libraries")
     parser.add_argument("--sessions", action="store_true", help="Verify consecutive live shell/JavaScript tool state and clear")
     parser.add_argument("--context-budgets", action="store_true", help="Verify 512 KiB model tools, compaction, cancellation, context retry and admission")
+    parser.add_argument("--coding-tools", action="store_true", help="Verify persistent tasks, interactive stdin, full logs, range reads and large atomic edits")
+    parser.add_argument("--coding-timeout-only", action="store_true", help="Verify a two-second idle timeout, bounded retry and recovery")
     parser.add_argument("--repl", action="store_true", help="Verify direct shared-interpreter input, model handoff and cancellation")
     parser.add_argument("--code-timeout", type=float, default=480, help="Maximum seconds for the complete code-tool sequence")
     parser.add_argument("--code-cancel-only", action="store_true", help="Run only code cancellation/isolation checks; requires --code-workspace")
@@ -364,6 +367,11 @@ def run(services):
     parser.add_argument("--process-files", action="store_true", help="Verify process metadata, descriptor links, pipe lifetime and saved bytes")
     parser.add_argument("--cwd", action="store_true", help="Verify retained cwd identity through rename/removal and standard Python/ash APIs")
     args = parser.parse_args()
+    if args.coding_tools or args.coding_timeout_only:
+        if not args.code_workspace:
+            parser.error('--coding-tools requires --code-workspace')
+        from wasm_coding_tools_fixture import CodingTools
+        Provider.context_budgets = CodingTools(args.coding_timeout_only)
     if args.context_budgets:
         if not args.code_workspace:
             parser.error('--context-budgets requires --code-workspace')
@@ -633,11 +641,15 @@ def run(services):
         (tree / "EFI/BOOT").mkdir(parents=True)
         (tree / "EFI/AGENT").mkdir()
         (tree / "work").mkdir()
-        (tree / "EFI/BOOT/BOOTX64.EFI").write_bytes((args.esp / "EFI/BOOT/BOOTX64.EFI").read_bytes())
+        application = (args.esp / "EFI/BOOT/BOOTX64.EFI").read_bytes()
+        (tree / "EFI/BOOT/BOOTX64.EFI").write_bytes(application)
+        (args.output / 'efi-sha256.txt').write_text(hashlib.sha256(application).hexdigest() + '\n', encoding='utf-8')
         (tree / "EFI/AGENT/VM.TXT").write_text("serial\n")
         (tree / "EFI/AGENT/CA.DER").write_bytes((temporary / "ca.der").read_bytes())
         host = "wrong.test" if args.tls_failure == "hostname" else "provider.test"
         config = {"api_base": f"https://{host}:{provider.server_port}/v1", "api_key": "smoke-key", "model": "smoke-model", "api_format": args.api_format, "dns_address": [10, 0, 2, 2], "dns_port": dns.server_address[1], "workspace": "\\work"}
+        if args.coding_timeout_only:
+            config['limits'] = {'provider_timeout_seconds': 2}
         if args.context_budgets:
             # Keep the 512 KiB read request below the trigger after the one
             # large write argument has been compacted; this isolates one
@@ -719,7 +731,7 @@ def run(services):
                 connection.sendall(text.encode() + b"\r")
 
             wait("What would you like to build?")
-            if args.context_budgets:
+            if args.context_budgets or args.coding_tools or args.coding_timeout_only:
                 Provider.context_budgets.exercise(send, wait, connection, args.code_timeout)
                 send('/exit')
                 qemu.wait(timeout=15)
@@ -727,7 +739,8 @@ def run(services):
                 with image.open('rb') as disk:
                     fs = FATFS(RangeStream(disk, 1048576, image.stat().st_size - 1048576))
                     Provider.context_budgets.verify(FatWorkspace(fs))
-                print(f'PASS {args.api_format} context budgets, 512 KiB tools, atomic compaction/cancellation, retained interpreters, retry without repeated effects and independently saved FAT bytes', flush=True)
+                feature = 'coding tools and persistent tasks' if args.coding_tools else ('idle timeout and recovery' if args.coding_timeout_only else 'context budgets and compaction')
+                print(f'PASS {args.api_format} {feature}, retained interpreters, retry without repeated effects and independently saved FAT bytes', flush=True)
                 return
             if args.repl:
                 exercise_repl(send, wait, connection, Provider, args.code_timeout)
@@ -1048,7 +1061,8 @@ def run(services):
         finally:
             Provider.stream_release.set()
             if Provider.context_budgets is not None:
-                Provider.context_budgets.summary_release.set()
+                if args.context_budgets:
+                    Provider.context_budgets.summary_release.set()
                 (args.output / 'context-report.json').write_text(json.dumps(Provider.context_budgets.report(), indent=2), encoding='utf-8')
             if qemu.poll() is None:
                 qemu.terminate()

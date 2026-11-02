@@ -49,6 +49,7 @@ pub struct Socket<'a> {
     plaintext: Vec<u8>,
     offset: usize,
     deadline: Deadline,
+    timeout: Duration,
     poll: &'a mut dyn FnMut() -> bool,
     closed: bool,
 }
@@ -58,6 +59,7 @@ impl<'a> Socket<'a> {
         address: [u8; 4],
         ca: Option<Vec<u8>>,
         static_ipv4: Option<&StaticIpv4>,
+        timeout: Duration,
         poll: &'a mut dyn FnMut() -> bool,
     ) -> Result<Self, String> {
         let tls = if url.tls {
@@ -96,7 +98,8 @@ impl<'a> Socket<'a> {
             outgoing: vec![0; 65536],
             plaintext: Vec::new(),
             offset: 0,
-            deadline: Deadline::new(Duration::from_secs(120))?,
+            deadline: Deadline::new(timeout)?,
+            timeout,
             poll,
             closed: false,
         })
@@ -169,6 +172,7 @@ impl<'a> Socket<'a> {
                     return Err("TLS record buffer exceeds limit".into());
                 }
                 self.incoming.extend_from_slice(&bytes[..count]);
+                self.deadline = Deadline::new(self.timeout)?;
             }
         }
     }
@@ -194,7 +198,11 @@ impl efi_agent_core::model::Read for Socket<'_> {
             return Ok(0);
         }
         if self.tls.is_none() {
-            return self.tcp.read_some(output, &self.deadline, self.poll);
+            let count = self.tcp.read_some(output, &self.deadline, self.poll)?;
+            if count != 0 {
+                self.deadline = Deadline::new(self.timeout)?;
+            }
+            return Ok(count);
         }
         if self.offset == self.plaintext.len() {
             self.plaintext.clear();

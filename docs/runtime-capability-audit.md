@@ -5,6 +5,8 @@ Date: 2026-11-01. Implementation baseline: c619bbe.
 Later updates add the standard `python3` and `bash` command links. See
 [busybox-applets.md](busybox-applets.md) for the current names and
 [context-budgets.md](context-budgets.md) for the replacement history budgets.
+The 2026-11-02 coding changes replace the write/edit, capture, input and task
+contracts described here; see [coding-tools.md](coding-tools.md).
 The observations below retain the audit baseline.
 
 This audit checks the reported restrictions against the current source and real

@@ -313,17 +313,19 @@ reports task/summary requests separately and does not convert bytes into tokens.
 
 | Tool | Arguments |
 | --- | --- |
-| `read` | `path`. |
-| `write` | `path`, `content`; UTF-8, create/overwrite, at most 512 KiB. |
+| `read` | `path`; optional byte `offset`, `limit` and `hex` for file pages. |
+| `write` | `path`, `content`; atomic UTF-8 replacement, or `append=true` for chunks. Model request and filesystem capacities apply. |
 | `edit` | `path`, `old_text`, `new_text`; require exactly one matching occurrence. |
 | `shell` | `command`; evaluate in the retained ash interpreter. |
 | `js` | `code`; evaluate in the retained QuickJS context. |
+| `task` | `action`; command, id, input, eof, terminal and wait_ms fields manage persistent ash roots. |
 | `reset_js` | No arguments; release the JS interpreter and its children. |
 
-Tool schemas reject extra properties. Shell and JS tool capture is limited to
-64 KiB per stdout/stderr stream with explicit truncation. This is separate from
-the 512 KiB command-capture limit inside the JS adapter. Tool stdin is finite
-and empty. Direct terminal input has a different I/O contract.
+Tool schemas reject extra properties. Shell, JS and task output is saved in full
+at reported paths under `/.agent-output`. Results preview the first and last
+32 KiB per stream. The JS adapter separately bounds inner command input/capture
+to 512 KiB. Retained tools have finite empty stdin; tasks provide live input/EOF
+and an optional controlling terminal. See [coding-tools.md](coding-tools.md).
 
 ## 4. Configuration and private storage formats
 

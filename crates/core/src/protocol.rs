@@ -18,6 +18,19 @@ pub enum Operation {
     Read {
         path: String,
     },
+    ReadRange {
+        path: String,
+        offset: u64,
+        limit: usize,
+        hex: bool,
+    },
+    Append {
+        path: String,
+        content: String,
+    },
+    Task {
+        request: TaskRequest,
+    },
     Write {
         path: String,
         content: String,
@@ -27,6 +40,24 @@ pub enum Operation {
         old_text: String,
         new_text: String,
     },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRequest {
+    pub action: String,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub id: Option<u32>,
+    #[serde(default)]
+    pub input: Option<String>,
+    #[serde(default)]
+    pub eof: bool,
+    #[serde(default)]
+    pub terminal: bool,
+    #[serde(default)]
+    pub wait_ms: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

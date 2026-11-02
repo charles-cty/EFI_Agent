@@ -5,6 +5,7 @@ pub(crate) mod cooperative;
 use crate::event_loop::{self, Notification};
 use alloc::{boxed::Box, format, string::String};
 use core::{
+    cell::Cell,
     ffi::c_void,
     ptr::{self, NonNull},
     time::Duration,
@@ -91,15 +92,41 @@ impl Drop for Completion {
     }
 }
 
-pub(crate) struct Deadline(Option<Event>);
+pub(crate) struct Deadline {
+    event: Option<Event>,
+    elapsed: Cell<bool>,
+    rtc_end: Option<u64>,
+}
+
+fn rtc_nanoseconds() -> Option<u64> {
+    let time = uefi::runtime::get_time().ok()?;
+    let seconds = efi_agent_core::clock::unix_seconds(
+        time.year(),
+        time.month(),
+        time.day(),
+        time.hour(),
+        time.minute(),
+        time.second(),
+        time.time_zone().unwrap_or(0),
+    )?;
+    seconds
+        .checked_mul(1_000_000_000)?
+        .checked_add(u64::from(time.nanosecond()))
+}
 impl Deadline {
     pub(crate) fn new(duration: Duration) -> Result<Self, String> {
         // SAFETY: timer has no callback or context and is closed by Drop.
         let event = unsafe { boot::create_event(EventType::TIMER, Tpl::APPLICATION, None, None) }
             .map_err(|e| format!("TCP4 timer: {e}"))?;
-        let timer = Self(Some(event));
+        let rtc_end = rtc_nanoseconds()
+            .and_then(|now| now.checked_add(u64::try_from(duration.as_nanos()).ok()?));
+        let timer = Self {
+            event: Some(event),
+            elapsed: Cell::new(false),
+            rtc_end,
+        };
         boot::set_timer(
-            timer.0.as_ref().expect("Live timer"),
+            timer.event.as_ref().expect("Live timer"),
             TimerTrigger::Relative(duration),
         )
         .map_err(|e| format!("TCP4 timer: {e}"))?;
@@ -107,12 +134,21 @@ impl Deadline {
     }
     pub(crate) fn expired(&self) -> bool {
         // Timer errors terminate the wait, which will cancel the queued token.
-        boot::check_event(self.0.as_ref().expect("Live timer")).unwrap_or(true)
+        // CheckEvent consumes a signalled event. Latch expiry, and use the RTC
+        // as an independent watchdog when firmware timer delivery is delayed.
+        let expired = self.elapsed.get()
+            || boot::check_event(self.event.as_ref().expect("Live timer")).unwrap_or(true)
+            || self
+                .rtc_end
+                .zip(rtc_nanoseconds())
+                .is_some_and(|(end, now)| now >= end);
+        self.elapsed.set(expired);
+        expired
     }
 }
 impl Drop for Deadline {
     fn drop(&mut self) {
-        if let Some(event) = self.0.take() {
+        if let Some(event) = self.event.take() {
             let _ = boot::close_event(event);
         }
     }

@@ -47,7 +47,7 @@ def exercise_repl(send, wait, connection, provider, timeout):
     wait('^C', timeout)
     command("cat <<'END' > /repl-multiline\nline one\n中\nEND\nprintf '%s%s' REPL_ MULTILINE", 'REPL_MULTILINE')
     for source in ['/leave', '/enter js', '/help', '/clear', '/quit', '/exit']:
-        command(source, source.split()[0] + ': not found')
+        command(source, source.split()[0] + ': No such file or directory')
     command('printf "%s%s" REPL_ STILL_SHELL', 'REPL_STILL_SHELL')
     command('exit 7', 'Interpreter ended. Returned to conversation.')
     enter('js')
@@ -100,9 +100,8 @@ def exercise_repl(send, wait, connection, provider, timeout):
     connection.sendall(b'\x04')
     wait('Interpreter ended. Returned to conversation.', timeout, idle=True)
     enter('shell')
-    command("trap 'printf EOF_TRAP > /repl-eof-trap' EXIT", '$ ▏')
-    connection.sendall(b'\x04')
-    wait('Interpreter ended. Returned to conversation.', timeout, idle=True)
+    command("trap 'printf EOF_TRAP > /repl-eof-trap' EXIT; exit 7",
+            'Interpreter ended. Returned to conversation.')
     command(f'/wasm kill {background}', f'Cancelled {background}')
     command(f'/wasm reap {background}', f'Reaped {background}')
     assert len(provider.requests) == request_count, provider.requests

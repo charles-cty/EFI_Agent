@@ -38,7 +38,7 @@ class ContextBudgets:
                 assert self.summary_release.wait(30)
             return self.reply(handler, responses, text=CHECKPOINT)
         names = {tool['name'] if responses else tool['function']['name'] for tool in request['tools']}
-        assert names == {'read', 'write', 'edit', 'shell', 'js', 'reset_js'}
+        assert names == {'read', 'write', 'edit', 'shell', 'js', 'task', 'reset_js'}
         self.task_sizes.append(len(json.dumps(request, ensure_ascii=False, separators=(',', ':')).encode()))
         assert self.task_sizes[-1] <= 4 * 1024 * 1024
         if any('[Conversation checkpoint]\n' in (item.get('content') or '') for item in messages):
@@ -104,7 +104,7 @@ class ContextBudgets:
             40: [('write', {'path': 'must-not-exist', 'content': 'unexecuted'}, 'not executed'),
                  ('read', {'path': 'budget/deep/payload'}, 'not executed'),
                  ('read', {'path': 'budget/deep/payload'}, 'not executed')],
-            41: [('write', {'path': 'oversized-must-not-exist', 'content': 'a' * (LIMIT + 1)}, 'File exceeds 512 KiB')],
+            41: [('write', {'path': 'above-old-write-limit', 'content': 'a' * (LIMIT + 1)}, 'File saved')],
         }
         if step == 20:
             self.context_error_after_effect = True
@@ -195,7 +195,7 @@ class ContextBudgets:
         assert workspace.read('effect-count') == b'once'
         assert workspace.read('retry-effect') == b'retry-once'
         assert 'must-not-exist' not in workspace.entries
-        assert 'oversized-must-not-exist' not in workspace.entries
+        assert workspace.read('above-old-write-limit') == b'a' * (LIMIT + 1)
         self.verified = {'payload_bytes': LIMIT, 'payload_sha256': hashlib.sha256(workspace.read('budget/deep/payload')).hexdigest(),
                          'effect_count': workspace.read('effect-count').decode(), 'retry_effect': workspace.read('retry-effect').decode(),
                          'rejected_paths_absent': True}

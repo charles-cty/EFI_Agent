@@ -239,12 +239,23 @@ fn submit(
                 let (app, _, wasm) = &mut *ui;
                 wasm.reset_js(app)
             };
+            let mut task = |request| {
+                let mut ui = ui.borrow_mut();
+                let (app, refresh, wasm) = &mut *ui;
+                wasm.task(request, app, &mut |app, input| {
+                    let stop =
+                        refresh(app, input).map_err(|_| String::from("Terminal refresh failed"))?;
+                    cancelled.set(cancelled.get() || stop);
+                    Ok(cancelled.get())
+                })
+            };
             let mut environment = environment::Interactive {
                 runtime: runtime_state,
                 poll: &mut control,
                 cancelled: false,
                 execute_code: &mut execute_code,
                 reset_js: &mut reset_js,
+                task: &mut task,
                 filesystem,
             };
             let mut streaming_row = None;

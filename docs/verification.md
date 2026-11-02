@@ -1,5 +1,168 @@
 # Verification record
 
+## 2026-11-02: Coding task execution and recoverable tools
+
+The default twelve-tool-group cutoff is removed. An optional positive
+`max_tool_rounds` still supports bounded requests, with correlated results for
+every skipped call. Provider task requests have bounded transient retries and
+a configurable idle timeout. Optional token-window admission includes reserved
+reply space and an estimate corrected by available provider usage.
+
+The new `task` tool owns independent ash roots, live stdin/EOF, optional
+terminals, polling and cancellation. Shell, JS and task output is stored in
+complete workspace logs, with bounded head/tail previews. File tools support
+UTF-8 or hex byte ranges, append, atomic regular-file replacement and edits up
+to the existing filesystem file-size limit. The separate 512 KiB write-content
+limit is removed. See [coding-tools.md](coding-tools.md) for the contracts.
+
+All execution uses native Windows tools and Windows-local paths. Evidence is
+under `C:\Users\Administrator\AppData\Local\Temp\2\efi-coding-tools-20261102`.
+No guest application source or prepared WASM bytes were changed. The installed
+`C:\Temp\work` was not used or updated.
+
+### Native checks and delivery
+
+- The full host workspace command passes 307 checks, with two asset-dependent
+  tests initially ignored. Both ignored tests then pass with `EFI_AGENT_ASH`
+  set to the existing prepared BusyBox: 309 distinct checks pass in total.
+  This includes 89 core unit tests and the context-memory integration test.
+  Evidence: `host-tests.log` and `optional-busybox-tests.log`.
+- After the final file-save boundary correction, the complete filesystem test
+  set passes again. Tests reconstruct a large Unicode file from asymmetric
+  pages, read binary ranges, preserve original bytes and modes under actual
+  capacity pressure, reject symlink replacement, handle a staging-name target,
+  and verify all 700,013 captured bytes. `task_input` tests cover blocked input,
+  EOF, binary bytes, terminal output after reap and cancellation isolation.
+- Formatting, host Clippy with warnings denied and separate UEFI-target Clippy
+  pass. Both native Windows Release builds pass with `--locked`. Visual Studio
+  is found with `vswhere.exe`, initialized with `Launch-VsDevShell.ps1`, then
+  the project working directory is restored. Logs are `host-clippy.log`,
+  `uefi-clippy.log`, `uefi-release-build.log` and `launcher-release-build.log`.
+- Both standard trees and images are updated. An independent `dissect.fat`
+  reader checks every one of the 1,151 catalog-selected runtime files and all
+  12 notices against the prepared distribution in each tree and image. VM
+  boot/application entries and the native application match the new EFI.
+  Native boot remains the official Shell. Both images are 194 MiB logically.
+- Original native configuration bytes are saved in host temporary storage,
+  restored after packaging and independently checked in the standard native
+  tree and repacked image. Evidence: `standard-package-report.json` and
+  `standard-package-verification.log`. The delivered EFI SHA-256 is
+  `6f0f366a5d6b41d804f49bc8488d2a1386558f5f8178aac0cececb071b61fc04`.
+  Both delivered images retain their Windows sparse-file attributes.
+
+### Windows WHPX acceptance
+
+Actual QEMU/OVMF runs use WHPX, 256 MiB, the EFI from the standard delivered
+ESP and a local HTTPS provider. Test configurations and disks stay in host
+temporary storage. The saved workspace is read independently after normal VM
+exit.
+
+| Case | Chat Completions | Responses |
+| --- | --- | --- |
+| Final coding tools and task lifecycle | Pass; 30 tool calls | Pass; 30 tool calls |
+| Silent provider, two-second idle timeout and two retries | Pass; 8.187 s total | Pass; 8.203 s total |
+| Existing DNS/HTTPS/SSE/file-tool suite | Pass | Pass |
+| Context budgets, compaction, context retry and admission | Pass | Pass |
+
+Each coding run completes 21 tool steps in one user request, plus readiness
+polls and a later six-step lifecycle sequence. Checks cover cancellation of
+one task without losing retained shell/JS variables, Unicode terminal input
+and EOF, a task whose shell exits before its background child, persistence
+across user requests, Esc cancellation of a wait while the task stays live,
+handle release and an empty task list after `/clear`.
+The provider injects one HTTP 503; the saved effect file contains `once`.
+
+The independently saved files contain the exact 100,008-byte stdout log and
+19-byte stderr log. A 524,295-byte model write, a hex range across its trailing
+marker, append and a size-changing edit produce the expected 524,300 final
+bytes. Final evidence: `coding-chat-final`, `coding-responses-final` and their
+adjacent logs. The earlier `coding-chat` and `coding-responses` passes are also
+retained.
+
+The timeout runs first warm the connection setup, then accept complete model
+requests without returning response data. Each records exactly three silent
+requests, returns the timeout in about 8.2 host seconds including all attempts
+and backoff, and accepts a subsequent request. Evidence: `timeout-chat` and
+`timeout-responses`. This verifies the configured two-second case. The default
+120-second duration and native hardware timing were not remeasured. Expiry
+latching and the independent RTC watchdog avoid relying solely on the prior
+firmware timer path; the original timer-delivery discrepancy is not attributed
+to a confirmed low-level cause.
+
+The existing HTTPS suites also verify usage, streamed visible text, draft
+editing, rejected HTTP responses, truncation without tool execution, Esc
+cancellation and a subsequent request. Evidence: `https-chat` and
+`https-responses`.
+
+Both context suites use 11 summary requests, preserve opaque provider state,
+handle one provider context error without repeating effects, and retire all
+rejected call IDs. The largest requests are 3,679,477 and 3,679,467 bytes.
+Saved FAT bytes confirm the 512 KiB control-character payload, the accepted
+above-old-limit write and the absence of rejected writes. Evidence:
+`context-chat` and `context-responses`.
+
+The retained-session regression passes shell/JS state, cwd, descriptors,
+exceptions, reset, cancellation isolation and an independent background root.
+Evidence: `sessions-chat`.
+
+The revised direct terminal regression passes with the final delivered EFI.
+It covers command stdin/EOF, idle JS source EOF, multiline input, history
+navigation, syntax recovery, terminal output ordering, direct shell/JS values,
+model handoff without manual text in provider requests, cancellation,
+independent background processes and explicit shell exit traps. Evidence:
+`repl-chat-final2`. Shell source EOF with an EXIT trap remains unresolved;
+the passing run uses `exit 7` for that trap check.
+
+### Intermediate issues
+
+- WSL `git status --short` and a submodule-ignoring variant were too slow to
+  use. Native Windows Git completed the inspection.
+- The first host Clippy command was
+  `cargo.exe clippy --locked --workspace --all-targets -- -D warnings`.
+  It mixed the UEFI panic handler with host `std` and failed with duplicate
+  `panic_impl`. The corrected host command excludes `efi-agent-uefi`; a second
+  command checks that crate for `x86_64-unknown-uefi`.
+- Development checks caught a cast/comparison parse error, a missing no_std
+  `ToString` import and incorrect assumptions about the directory iterator and
+  its dot entries. These were corrected before the passing checks. Old
+  six-tool and 512 KiB write-rejection assertions were updated to the new
+  contracts. A failed patch hunk was reapplied against the current source.
+- A file lookup referenced the absent `scripts/test_environment.py`. Existing
+  installation, namespace and firmware fixtures supplied the checks instead.
+- The first firmware fixture expected terminal readiness after one bounded
+  wait. The task correctly returned `Running` before producing its marker.
+  The fixture now polls while the task remains live. The failed evidence is
+  retained as `coding-chat-initial`; it is not counted as passing acceptance.
+- The first direct-terminal regression expected `not found` for `/leave`.
+  The unchanged BusyBox returns `No such file or directory` for a missing
+  absolute executable path. The fixture now checks that exact diagnostic.
+  The failed `repl-chat` evidence is retained.
+- The next direct-terminal run, `repl-chat-final`, timed out after registering
+  an EXIT trap and sending shell Ctrl+D. The screen retained a Ready shell
+  prompt and the trap file was absent. The cause is unresolved; reusing the
+  shell-prompt marker may permit a fixture timing race. The fixture then used
+  explicit `exit 7`, and `repl-chat-final2` passes that narrower check. This
+  changes the trap coverage from shell source EOF to explicit shell exit.
+- Review also corrected a staging filename that could equal a new destination,
+  rejected oversized initial task input before starting a process, and kept
+  direct interpreter input from creating empty model-output log files.
+  The large-output fixture uses a finite producer so its expected stderr does
+  not depend on an unrelated broken-pipe diagnostic.
+- Final review moved fallible log creation before interpreter creation and
+  registered output ownership before source submission. A storage failure can
+  therefore return without leaving a new interpreter without an output owner.
+  UEFI Clippy and the Release build pass again; both standard trees/images are
+  refreshed and independently rechecked. Earlier acceptance used EFI
+  `a6a6cf94092b3125f2fb1889ff30bcafc34d8c59590fe772721d2a9fc0fe26e3`.
+  Both coding suites pass again with the final delivered EFI, including the
+  added wait-cancellation check. Final-run evidence records its digest in
+  `efi-sha256.txt`.
+
+Full application networking, Linux builds and native hardware boot were not
+repeated. Process, memory and filesystem capacities still apply. Python's
+socket/thread/multiprocessing support is unchanged. No host execution bridge
+was added.
+
 ## 2026-11-01: Add python3 and bash command links
 
 Added `bash` to the existing BusyBox command names and `python3` to the Python

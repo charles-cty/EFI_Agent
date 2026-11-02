@@ -36,6 +36,28 @@ pub type Pid = u32;
 pub const MAX_PROCESSES: usize = 32;
 pub const MAX_MEMORY_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_OUTPUT_BYTES: usize = 512 * 1024;
+
+/// Input and terminal ownership survive the root's exit for final output drain.
+pub struct ProcessInput {
+    terminal: Rc<io::Terminal>,
+}
+
+impl ProcessInput {
+    pub fn write(&self, bytes: &[u8]) -> Result<(), Error> {
+        let mut input = self.terminal.input.borrow_mut();
+        if !input.open || input.bytes.len().saturating_add(bytes.len()) > PIPE_CAPACITY {
+            return Err(Error::InvalidArguments);
+        }
+        input.bytes.extend(bytes);
+        Ok(())
+    }
+    pub fn close(&self) {
+        self.terminal.input.borrow_mut().open = false;
+    }
+    pub fn take_output(&self) -> Vec<u8> {
+        core::mem::take(&mut *self.terminal.output.borrow_mut())
+    }
+}
 const QUANTUM: u64 = 50_000;
 use efi_agent_filesystem::installation::ASH_APPLETS;
 
@@ -821,6 +843,19 @@ impl World {
             core::mem::take(&mut *process.stdout.borrow_mut()),
             core::mem::take(&mut *process.stderr.borrow_mut()),
         ))
+    }
+
+    /// Attach a persistent task to live input, optionally with terminal semantics.
+    pub fn process_input(&self, pid: Pid, terminal: bool) -> Result<ProcessInput, Error> {
+        let process = self.processes.get(&pid).ok_or(Error::UnknownProcess(pid))?;
+        let execution = process.execution.as_ref().ok_or(Error::InvalidArguments)?;
+        let handle = execution.store.data().terminal.clone();
+        handle.input.borrow_mut().open = true;
+        handle.input.borrow_mut().terminal = terminal;
+        handle.active.set(terminal);
+        handle.mode.set(7);
+        handle.owner.set(Some(pid));
+        Ok(ProcessInput { terminal: handle })
     }
 
     pub fn cancel(&mut self, pid: Pid) -> Result<(), Error> {

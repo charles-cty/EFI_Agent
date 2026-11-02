@@ -7,12 +7,14 @@ use crate::{
 use alloc::{format, string::String, vec, vec::Vec};
 use serde::Deserialize;
 
-pub const MAX_TOOL_ROUNDS: usize = 12;
 pub const MAX_FILE_BYTES: usize = 512 * 1024;
 
 #[cfg(test)]
 #[path = "agent_budget_tests.rs"]
 mod budget_tests;
+#[cfg(test)]
+#[path = "agent_execution_tests.rs"]
+mod execution_tests;
 
 pub trait Environment {
     fn complete(
@@ -34,18 +36,36 @@ pub trait Environment {
             purpose,
         )
     }
+    fn request_tokens(&self, messages: &[ChatMessage]) -> Result<u64, String> {
+        Ok(budget::estimated_tokens(&request::build(
+            crate::model::ApiFormat::ChatCompletions,
+            "",
+            messages,
+            "medium",
+            Purpose::Task,
+        )?))
+    }
     /// Maximum escaped result bytes, including framing, before any effects.
     fn result_reserve(&self, operation: &Operation) -> usize {
         match operation {
+            Operation::ReadRange { path, limit, .. } => 12 * limit + 32768 + 6 * path.len(),
             Operation::Read { path } => 6 * MAX_FILE_BYTES + 32768 + 6 * path.len(),
             Operation::Write { path, .. } | Operation::Edit { path, .. } => 32768 + 6 * path.len(),
-            Operation::Shell { .. } | Operation::Js { .. } => 6 * 2 * 65536 + 8192,
+            Operation::Shell { .. } | Operation::Js { .. } | Operation::Task { .. } => {
+                6 * 2 * 65536 + 8192
+            }
             _ => 32 * 1024,
         }
     }
     /// Sticky for one turn. A cancelled environment must not execute more tools.
     fn cancelled(&self) -> bool {
         false
+    }
+    fn retryable_error(&self, _error: &str) -> bool {
+        false
+    }
+    fn pause_retry(&mut self, _milliseconds: u64) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -89,7 +109,7 @@ impl Default for Agent {
             messages: vec![ChatMessage::text(
                 "system",
                 String::from(
-                    "You are a coding assistant with an Alpine Linux-style environment: BusyBox ash provides POSIX shell syntax, as on Alpine Linux. Use shell for commands and js for JavaScript code. Run Python through shell using python scripts or quoted heredocs. These tools execute real WASM programs in UEFI and load their interpreters automatically. The shell and js tools each retain one live interpreter per conversation. Shell variables, environment and cwd persist; JavaScript global bindings persist. Files are shared. JavaScript provides print, console.log, console.error, quit and an asynchronous ash command template with top-level await. Node.js APIs are unavailable. The shell tool has finite empty stdin. JavaScript commands can receive explicit text input. reset_js resets only JavaScript and releases its interpreter memory. Clear resets both sessions. Exit, trap or cancellation resets the affected session and reports it. Unfinished child processes are stopped after each call. Use POSIX ash syntax; BusyBox Bash extensions include ANSI-C quoting, function, [[ ]], string replacement/slicing, source, pipefail, &>, BASH_XTRACEFD and wait -n. Full Bash arrays, &>>, process substitution, a Linux kernel, apk, and arbitrary Linux binaries are unavailable. BusyBox applets available through ash include ls, cat, cp, mv, rm, mkdir, find, head, grep, sed, awk, date, sleep, yes, env, and which. The guest provides virtual /bin, /dev, /proc, and /tmp; /dev/null discards output. External commands use PATH, executable WASM files, and executable scripts with absolute shebang interpreters. Installed commands are available in /bin. Python supports standard subprocess APIs, including shell=True. Use read, write, and edit to inspect and change the configured workspace. Read files before editing. edit requires one exact match. Tool errors are real; do not claim an operation succeeded if it failed. File tool paths use the shared guest root, independent of shell cwd. Automatic context compaction summarizes earlier completed exchanges without resetting interpreters or re-running tools. Use /compact for manual compaction and /status for configured byte budgets and provider-reported token usage. Byte budgets are not token counts.",
+                    "You are a coding assistant running real WASM programs in UEFI. BusyBox ash provides POSIX shell syntax. Use read, write and edit for files; read before editing and use byte ranges for large files or binary data. File tool paths use the shared guest root independently of shell cwd. write stages replacements atomically; append=true adds a chunk. edit requires one unique exact match. Use shell for short commands and js for JavaScript with print, console.log/error, top-level await and await ash`command`. Each retains its interpreter state, including shell cwd/environment and JS globals. Use task for long builds, background services or interactive input: start returns an id, poll waits and reads previews, input sends bytes/EOF, cancel stops that task tree, and forget releases a completed handle. Each task has a fresh shell; set its cwd/environment in its command. Tasks survive model rounds and requests. Cancelling a task or its wait preserves the retained interpreters. shell/js have empty stdin and stop unfinished children after evaluation; their exit, trap or cancellation can reset the affected interpreter. reset_js resets only JS. /clear resets interpreters and stops tasks; /compact preserves them. Complete stdout/stderr are saved at the reported paths; previews show both ends. Use ranged read for omitted output, and release old log files when finished. Run Python through python/python3 scripts or quoted heredocs; standard subprocess is supported. Installed commands resolve through PATH and /bin, executable WASM files and executable scripts with absolute shebangs. bash is an alias for ash. /bin, /dev, /proc and /tmp are virtual. Node APIs, a Linux kernel, apk and arbitrary native Linux binaries are unavailable. Tool errors are real; do not claim success after failure. Automatic compaction summarizes completed exchanges without replaying tools or resetting interpreters. /status shows execution/context budgets and provider token usage. Byte limits are separate from the estimated token-window admission check.",
                 ),
             )],
         }
@@ -105,7 +125,7 @@ impl Agent {
     pub fn history_status(&self) -> Result<String, String> {
         let bytes = request::history_bytes(&self.messages)?;
         Ok(format!(
-            "History: {} messages, {bytes}/{} canonical JSON bytes\nLast measured task request: {}/{} bytes\nCompaction trigger/target: {}/{} bytes\nCompactions: {}; summary requests: {}; last before/after: {:?}\nResponse message/event/wire limits: {}/{}/{} bytes\nUI history limit: {} bytes\nCurrent history tokens: unavailable (no exact tokenizer)\nConfigured model context window: {}",
+            "History: {} messages, {bytes}/{} canonical JSON bytes\nLast measured task request: {}/{} bytes\nCompaction trigger/target: {}/{} bytes\nCompactions: {}; summary requests: {}; last before/after: {:?}\nResponse message/event/wire limits: {}/{}/{} bytes\nUI history limit: {} bytes\nCurrent history tokens: unavailable (no exact tokenizer)\nConfigured model context window: {}\nTool round budget: {:?} (None = until completion or cancellation)\nProvider retries: {}; idle timeout: {} seconds\nReserved response tokens: {}; token-window admission uses an estimate",
             self.messages.len(),
             self.limits.history_bytes,
             self.last_request_bytes,
@@ -121,7 +141,11 @@ impl Agent {
             self.limits.ui_history_bytes,
             self.limits
                 .context_window_tokens
-                .map_or_else(|| "unavailable".into(), |value| format!("{value} tokens"))
+                .map_or_else(|| "unavailable".into(), |value| format!("{value} tokens")),
+            self.limits.max_tool_rounds,
+            self.limits.provider_retries,
+            self.limits.provider_timeout_seconds,
+            self.limits.response_token_reserve,
         ))
     }
 
@@ -178,6 +202,7 @@ impl Agent {
         let mut retained = request::history_bytes(&self.messages)?;
         if self.last_request_bytes >= self.limits.compact_at_bytes
             || retained > self.limits.history_bytes
+            || self.token_budget_exceeded(environment)?
         {
             if let Err(error) = self.compact(environment, &mut *observe) {
                 if self.last_request_bytes > self.limits.request_bytes
@@ -206,7 +231,22 @@ impl Agent {
                 self.limits.history_bytes,
             ));
         }
+        if self.token_budget_exceeded(environment)? {
+            return Err("ContextTokenBudgetExceeded: estimated request plus reserved response exceeds the configured model window; reduce current-turn data or increase the configured window".into());
+        }
         Ok(())
+    }
+
+    fn token_budget_exceeded<E: Environment>(&self, environment: &E) -> Result<bool, String> {
+        Ok(match self.limits.context_window_tokens {
+            Some(window) => {
+                environment
+                    .request_tokens(&self.messages)?
+                    .saturating_add(self.limits.response_token_reserve)
+                    > window
+            }
+            None => false,
+        })
     }
 
     pub fn clear(&mut self) {
@@ -259,7 +299,7 @@ impl Agent {
         }
         self.messages.push(ChatMessage::text("user", prompt));
         let mut context_retried = false;
-        for round in 0..=MAX_TOOL_ROUNDS {
+        for round in 0usize.. {
             if let Err(error) = self.prepare(environment, &mut observe) {
                 if round == 0
                     && self
@@ -273,13 +313,17 @@ impl Agent {
             }
             observe(Event::ModelStarted);
             let mut streamed = false;
-            let response =
-                environment.complete(&self.messages, Purpose::Task, &mut |delta: &str| {
+            let response = complete_with_retry(
+                environment,
+                &self.messages,
+                Purpose::Task,
+                &mut |delta: &str| {
                     if !delta.is_empty() {
                         streamed = true;
                         observe(Event::AssistantDelta(delta));
                     }
-                });
+                },
+            );
             let mut reply = match response {
                 Err(error) if error.starts_with("ModelContextExceeded:") && !context_retried => {
                     context_retried = true;
@@ -290,7 +334,7 @@ impl Agent {
                     }
                     observe(Event::ModelStarted);
                     streamed = false;
-                    environment.complete(&self.messages, Purpose::Task, &mut |delta| {
+                    complete_with_retry(environment, &self.messages, Purpose::Task, &mut |delta| {
                         if !delta.is_empty() {
                             streamed = true;
                             observe(Event::AssistantDelta(delta));
@@ -386,7 +430,11 @@ impl Agent {
                     Err(String::from(
                         "Request cancelled; operation was not executed",
                     ))
-                } else if round == MAX_TOOL_ROUNDS {
+                } else if self
+                    .limits
+                    .max_tool_rounds
+                    .is_some_and(|limit| round >= limit)
+                {
                     Err(String::from(
                         "Tool round limit reached; operation was not executed",
                     ))
@@ -411,11 +459,46 @@ impl Agent {
             if environment.cancelled() {
                 return Err(String::from("Request cancelled"));
             }
+            if self
+                .limits
+                .max_tool_rounds
+                .is_some_and(|limit| round >= limit)
+            {
+                return Err(String::from(
+                    "Tool round budget reached. Send another request to continue from retained results; pending operations were not executed.",
+                ));
+            }
         }
-        Err(String::from(
-            "Tool round limit reached. All pending calls have error results; no further operations were executed.",
-        ))
+        unreachable!("Tool loop ends by completion, cancellation, or an explicit budget")
     }
+}
+
+fn complete_with_retry<E: Environment>(
+    environment: &mut E,
+    messages: &[ChatMessage],
+    purpose: Purpose,
+    progress: &mut dyn FnMut(&str),
+) -> Result<ChatMessage, String> {
+    let retries = environment.limits().provider_retries;
+    for attempt in 0..=retries {
+        let mut streamed = false;
+        let response = environment.complete(messages, purpose, &mut |text| {
+            streamed |= !text.is_empty();
+            progress(text);
+        });
+        match response {
+            Err(error)
+                if !streamed
+                    && attempt < retries
+                    && !environment.cancelled()
+                    && environment.retryable_error(&error) =>
+            {
+                environment.pause_retry(250u64.saturating_mul(1 << attempt.min(8)))?;
+            }
+            result => return result,
+        }
+    }
+    unreachable!("Last provider attempt returns its result")
 }
 
 fn validate_reply(reply: &ChatMessage) -> Result<(), String> {
@@ -451,12 +534,20 @@ fn validate_reply(reply: &ChatMessage) -> Result<(), String> {
 #[serde(deny_unknown_fields)]
 struct Read {
     path: String,
+    #[serde(default)]
+    offset: Option<u64>,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    hex: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Write {
     path: String,
     content: String,
+    #[serde(default)]
+    append: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -481,6 +572,11 @@ struct JavaScript {
 fn operation(call: &ToolCall) -> Result<Operation, String> {
     let arguments = &call.function.arguments;
     match call.function.name.as_str() {
+        "task" => {
+            let request = serde_json::from_str(arguments)
+                .map_err(|error| format!("Invalid task arguments: {error}"))?;
+            Ok(Operation::Task { request })
+        }
         "shell" => {
             let args: Shell = serde_json::from_str(arguments)
                 .map_err(|e| format!("Invalid shell arguments: {e}"))?;
@@ -504,17 +600,34 @@ fn operation(call: &ToolCall) -> Result<Operation, String> {
         "read" => {
             let args: Read = serde_json::from_str(arguments)
                 .map_err(|e| format!("Invalid read arguments: {e}"))?;
-            Ok(Operation::Read { path: args.path })
+            if args.offset.is_some() || args.limit.is_some() || args.hex {
+                let limit = args.limit.unwrap_or(64 * 1024);
+                if !(4..=MAX_FILE_BYTES).contains(&limit) {
+                    return Err("Read range limit must be between 4 and 524288 bytes".into());
+                }
+                Ok(Operation::ReadRange {
+                    path: args.path,
+                    offset: args.offset.unwrap_or(0),
+                    limit,
+                    hex: args.hex,
+                })
+            } else {
+                Ok(Operation::Read { path: args.path })
+            }
         }
         "write" => {
             let args: Write = serde_json::from_str(arguments)
                 .map_err(|e| format!("Invalid write arguments: {e}"))?;
-            if args.content.len() > MAX_FILE_BYTES {
-                return Err(String::from("File exceeds 512 KiB"));
-            }
-            Ok(Operation::Write {
-                path: args.path,
-                content: args.content,
+            Ok(if args.append {
+                Operation::Append {
+                    path: args.path,
+                    content: args.content,
+                }
+            } else {
+                Operation::Write {
+                    path: args.path,
+                    content: args.content,
+                }
             })
         }
         "edit" => {
@@ -548,8 +661,8 @@ pub fn edit_text(mut text: String, old: &str, new: &str) -> Result<String, Strin
         ));
     }
     let length = text.len() - old.len() + new.len();
-    if length > MAX_FILE_BYTES {
-        return Err(String::from("Edited file exceeds 512 KiB"));
+    if length > 48 * 1024 * 1024 {
+        return Err(String::from("Edited file exceeds 48 MiB"));
     }
     text.replace_range(start..start + old.len(), new);
     Ok(text)
@@ -561,10 +674,13 @@ pub fn tool_definitions() -> serde_json::Value {
             "type": "function",
             "function": {
                 "name": "read",
-                "description": "Read a complete UTF-8 file, or list sorted directory entry names (one per line; no metadata). File content and directory listings are limited to 512 KiB UTF-8; larger or non-UTF-8 content returns an error with no partial data. No offsets or pagination; use shell commands for selected ranges.",
+                "description": "Read a UTF-8 file or sorted directory names. Without range arguments, read the complete text up to 512 KiB. For larger files or output logs, set offset (byte offset) and limit (4..524288 bytes, default 65536). Ranged reads return JSON with content, encoding, next_offset, total_bytes and eof. UTF-8 pages end at a character boundary; continue from next_offset. Set hex=true for exact binary bytes. Paths use the shared root independently of shell cwd.",
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "offset": { "type": "integer", "minimum": 0 },
+                        "limit": { "type": "integer", "minimum": 4, "maximum": 524288 },
+                        "hex": { "type": "boolean" },
                         "path": {
                             "type": "string",
                             "description": "Path in the shared guest root, independent of shell cwd. Use / separators; a leading / is optional. Parent components (..) are rejected."
@@ -581,7 +697,7 @@ pub fn tool_definitions() -> serde_json::Value {
             "type": "function",
             "function": {
                 "name": "write",
-                "description": "Create or overwrite a UTF-8 file, creating missing parent directories. Content is limited to 512 KiB UTF-8. Overwrite truncates existing content; there is no append mode. A failed write can leave created directories or a truncated/partly written file. Re-read after a failure.",
+                "description": "Create or atomically replace a UTF-8 file, creating missing parent directories. Replacement is staged in a sibling file and committed by rename; a staging failure preserves the original. Atomic replacement requires a regular-file destination and replaces its inode. Set append=true to append a chunk; append is not atomic and failures can leave partial appended content. Content is bounded by model request and filesystem capacity, not a 512 KiB tool cap.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -589,9 +705,10 @@ pub fn tool_definitions() -> serde_json::Value {
                             "type": "string",
                             "description": "Path in the shared guest root, independent of shell cwd. Use / separators; a leading / is optional. Parent components (..) are rejected."
                         },
+                        "append": { "type": "boolean" },
                         "content": {
                             "type": "string",
-                            "description": "Complete replacement file content; at most 512 KiB UTF-8."
+                            "description": "Replacement content, or a chunk to append when append=true."
                         }
                     },
                     "required": [
@@ -606,7 +723,7 @@ pub fn tool_definitions() -> serde_json::Value {
             "type": "function",
             "function": {
                 "name": "edit",
-                "description": "Replace exactly one occurrence of old_text with new_text. old_text must be nonempty; missing or multiple matches (including overlaps) return an error before writing. The original and edited file must each fit 512 KiB UTF-8. Saving has the same possible partial effects as write.",
+                "description": "Atomically replace exactly one occurrence of old_text with new_text in a UTF-8 file up to the filesystem file-size limit (48 MiB). old_text must be nonempty and unique, including overlapping matches. Missing or multiple matches leave the file unchanged. A sibling staging file preserves original bytes if staging fails; regular-file destinations only.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -634,7 +751,7 @@ pub fn tool_definitions() -> serde_json::Value {
             "type": "function",
             "function": {
                 "name": "shell",
-                "description": "Run BusyBox ash with ASH_BASH_COMPAT in the shared guest filesystem. Shell variables, environment and cwd persist between calls. Stdin is finite empty input; heredocs and pipelines can supply data. Commands use PATH, executable WASM and absolute-interpreter shebangs. /bin, /dev, /proc and /tmp are virtual; Linux executables and apk are unavailable. Returns plain text with exit status and separate stdout/stderr sections; nonzero exit is a normal result. Each stream retains its first 64 KiB, decodes invalid UTF-8 with replacement, and has an explicit truncation notice. Cross-stream order is unavailable; truncation does not stop execution. Model tools have no controlling terminal. Remaining children are stopped when the call finishes. Exit, trap or Esc cancellation resets this shell with a notice; /clear resets both interpreters, /compact preserves them.",
+                "description": "Run BusyBox ash in a retained session. Variables, environment and cwd persist. Stdin is empty and there is no controlling terminal; use task for live input, a terminal, background services or long builds. Return exit status plus separate stdout/stderr previews. Full output is saved to stdout_path/stderr_path; use ranged read to retrieve it. Previews retain the first and last 32 KiB per stream. Nonzero exit is a normal result. Remaining children are stopped when the call finishes. Exit, trap or cancellation resets this shell with a notice; task cancellation preserves it. /clear resets sessions and tasks; /compact preserves them.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -654,7 +771,7 @@ pub fn tool_definitions() -> serde_json::Value {
             "type": "function",
             "function": {
                 "name": "js",
-                "description": "Run JavaScript in retained QuickJS. Global bindings/functions persist; redeclaring global let/const fails. Use print, console.log/error and top-level await. await ash`command` runs a fresh ash child, separate from the shell tool. Interpolation quotes shell words; arrays expand to words. ProcessOutput exposes exitCode/stdout/stderr/stdall/ok and text/json/lines/buffer. Nonzero exit rejects; .nothrow() returns it. ash({cwd,env,input,quiet,verbose,nothrow,prefix,postfix}) configures commands; env overlays child values. .pipe`command` feeds completed stdout. Input and inner command capture are limited to 512 KiB per stream. The tool result separately retains only the first 64 KiB of each stdout/stderr stream, with lossy UTF-8 decoding and explicit truncation; cross-stream order is unavailable and truncation does not stop execution. Stdin is finite empty input; no controlling terminal. Remaining children are stopped after the call. Node APIs, module imports, timers, streaming pipes, signals and timeouts are unavailable. Ordinary exceptions preserve state; quit, trap, cancellation or a top-level Promise without an event source resets it with a notice. reset_js releases only this interpreter; /clear resets both, /compact preserves them.",
+                "description": "Run JavaScript in retained QuickJS. Global bindings/functions persist; redeclaring global let/const fails. Use print, console.log/error and top-level await. await ash`command` runs a fresh ash child, separate from the shell tool. Interpolation quotes words; arrays expand to words. ProcessOutput provides exitCode/stdout/stderr/stdall/ok and text/json/lines/buffer. Nonzero exit rejects; .nothrow() returns it. ash({cwd,env,input,quiet,verbose,nothrow,prefix,postfix}) configures children. Inner command input/capture is bounded to 512 KiB per stream. Complete interpreter output is saved to stdout_path/stderr_path; previews show the first and last 32 KiB per stream. Use ranged read for full bytes. Use task for long-running commands, a terminal or live input. Node APIs, module imports, timers, streaming pipes, signals and command timeouts are unavailable. Ordinary exceptions preserve state; quit, trap, cancellation or an unresolved top-level Promise without an event source resets it. reset_js releases only JS; /clear resets interpreters and tasks; /compact preserves them.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -666,6 +783,27 @@ pub fn tool_definitions() -> serde_json::Value {
                     "required": [
                         "code"
                     ],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "task",
+                "description": "Manage a persistent ash command with a task id. start requires command and returns immediately by default. Optional terminal=true supplies a controlling terminal with merged output; otherwise stdout/stderr remain separate. input sends UTF-8 bytes; eof closes stdin. poll can wait_ms up to 10000; cancel stops only that task tree; list reports handles; forget releases a completed handle and keeps its logs. Tasks continue across model rounds and requests, with separate shell state. Full logs are saved at stdout_path/stderr_path; read them by byte range. The first and last 32 KiB per stream are previews. Cancelling a wait leaves the task running. /clear stops all tasks. Use tasks for builds, servers, watchers and interactive commands.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": { "type": "string", "enum": ["start", "poll", "input", "cancel", "list", "forget"] },
+                        "command": { "type": "string" },
+                        "id": { "type": "integer", "minimum": 1 },
+                        "input": { "type": "string" },
+                        "eof": { "type": "boolean" },
+                        "terminal": { "type": "boolean" },
+                        "wait_ms": { "type": "integer", "minimum": 0, "maximum": 10000 }
+                    },
+                    "required": ["action"],
                     "additionalProperties": false
                 }
             }
@@ -760,7 +898,10 @@ mod tests {
             .iter()
             .map(|tool| tool["function"]["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, ["read", "write", "edit", "shell", "js", "reset_js"]);
+        assert_eq!(
+            names,
+            ["read", "write", "edit", "shell", "js", "task", "reset_js"]
+        );
         let removed: ToolCall = serde_json::from_value(serde_json::json!({
             "id": "removed", "type": "function", "function": {
                 "name": "python", "arguments": "{\"code\":\"print(1)\"}"
@@ -789,7 +930,12 @@ mod tests {
         assert!(edit_text("中中中".into(), "中中", "x").is_err());
         assert!(edit_text("abc".into(), "", "x").is_err());
         assert_eq!(edit_text("abc".into(), "abc", "").unwrap(), "");
-        assert!(edit_text("a".into(), "a", &"x".repeat(MAX_FILE_BYTES + 1)).is_err());
+        assert_eq!(
+            edit_text("a".into(), "a", &"x".repeat(MAX_FILE_BYTES + 1))
+                .unwrap()
+                .len(),
+            MAX_FILE_BYTES + 1
+        );
     }
 
     #[test]
@@ -870,6 +1016,12 @@ mod tests {
         completions: usize,
     }
     impl Environment for Repeating {
+        fn limits(&self) -> Limits {
+            Limits {
+                max_tool_rounds: Some(12),
+                ..Limits::default()
+            }
+        }
         fn complete(
             &mut self,
             messages: &[ChatMessage],
@@ -902,8 +1054,8 @@ mod tests {
                 .turn("repeat".into(), &mut environment, |_| {})
                 .is_err()
         );
-        assert_eq!(environment.executed, MAX_TOOL_ROUNDS);
-        assert_eq!(environment.completions, MAX_TOOL_ROUNDS + 1);
+        assert_eq!(environment.executed, 12);
+        assert_eq!(environment.completions, 13);
         let last = agent.messages.last().unwrap();
         assert_eq!(last.role, "tool");
         assert!(last.content.as_deref().unwrap().contains("not executed"));

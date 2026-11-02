@@ -12,27 +12,31 @@ use efi_agent_wasm::{Status, World};
 
 use crate::terminal;
 
-const TOOL_STREAM_LIMIT: usize = 64 * 1024;
-
-#[derive(Default)]
 struct ToolOutput {
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-    truncated: [bool; 2],
+    capture: Option<efi_agent_filesystem::capture::Capture>,
 }
 
 impl ToolOutput {
-    fn append(&mut self, stdout: &[u8], stderr: &[u8]) -> bool {
-        let before = (self.stdout.len(), self.stderr.len(), self.truncated);
-        for (index, (target, bytes)) in [(&mut self.stdout, stdout), (&mut self.stderr, stderr)]
-            .into_iter()
-            .enumerate()
-        {
-            let count = bytes.len().min(TOOL_STREAM_LIMIT - target.len());
-            target.extend_from_slice(&bytes[..count]);
-            self.truncated[index] |= count < bytes.len();
+    fn new(filesystem: &dyn FileSystem, capture: bool) -> Result<Self, String> {
+        Ok(Self {
+            capture: if capture {
+                Some(
+                    efi_agent_filesystem::capture::Capture::new(filesystem)
+                        .map_err(|error| format!("Create output logs: {error:?}"))?,
+                )
+            } else {
+                None
+            },
+        })
+    }
+
+    fn append(&mut self, stdout: &[u8], stderr: &[u8]) -> Result<bool, String> {
+        if let Some(capture) = &mut self.capture {
+            capture.append(stdout, stderr).map_err(|error| {
+                format!("Output log storage failed: {error:?}; output may be incomplete")
+            })?;
         }
-        before != (self.stdout.len(), self.stderr.len(), self.truncated)
+        Ok(!stdout.is_empty() || !stderr.is_empty())
     }
 
     fn result(&self, status: &Status) -> String {
@@ -45,21 +49,23 @@ impl ToolOutput {
     }
 
     fn contents(&self, status: &str) -> String {
-        let mut result = String::from(status);
-        for (index, (name, bytes)) in [
-            ("Standard output", &self.stdout),
-            ("Standard error", &self.stderr),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            result.push_str(&format!("\n\n{name}:\n{}", String::from_utf8_lossy(bytes)));
-            if self.truncated[index] {
-                result.push_str("\n[Output truncated at 64 KiB]");
-            }
-        }
-        result
+        self.capture
+            .as_ref()
+            .map_or_else(|| status.into(), |capture| capture.result(status))
     }
+
+    fn flush(&mut self) -> Result<(), efi_agent_filesystem::FileError> {
+        self.capture
+            .as_mut()
+            .map_or(Ok(()), |capture| capture.flush())
+    }
+}
+
+struct Task {
+    input: efi_agent_wasm::ProcessInput,
+    output: ToolOutput,
+    status: Option<Status>,
+    error: Option<String>,
 }
 
 fn module_name(path: &str) -> Result<&str, String> {
@@ -100,6 +106,8 @@ pub struct Runtime {
     output_changed: bool,
     tool_outputs: BTreeMap<u32, ToolOutput>,
     sessions: [Option<efi_agent_wasm::session::Session>; 2],
+    tasks: BTreeMap<u32, Task>,
+    capture_error: Option<String>,
 }
 
 impl Runtime {
@@ -144,6 +152,8 @@ impl Runtime {
             output_changed: false,
             tool_outputs: BTreeMap::new(),
             sessions: [None, None],
+            tasks: BTreeMap::new(),
+            capture_error: None,
         })
     }
 
@@ -206,8 +216,31 @@ impl Runtime {
         for pid in pids {
             let (stdout, stderr) = self.world.take_output(pid).expect("Listed process exists");
             let root = self.roots[&pid];
+            if let Some(task) = self.tasks.get_mut(&root) {
+                let terminal = task.input.take_output();
+                if let Err(error) = task
+                    .output
+                    .append(&stdout, &stderr)
+                    .and_then(|_| task.output.append(&terminal, &[]))
+                {
+                    task.error = Some(error);
+                    let owned: Vec<_> = self
+                        .world
+                        .process_ids()
+                        .filter(|pid| self.world.root(*pid).ok() == Some(root))
+                        .collect();
+                    let _ = self.world.cancel(root);
+                    for child in owned {
+                        let _ = self.world.cancel(child);
+                    }
+                }
+                continue;
+            }
             if let Some(output) = self.tool_outputs.get_mut(&root) {
-                self.output_changed |= output.append(&stdout, &stderr);
+                match output.append(&stdout, &stderr) {
+                    Ok(changed) => self.output_changed |= changed,
+                    Err(error) => self.capture_error = Some(error),
+                }
                 continue;
             }
             let status = match self.world.status(root) {
@@ -238,6 +271,41 @@ impl Runtime {
             .retain(|root, _| self.roots.values().any(|pid| pid == root));
         self.cancelled
             .retain(|root| self.outputs.contains_key(root));
+        // A task completes only after its entire process tree has stopped.
+        let completed: Vec<_> = self
+            .tasks
+            .iter()
+            .filter_map(|(&root, task)| {
+                (task.status.is_none()
+                    && self
+                        .world
+                        .process_ids()
+                        .filter(|pid| self.world.root(*pid).ok() == Some(root))
+                        .all(|pid| !self.world.status(pid).unwrap().is_live()))
+                .then_some(root)
+            })
+            .collect();
+        for root in completed {
+            let status = self
+                .world
+                .status(root)
+                .expect("Owned task root exists")
+                .clone();
+            let task = self.tasks.get_mut(&root).unwrap();
+            task.status = Some(status);
+            if let Err(error) = task.output.flush() {
+                task.error = Some(format!("Flush output logs: {error:?}"));
+            }
+            let pids: Vec<_> = self
+                .world
+                .process_ids()
+                .filter(|pid| self.world.root(*pid).ok() == Some(root))
+                .collect();
+            for pid in pids {
+                let _ = self.world.reap(pid);
+                self.roots.remove(&pid);
+            }
+        }
         progressed
     }
 
@@ -325,6 +393,9 @@ impl Runtime {
             self.tool_outputs.remove(&pid);
             notice.push_str("Previous session ended; started a new session.\n");
         }
+        // Prepare fallible storage before creating a process, then register
+        // output ownership before submitting source to the interpreter.
+        let capture = ToolOutput::new(self.filesystem.as_ref(), !terminal)?;
         if self.sessions[index].is_none() {
             self.sessions[index] = Some(
                 self.world
@@ -333,20 +404,20 @@ impl Runtime {
             );
         }
         let session = self.sessions[index].as_mut().unwrap();
+        let pid = session.pid();
+        self.roots.insert(pid, pid);
+        self.tool_outputs.insert(pid, capture);
         match source {
             None => session.close_source(),
             Some(source) if terminal => session.submit_terminal(source),
             Some(source) => session.submit(source),
         }
         .map_err(|error| error.to_string())?;
-        let pid = session.pid();
         if terminal {
             let (columns, rows) = app.terminals[index].dimensions;
             session.set_terminal_size(columns.max(1), rows.max(1));
             app.terminals[index].set_mode(7);
         }
-        self.roots.insert(pid, pid);
-        self.tool_outputs.insert(pid, ToolOutput::default());
         let execution = (|| {
             loop {
                 if let Some(status) = self.sessions[index].as_mut().unwrap().take_completion() {
@@ -361,6 +432,9 @@ impl Runtime {
                     return Ok(None);
                 }
                 self.poll(app);
+                if let Some(error) = self.capture_error.take() {
+                    return Err(error);
+                }
                 if terminal && self.output_changed {
                     refresh(app, false)?;
                 }
@@ -391,7 +465,10 @@ impl Runtime {
             Ok(Some(code)) => Status::Exited(*code),
             _ => self.world.status(pid).expect("Tool root exists").clone(),
         };
-        let capture = self.tool_outputs.remove(&pid).expect("Tool capture exists");
+        let mut capture = self.tool_outputs.remove(&pid).expect("Tool capture exists");
+        let capture_flush = capture
+            .flush()
+            .map_err(|error| format!("Flush output logs: {error:?}"));
         self.sessions[index].as_ref().unwrap().detach_terminal();
         if terminal {
             app.terminals[index].set_mode(7);
@@ -405,7 +482,8 @@ impl Runtime {
             notice + &capture.result(&status)
         };
         if retained {
-            self.tool_outputs.insert(pid, ToolOutput::default());
+            // Keep the completed log until the next evaluation starts.
+            self.tool_outputs.insert(pid, capture);
         } else {
             self.sessions[index] = None;
             self.world.reap(pid).expect("Tool root is terminal");
@@ -419,7 +497,7 @@ impl Runtime {
                 "\nStopped {stopped} unfinished child process(es)."
             ));
         }
-        let storage = self.flush_workspace();
+        let storage = capture_flush.and_then(|()| self.flush_workspace());
         match (execution, storage) {
             (Ok(_), Ok(())) => Ok(output),
             (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(format!("{output}\n{error}")),
@@ -456,10 +534,165 @@ impl Runtime {
     }
 
     pub fn clear_sessions(&mut self, app: &mut App) -> Result<(), String> {
+        let owned: Vec<_> = self
+            .world
+            .process_ids()
+            .filter(|pid| {
+                self.world
+                    .root(*pid)
+                    .is_ok_and(|root| self.tasks.contains_key(&root))
+            })
+            .collect();
+        for root in self.tasks.keys() {
+            let _ = self.world.cancel(*root);
+        }
+        for pid in owned {
+            let _ = self.world.cancel(pid);
+        }
+        self.poll(app);
+        self.tasks.clear();
         for index in 0..self.sessions.len() {
             self.reset_session(index, app);
         }
         self.flush_workspace()
+    }
+
+    pub fn task(
+        &mut self,
+        request: efi_agent_core::protocol::TaskRequest,
+        app: &mut App,
+        refresh: &mut impl FnMut(&mut App, bool) -> Result<bool, String>,
+    ) -> Result<String, String> {
+        if request.wait_ms > 10_000 {
+            return Err("Use wait_ms <= 10000 and poll again for longer waits".into());
+        }
+        if request
+            .input
+            .as_ref()
+            .is_some_and(|input| input.len() > 65536)
+        {
+            return Err("Task input exceeds its 64 KiB queue; send smaller chunks".into());
+        }
+        let id = if request.action == "start" {
+            let command = request
+                .command
+                .as_ref()
+                .ok_or("task start requires command")?;
+            self.world
+                .discover_programs()
+                .map_err(|error| error.to_string())?;
+            self.ensure_program("ash")?;
+            let output = ToolOutput::new(self.filesystem.as_ref(), true)?;
+            let id = self
+                .world
+                .spawn(
+                    alloc::vec!["ash".into(), "-c".into(), command.clone()],
+                    Vec::new(),
+                )
+                .map_err(|error| error.to_string())?;
+            let input = self
+                .world
+                .process_input(id, request.terminal)
+                .map_err(|error| error.to_string())?;
+            self.roots.insert(id, id);
+            self.tasks.insert(
+                id,
+                Task {
+                    input,
+                    output,
+                    status: None,
+                    error: None,
+                },
+            );
+            id
+        } else if request.action == "list" {
+            self.poll(app);
+            return Ok(self
+                .tasks
+                .iter()
+                .map(|(id, task)| {
+                    format!(
+                        "{id}: {}\n",
+                        task.status
+                            .as_ref()
+                            .map_or_else(|| "Running".into(), |status| format!("{status:?}"))
+                    )
+                })
+                .collect());
+        } else {
+            let id = request.id.ok_or("task action requires id")?;
+            if !self.tasks.contains_key(&id) {
+                return Err("Unknown task id".into());
+            }
+            match request.action.as_str() {
+                "poll" | "input" => (),
+                "cancel" => {
+                    let pids: Vec<_> = self
+                        .world
+                        .process_ids()
+                        .filter(|pid| self.world.root(*pid).ok() == Some(id))
+                        .collect();
+                    // Stop the parent before children to prevent wait/reap races.
+                    if self.tasks[&id].status.is_none() {
+                        self.world.cancel(id).map_err(|error| error.to_string())?;
+                    }
+                    for pid in pids {
+                        let _ = self.world.cancel(pid);
+                    }
+                }
+                "forget" => {
+                    if self.tasks[&id].status.is_none() {
+                        return Err("Cancel or finish the task before forgetting it".into());
+                    }
+                    self.tasks.remove(&id);
+                    return Ok("Task handle released. Output files remain available.".into());
+                }
+                _ => {
+                    return Err(
+                        "Task action must be start, poll, input, cancel, list, or forget".into(),
+                    );
+                }
+            }
+            id
+        };
+        let task = &self.tasks[&id];
+        if let Some(input) = request.input {
+            if task.status.is_some() {
+                return Err("Task has already finished".into());
+            }
+            task.input.write(input.as_bytes()).map_err(|_| "Task stdin is closed or its input queue is full; poll and send a smaller chunk")?;
+        }
+        if request.eof {
+            task.input.close();
+        }
+        let deadline =
+            crate::tcp::Deadline::new(core::time::Duration::from_millis(request.wait_ms.max(1)))?;
+        loop {
+            self.poll(app);
+            if self.tasks[&id].status.is_some() || request.wait_ms == 0 || deadline.expired() {
+                break;
+            }
+            if refresh(app, true)? {
+                return Err(format!(
+                    "Wait cancelled. Task {id} remains available; use task cancel to stop it."
+                ));
+            }
+            crate::event_loop::idle(core::time::Duration::from_millis(1))?;
+        }
+        let task = &mut self.tasks.get_mut(&id).unwrap();
+        task.output
+            .flush()
+            .map_err(|error| format!("Flush task output: {error:?}"))?;
+        let status = format!(
+            "Task id: {id}\nStatus: {}{}",
+            task.status
+                .as_ref()
+                .map_or_else(|| "Running".into(), |status| format!("{status:?}")),
+            task.error
+                .as_ref()
+                .map_or_else(String::new, |error| format!("\n{error}"))
+        );
+        Ok(task.output.contents(&status))
     }
 
     fn reset_session(&mut self, index: usize, app: &mut App) {

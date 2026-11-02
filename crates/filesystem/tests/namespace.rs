@@ -520,7 +520,14 @@ fn model_files_share_guest_namespace_and_validate_before_creating_parents() {
     );
     assert!(text::write(&namespace, "new/../escape", "bad").is_err());
     assert_eq!(namespace.metadata("new").unwrap_err(), FileError::NotFound);
-    assert!(text::write(&namespace, "new/deep/input", &"x".repeat(524289)).is_err());
+    assert!(
+        text::write(
+            &namespace,
+            "new/deep/input",
+            &"x".repeat(48 * 1024 * 1024 + 1)
+        )
+        .is_err()
+    );
     assert_eq!(namespace.metadata("new").unwrap_err(), FileError::NotFound);
     let limit = "x".repeat(524288);
     text::write(&namespace, "limit", &limit).unwrap();

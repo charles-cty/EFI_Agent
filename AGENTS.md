@@ -14,6 +14,28 @@ completion. Verification of a staging package does not verify those paths.
 
 # Current state
 
+The default twelve-round tool cutoff is removed; an optional round budget remains.
+Persistent tasks support live stdin/EOF, optional terminals, polling, cancellation,
+cross-request lifetime and handle release. Model tools save complete output logs
+with head/tail previews. File tools support byte/hex ranges, append, atomic
+regular-file replacement and large edits; the separate 512 KiB write cap is gone.
+Provider task retries, idle timeouts and estimated token-window admission are
+configurable. All 309 distinct host checks, host/UEFI Clippy, formatting and both
+Windows Release builds pass. Both APIs pass actual 256 MiB WHPX coding-task
+acceptance, including one-time effects after HTTP 503, Unicode terminal input,
+background-child cleanup, wait cancellation and clear. Both API HTTPS/context
+regressions and the retained-session regression pass. Both configured two-second
+silent-provider cases make three attempts and return in about 8.2 host seconds,
+then recover.
+Both standard trees/images match all 1,151 runtime files and 12 notices, with
+current EFI entries and preserved native configuration bytes. Installed
+`C:\Temp\work` was not changed. The default 120-second duration, full application
+networking, Linux builds and hardware boot were not repeated. The direct terminal
+regression passes command stdin/EOF, history, shell/JS handoff, cancellation,
+model-context isolation and explicit shell exit traps. The shell source-EOF
+trap check timed out and remains unresolved. Contracts and evidence are in
+docs/coding-tools.md and docs/verification.md.
+
 The standard command links now include python3 and bash. They use the existing
 virtual /bin installation mechanism: python/python3 point to /python.wasm,
 and ash/sh/bash point to /ash.wasm. BusyBox dispatches bash to ash; no separate
@@ -866,29 +888,38 @@ credentials are written only into the private temporary disk.
 ## UI and model behavior
 
 Slash commands: /help, /caps, /wasm, /effort [value], /status, /clear, /quit, /exit.
-A normal prompt runs at most twelve rounds of read/write/edit/shell/js/reset_js tools.
+A normal prompt has no default tool-round cutoff. A positive max_tool_rounds
+can bound requests using read/write/edit/shell/js/reset_js/task tools.
 The shell and JavaScript tools retain separate interpreters, loaded automatically
 from ash.wasm and quickjs.wasm. Python runs through ordinary shell commands.
 Source uses a private bounded channel (60 KiB limit, no NUL) separate from finite
-stdin. Results contain readable exit status and stdout/stderr, capped at 64 KiB
-per stream with explicit truncation. The existing tool disclosure holds the result.
-reset_js releases only the JavaScript session. Clear resets both. Tool completion
-or cancellation reaps unfinished descendants while independent roots continue.
+stdin. Shell/JS and task results include readable status and complete output-log
+paths, with the first and last 32 KiB of each stream as previews. The existing
+tool disclosure holds the result. reset_js releases only the JavaScript session.
+Clear resets both sessions and cancels tasks. Shell/JS completion or cancellation
+reaps unfinished descendants while independent roots continue. Tasks retain
+independent roots across requests until all descendants finish or are cancelled.
 The prompt describes Alpine-style BusyBox ash with ASH_BASH_COMPAT and states
 its actual WASM limits. Native integration and both provider APIs are recorded
 in docs/verification.md with the current acceptance evidence.
 Edit requires one exact match, including overlap checks. Tool results enter
 model history; slash commands do not. /clear resets history, retaining local
 usage statistics. /status shows actual configuration (never the key), exact
-history JSON bytes against 640 KiB, and reported last/cumulative token counts.
+history/request JSON bytes against configured budgets, and reported
+last/cumulative token counts. The default canonical history budget is 8 MiB
+and the complete request budget is 4 MiB.
 Missing counts are unavailable, not zero; output includes reasoning tokens.
 
 Assistant text streams immediately. Reasoning uses only provider-supplied text
 or summaries. Opaque/encrypted state remains in history. Tool calls execute only
-after a complete successful stream. Stream bytes are capped at 8 MiB; events
-and assembled messages are capped below 1 MiB; files are limited to 512 KiB.
-The request response/handshake deadline is 120 seconds. Esc cancels network
-waits and stops further tools. Already executed firmware file operations cannot
+after a complete successful stream. Default response wire, event and assembled
+message budgets are 32 MiB, 4 MiB and 4 MiB. Complete reads are capped at 512 KiB;
+ranged reads, writes and edits support larger files within filesystem and request
+budgets. The configurable response/handshake idle timeout defaults to 120 seconds
+after TCP connection, with latched firmware expiry and an independent RTC
+watchdog. DNS and connection setup have separate waits. Task requests retry
+transient provider failures twice by default, preserving completed tool effects.
+Esc cancels network waits and stops further tools. Already executed firmware file operations cannot
 be undone. Each request uses its own TCP/TLS connection; a cancelled request is
 dropped and does not block the next prompt.
 
